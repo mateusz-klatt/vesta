@@ -34,7 +34,7 @@ struct HomeView: View {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
                 }
             }
-            .sheet(isPresented: $showSettings) { SettingsView() }
+            .sheet(isPresented: $showSettings) { SettingsView().appLanguage(app.appLanguage) }
             .refreshable { await app.loadDiscovery() }
         }
     }
@@ -242,6 +242,9 @@ private struct BlindRow: View {
             HStack {
                 DeviceLabel(item: item)
                 Spacer()
+                Image(systemName: percent < 50 ? "blinds.horizontal.closed" : "blinds.horizontal.open")
+                    .foregroundStyle(Theme.textSecondary)
+                    .contentTransition(.symbolEffect(.replace))
                 positionLabel.font(.caption).foregroundStyle(Theme.textSecondary)
             }
             Slider(value: $percent, in: 0...100, step: 1) { editing in
