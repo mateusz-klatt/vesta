@@ -18,6 +18,14 @@ defaults write com.apple.dt.Xcode IDESkipMacroFingerprintValidation -bool YES
 
 echo "ci_post_clone: generating Vesta.xcodeproj"
 cd "$CI_PRIMARY_REPOSITORY_PATH"
+
+# Use Xcode Cloud's monotonic build number so every TestFlight upload is unique
+# (local builds keep the project.yml value).
+if [ -n "$CI_BUILD_NUMBER" ]; then
+  sed -i '' "s/CURRENT_PROJECT_VERSION: \"[0-9]*\"/CURRENT_PROJECT_VERSION: \"$CI_BUILD_NUMBER\"/" project.yml
+  echo "ci_post_clone: set build number to $CI_BUILD_NUMBER"
+fi
+
 xcodegen generate
 
 # Xcode Cloud disables automatic SPM resolution (even via -resolvePackageDependencies)

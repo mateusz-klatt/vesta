@@ -17,6 +17,10 @@ enum TokenStore {
         SecItemDelete(base as CFDictionary)
         var add = base
         add[kSecValueData as String] = Data(token.utf8)
+        // Token is read on every request (and the background SSE stream), so a
+        // per-access biometric prompt is the wrong trade-off; restrict to this
+        // device while unlocked (no iCloud/backup migration) instead.
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         SecItemAdd(add as CFDictionary, nil)
     }
 
