@@ -42,6 +42,21 @@ actor MockHestiaAPI: HestiaAPI {
 @MainActor
 final class AppStateTests: XCTestCase {
 
+    /// An event source that connects to nothing and finishes immediately, so tests
+    /// that exercise login/connect don't reach the real network.
+    private static let noEvents: @Sendable () -> AsyncStream<EventStream.Event> = {
+        AsyncStream { $0.finish() }
+    }
+
+    /// Poll the main actor until `cond` holds (or a timeout), letting background
+    /// tasks (the event loop) make progress between checks.
+    private func until(_ cond: @escaping () -> Bool, timeout: TimeInterval = 2) async {
+        let start = Date()
+        while !cond() && Date().timeIntervalSince(start) < timeout {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+    }
+
     private func device(_ id: String, type: String, on: Bool? = nil, setpoint: Double? = nil) -> IdentifiedDevice {
         IdentifiedDevice(id: id, device: .init(setpoint: setpoint, _switch: on, _type: type))
     }
@@ -204,7 +219,7 @@ final class AppStateTests: XCTestCase {
     func testLoginSetsIdentity() async {
         let mock = MockHestiaAPI()
         await mock.setWhoami(role: "operator")
-        let app = AppState(api: mock)
+        let app = AppState(api: mock, events: Self.noEvents)
         await app.login(user: "alice", password: "pw")
         let calls = await mock.calls
         XCTAssertTrue(calls.contains(.login("alice", "pw")))
@@ -215,9 +230,28 @@ final class AppStateTests: XCTestCase {
     func testViewerIsReadOnly() async {
         let mock = MockHestiaAPI()
         await mock.setWhoami(role: "viewer")
-        let app = AppState(api: mock)
+        let app = AppState(api: mock, events: Self.noEvents)
         await app.login(user: "v", password: "pw")
         XCTAssertTrue(app.isReadOnly)
+    }
+
+    func testLiveEventSnapshotsAndHighlights() async {
+        let mock = MockHestiaAPI()
+        await mock.setDiscovery(makeDiscovery(["7": .init(_switch: true, _type: "light")]))
+        let (stream, cont) = AsyncStream.makeStream(of: EventStream.Event.self)
+        let app = AppState(api: mock, events: { stream })
+        await app.login(user: "u", password: "pw")     // starts the event loop
+
+        cont.yield(.connected)                          // → catch-up snapshot
+        cont.yield(.change(node: 7))                     // → highlight node 7 + snapshot
+        await until { app.recentlyChanged.contains("7") }
+
+        XCTAssertTrue(app.recentlyChanged.contains("7"))
+        let discoveries = await mock.calls.filter { $0 == .discovery }.count
+        XCTAssertGreaterThanOrEqual(discoveries, 2)      // login snapshot + ≥1 event-driven snapshot
+
+        cont.finish()
+        await app.signOut()                              // stop the event loop
     }
 
     func testSignOut() async {

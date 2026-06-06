@@ -40,6 +40,7 @@ final class AppState {
     private static let languageKey = "vesta.language"
 
     private let api: any HestiaAPI
+    private let makeEvents: @Sendable () -> AsyncStream<EventStream.Event>
     private var eventTask: Task<Void, Never>?
     private var didBootstrap = false
 
@@ -48,8 +49,10 @@ final class AppState {
     var hasLights: Bool { allDevices.contains { $0.device._type == "light" } }
     var hasBlinds: Bool { allDevices.contains { $0.device._type == "blind" } }
 
-    init(api: any HestiaAPI = APIClient()) {
+    init(api: any HestiaAPI = APIClient(),
+         events: @escaping @Sendable () -> AsyncStream<EventStream.Event> = { EventStream.changes() }) {
         self.api = api
+        self.makeEvents = events
         tempScale = TempScale(rawValue: UserDefaults.standard.string(forKey: Self.tempScaleKey) ?? "C") ?? .celsius
         appLanguage = UserDefaults.standard.string(forKey: Self.languageKey)
     }
@@ -264,12 +267,34 @@ final class AppState {
         await loadDiscovery()
     }
 
+    /// Subscribe to live events and keep the subscription alive. hestia closes the
+    /// stream periodically (and connections drop), so we reconnect with backoff. On
+    /// every (re)connect we refetch a full snapshot — SSE only carries *future*
+    /// events, so anything that changed while we were disconnected would otherwise
+    /// be missed until the next manual refresh.
     private func startEvents() {
         eventTask?.cancel()
         eventTask = Task { [weak self] in
-            for await node in EventStream.changes() {
-                if let node { self?.markChanged(String(node)) }
-                await self?.loadDiscovery()
+            var backoff: UInt64 = 1_000_000_000          // 1s, doubling to a 30s cap
+            while !Task.isCancelled {
+                guard let self else { break }
+                // Catch-up snapshot on every (re)connect, before consuming the stream:
+                // SSE only carries future events, so a change while we were
+                // disconnected would otherwise be missed. hestia queues events
+                // per-subscriber from connect time, so nothing fired now is lost.
+                await self.loadDiscovery()
+                for await event in self.makeEvents() {
+                    switch event {
+                    case .connected:
+                        backoff = 1_000_000_000          // healthy link → fast reconnect next time
+                    case .change(let node):
+                        if let node { self.markChanged(String(node)) }
+                        await self.loadDiscovery()
+                    }
+                }
+                if Task.isCancelled { break }
+                try? await Task.sleep(nanoseconds: backoff)
+                backoff = min(backoff * 2, 30_000_000_000)
             }
         }
     }
