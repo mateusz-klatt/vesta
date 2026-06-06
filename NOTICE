@@ -1,0 +1,14 @@
+Vesta
+Copyright 2026 Mateusz Klatt
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Vesta is an independent client for hestia (https://github.com/mateusz-klatt/hestia).
+It communicates with a hestia server only over hestia's network HTTP/OpenAPI API
+and contains none of hestia's source. hestia is licensed AGPL-3.0; that license
+binds whoever operates a hestia server, not this separate client, so Vesta is free
+to be Apache-2.0.
+
+Swift API types and client are generated at build time by Apache-2.0 licensed
+apple/swift-openapi-generator from Vesta/openapi.json (a pinned copy of hestia's
+emitted OpenAPI document). The generated output is the app's own work product.

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Default backend shown on first launch. Users override it in the
+	     Connect screen / Settings; the override is persisted in UserDefaults
+	     by BackendURLStore. Origin only (scheme + host [+ port]). -->
+	<key>BaseURL</key>
+	<string>https://hestia.example</string>
+</dict>
+</plist>

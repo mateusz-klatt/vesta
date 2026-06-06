@@ -1,0 +1,142 @@
+name: Vesta
+options:
+  deploymentTarget:
+    iOS: "26.0"
+  xcodeVersion: "2620"
+  developmentLanguage: en
+
+settings:
+  SWIFT_VERSION: "6.0"
+  PRODUCT_NAME: Vesta
+  MARKETING_VERSION: "1.0.0"
+  CURRENT_PROJECT_VERSION: "2"
+  ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES
+
+packages:
+  swift-openapi-generator:
+    url: https://github.com/apple/swift-openapi-generator
+    from: "1.10.0"
+  swift-openapi-runtime:
+    url: https://github.com/apple/swift-openapi-runtime
+    from: "1.5.0"
+  swift-openapi-urlsession:
+    url: https://github.com/apple/swift-openapi-urlsession
+    from: "1.0.0"
+
+targets:
+  Vesta:
+    type: application
+    platform: iOS
+    sources:
+      - Vesta
+    dependencies:
+      - package: swift-openapi-runtime
+        product: OpenAPIRuntime
+      - package: swift-openapi-urlsession
+        product: OpenAPIURLSession
+    buildToolPlugins:
+      - plugin: OpenAPIGenerator
+        package: swift-openapi-generator
+    info:
+      path: Vesta/Info.plist
+      properties:
+        CFBundleDisplayName: Vesta
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        ITSAppUsesNonExemptEncryption: false
+        CFBundleLocalizations:
+          - ar
+          - bn
+          - bs
+          - cs
+          - da
+          - de
+          - el
+          - en
+          - es
+          - fa
+          - fi
+          - fil
+          - fr
+          - ga
+          - he
+          - hi
+          - hr
+          - hu
+          - hy
+          - id
+          - is
+          - it
+          - ja
+          - ko
+          - lt
+          - lv
+          - ms
+          - my
+          - nb
+          - nl
+          - pl
+          - pt-BR
+          - ro
+          - ru
+          - sk
+          - sq
+          - sr-Latn
+          - sv
+          - sw
+          - th
+          - tr
+          - uk
+          - vi
+          - zh-Hans
+          - zh-Hant
+        # Vesta talks to a user-supplied hestia backend. A public https origin
+        # (e.g. https://hestia.example) needs nothing special; pointing at a
+        # LAN address (192.168.x.x / *.local) trips iOS local-network privacy,
+        # so we declare the purpose string and allow plain-http on the LAN in
+        # DEBUG. NSAllowsLocalNetworking (not NSAllowsArbitraryLoads) keeps ATS
+        # intact for public hosts and stays clear of App Review flags.
+        NSLocalNetworkUsageDescription: Vesta connects to the hestia server you enter — on your home network this requires local network access.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        UILaunchScreen:
+          UIColorName: BackgroundBase
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ie.klatt.vesta
+        INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.lifestyle"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1,2"
+    scheme:
+      testTargets:
+        - VestaTests
+      gatherCoverageData: true
+
+  VestaTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - VestaTests
+    dependencies:
+      - target: Vesta
+    settings:
+      base:
+        # Override the project-wide PRODUCT_NAME (Vesta) so the test bundle does
+        # not emit its own "Vesta" module — that collides with the app's.
+        PRODUCT_NAME: VestaTests
+        PRODUCT_MODULE_NAME: VestaTests
+        PRODUCT_BUNDLE_IDENTIFIER: ie.klatt.vesta.tests
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Vesta.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Vesta
+        BUNDLE_LOADER: $(TEST_HOST)

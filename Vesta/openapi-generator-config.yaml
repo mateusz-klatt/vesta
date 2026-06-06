@@ -1,0 +1,9 @@
+# swift-openapi-generator (build-tool plugin) configuration.
+# Reads ./openapi.json (the pinned copy of hestia's emitted spec) and emits
+# Swift types + a URLSession-backed client at build time — nothing generated is
+# committed. See README "Typed API pipeline".
+generate:
+  - types
+  - client
+accessModifier: internal
+namingStrategy: idiomatic
