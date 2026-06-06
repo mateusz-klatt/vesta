@@ -252,6 +252,10 @@ private struct BlindRow: View {
             }
             .disabled(app.isReadOnly)
         }
+        .onChange(of: item.device.level) { _, newLevel in
+            // Reflect external changes (e.g. "raise all") in the slider.
+            percent = newLevel.map { Double(Control.coverPercent(value: $0)) } ?? percent
+        }
     }
 
     private var positionLabel: Text {
@@ -293,6 +297,10 @@ private struct ThermostatRow: View {
                 Task { await app.setThermostat(item, celsius: value) }
             }
             .disabled(app.isReadOnly)
+        }
+        .onChange(of: item.device.setpoint) { _, newSetpoint in
+            // Reflect external changes (e.g. turning the thermostat off sets 4°).
+            if let setpoint = newSetpoint { target = Int(setpoint.rounded()) }
         }
     }
 
