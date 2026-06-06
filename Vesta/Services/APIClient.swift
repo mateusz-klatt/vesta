@@ -50,6 +50,8 @@ enum APIError: LocalizedError, Equatable {
 
     static func wrap(_ error: any Error) -> APIError {
         if let api = error as? APIError { return api }
+        // The generated client wraps transport failures in ClientError.
+        if let clientError = error as? ClientError { return wrap(clientError.underlyingError) }
         if let urlError = error as? URLError {
             switch urlError.code {
             case .cannotFindHost, .dnsLookupFailed: return .serverNotFound
@@ -73,16 +75,18 @@ enum APIError: LocalizedError, Equatable {
 actor APIClient: HestiaAPI {
     private var serverURL: URL
     private var client: Client
+    private let transport: any ClientTransport
 
-    init() {
+    init(transport: any ClientTransport = URLSessionTransport()) {
+        self.transport = transport
         serverURL = AppConfig.serverURL
-        client = APIClient.make(serverURL)
+        client = APIClient.make(serverURL, transport)
     }
 
-    private static func make(_ url: URL) -> Client {
+    private static func make(_ url: URL, _ transport: any ClientTransport) -> Client {
         Client(
             serverURL: url,
-            transport: URLSessionTransport(),
+            transport: transport,
             middlewares: [BearerAuthMiddleware(token: { TokenStore.load() })]
         )
     }
@@ -91,7 +95,7 @@ actor APIClient: HestiaAPI {
         let current = AppConfig.serverURL
         if current != serverURL {
             serverURL = current
-            client = APIClient.make(current)
+            client = APIClient.make(current, transport)
         }
     }
 
