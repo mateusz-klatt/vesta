@@ -101,7 +101,7 @@ private struct KlimaCard: View {
                 Spacer()
                 Button("Set") { Task { await app.klimaSet(mode: mode, temp: temp) } }
                     .buttonStyle(.borderedProminent)
-                Button("Off") { Task { await app.klimaOff() } }
+                Button("Turn off") { Task { await app.klimaOff() } }
                     .buttonStyle(.bordered)
             }
         }
@@ -147,8 +147,8 @@ private struct WholeHomeCard: View {
                 HStack {
                     Label("All lights", systemImage: "lightbulb.2").foregroundStyle(Theme.textSecondary)
                     Spacer()
-                    Button("On") { Task { await app.allLights(on: true) } }.buttonStyle(.bordered)
-                    Button("Off") { Task { await app.allLights(on: false) } }.buttonStyle(.bordered)
+                    Button("Turn on") { Task { await app.allLights(on: true) } }.buttonStyle(.bordered)
+                    Button("Turn off") { Task { await app.allLights(on: false) } }.buttonStyle(.bordered)
                 }
             }
             if app.hasBlinds {

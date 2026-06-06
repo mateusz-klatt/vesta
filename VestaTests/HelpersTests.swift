@@ -68,6 +68,20 @@ final class LangTests: XCTestCase {
         XCTAssertFalse(Lang.isRTL("pl"))
         XCTAssertFalse(Lang.isRTL("ja"))
     }
+
+    func testFlag() {
+        XCTAssertEqual(Lang.flag("de"), "🇩🇪")
+        XCTAssertEqual(Lang.flag("pl"), "🇵🇱")
+        XCTAssertEqual(Lang.flag("pt-BR"), "🇧🇷")
+        XCTAssertEqual(Lang.flag("zh-Hant"), "🇹🇼")
+        XCTAssertEqual(Lang.flag("xx-nope"), "🌐")
+    }
+
+    func testAutonym() {
+        XCTAssertEqual(Lang.autonym("de"), "Deutsch")
+        XCTAssertEqual(Lang.autonym("pl"), "Polski")
+        XCTAssertFalse(Lang.autonym("ja").isEmpty)
+    }
 }
 
 final class APIErrorTests: XCTestCase {

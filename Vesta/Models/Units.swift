@@ -67,4 +67,29 @@ enum Lang {
     static func isRTL(_ code: String) -> Bool {
         Locale.Language(identifier: code).characterDirection == .rightToLeft
     }
+
+    /// The language's own name (autonym), e.g. de → "Deutsch", ja → "日本語".
+    static func autonym(_ code: String) -> String {
+        let name = Locale(identifier: code).localizedString(forIdentifier: code) ?? code
+        return name.prefix(1).uppercased() + name.dropFirst()
+    }
+
+    /// A representative flag emoji for the language (best-effort country).
+    static func flag(_ code: String) -> String {
+        guard let region = regionByLanguage[code] else { return "🌐" }
+        return region.unicodeScalars.reduce(into: "") { acc, scalar in
+            if let flagScalar = Unicode.Scalar(127_397 + scalar.value) { acc.unicodeScalars.append(flagScalar) }
+        }
+    }
+
+    private static let regionByLanguage: [String: String] = [
+        "ar": "SA", "bn": "BD", "bs": "BA", "cs": "CZ", "da": "DK", "de": "DE",
+        "el": "GR", "en": "GB", "es": "ES", "fa": "IR", "fi": "FI", "fil": "PH",
+        "fr": "FR", "ga": "IE", "he": "IL", "hi": "IN", "hr": "HR", "hu": "HU",
+        "hy": "AM", "id": "ID", "is": "IS", "it": "IT", "ja": "JP", "ko": "KR",
+        "lt": "LT", "lv": "LV", "ms": "MY", "my": "MM", "nb": "NO", "nl": "NL",
+        "pl": "PL", "pt-BR": "BR", "ro": "RO", "ru": "RU", "sk": "SK", "sq": "AL",
+        "sr-Latn": "RS", "sv": "SE", "sw": "KE", "th": "TH", "tr": "TR", "uk": "UA",
+        "vi": "VN", "zh-Hans": "CN", "zh-Hant": "TW",
+    ]
 }

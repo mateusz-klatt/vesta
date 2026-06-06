@@ -45,9 +45,9 @@ struct SettingsView: View {
                         Text("Fahrenheit (°F)").tag(TempScale.fahrenheit)
                     }
                     Picker("Language", selection: $app.appLanguage) {
-                        Text("System").tag(String?.none)
+                        (Text(verbatim: "🌐  ") + Text("System")).tag(String?.none)
                         ForEach(Self.languages, id: \.self) { code in
-                            Text(Self.displayName(code)).tag(String?.some(code))
+                            Text(verbatim: "\(Lang.flag(code))  \(Lang.autonym(code))").tag(String?.some(code))
                         }
                     }
                 }
@@ -66,9 +66,5 @@ struct SettingsView: View {
             }
             .onAppear { urlText = app.backendURLString }
         }
-    }
-
-    private static func displayName(_ code: String) -> String {
-        Locale.current.localizedString(forIdentifier: code)?.capitalized ?? code
     }
 }
