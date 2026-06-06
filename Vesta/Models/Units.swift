@@ -49,6 +49,28 @@ enum Control {
     }
 }
 
+/// A multi-gang switch's individual channels (e.g. a 2-gang wall plate where one
+/// rocker is the ceiling light and the other a wall lamp). A plain single-gang
+/// device has no `endpoints` and is driven by its aggregate `switch` instead.
+enum Gangs {
+    struct Gang: Equatable, Identifiable {
+        let key: Int        // hestia endpoint channel (1 or 2)
+        let name: String    // server-defined channel name, may be empty
+        let on: Bool
+        var id: Int { key }
+    }
+
+    /// Ordered channels for a device, or `[]` when it's a single-gang switch.
+    static func list(states: [String: Bool]?, names: [String: String]?) -> [Gang] {
+        guard let states, !states.isEmpty else { return [] }
+        let names = names ?? [:]
+        return states.keys
+            .compactMap(Int.init)
+            .sorted()
+            .map { Gang(key: $0, name: names[String($0)] ?? "", on: states[String($0)] ?? false) }
+    }
+}
+
 /// How a blind position should read: fully lowered, fully raised, or a %.
 enum BlindState: Equatable {
     case lowered

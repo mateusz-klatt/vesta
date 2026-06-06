@@ -59,6 +59,27 @@ final class BlindStateTests: XCTestCase {
     }
 }
 
+final class GangsTests: XCTestCase {
+    func testSingleGangIsEmpty() {
+        XCTAssertTrue(Gangs.list(states: nil, names: nil).isEmpty)
+        XCTAssertTrue(Gangs.list(states: [:], names: ["1": "x"]).isEmpty)
+    }
+
+    func testMultiGangOrderedByChannel() {
+        let gangs = Gangs.list(states: ["2": true, "1": false],
+                               names: ["1": "ceiling", "2": "lamp"])
+        XCTAssertEqual(gangs, [
+            Gangs.Gang(key: 1, name: "ceiling", on: false),
+            Gangs.Gang(key: 2, name: "lamp", on: true),
+        ])
+    }
+
+    func testMissingNameFallsBackToEmpty() {
+        let gangs = Gangs.list(states: ["1": true], names: nil)
+        XCTAssertEqual(gangs, [Gangs.Gang(key: 1, name: "", on: true)])
+    }
+}
+
 final class LangTests: XCTestCase {
     func testIsRTL() {
         XCTAssertTrue(Lang.isRTL("ar"))

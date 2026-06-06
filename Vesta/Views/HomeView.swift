@@ -213,7 +213,21 @@ private struct SwitchRow: View {
     @Environment(AppState.self) private var app
     let item: IdentifiedDevice
 
+    private var gangs: [Gangs.Gang] {
+        Gangs.list(states: item.device.endpoints?.additionalProperties,
+                   names: item.device.endpointNames?.additionalProperties)
+    }
+
     var body: some View {
+        if gangs.isEmpty {
+            singleToggle
+        } else {
+            multiGang
+        }
+    }
+
+    /// Plain single-gang switch: one toggle on the aggregate `switch`.
+    private var singleToggle: some View {
         HStack {
             DeviceLabel(item: item)
             Spacer()
@@ -224,6 +238,30 @@ private struct SwitchRow: View {
             .labelsHidden()
             .disabled(app.isReadOnly)
         }
+    }
+
+    /// Multi-gang switch: the device name once, then one toggle per channel.
+    private var multiGang: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            DeviceLabel(item: item)
+            ForEach(gangs) { gang in
+                HStack {
+                    gangLabel(gang).font(.subheadline).foregroundStyle(Theme.textSecondary)
+                        .padding(.leading, 16)
+                    Spacer()
+                    Toggle("", isOn: Binding(
+                        get: { item.device.endpoints?.additionalProperties[String(gang.key)] ?? false },
+                        set: { value in Task { await app.toggle(item, on: value, endpoint: gang.key) } }
+                    ))
+                    .labelsHidden()
+                    .disabled(app.isReadOnly)
+                }
+            }
+        }
+    }
+
+    private func gangLabel(_ gang: Gangs.Gang) -> Text {
+        gang.name.isEmpty ? Text("Channel \(gang.key)") : Text(verbatim: gang.name)
     }
 }
 

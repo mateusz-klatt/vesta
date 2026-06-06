@@ -92,6 +92,32 @@ final class AppStateTests: XCTestCase {
         XCTAssertTrue(calls.contains(.setSwitch(7, true, nil)))
     }
 
+    func testAllLightsHitsEveryGangOfMultiGang() async {
+        let mock = MockHestiaAPI()
+        await mock.setDiscovery(makeDiscovery([
+            "3": .init(_switch: false, _type: "light"),  // single-gang
+            "7": .init(endpointNames: .init(additionalProperties: ["1": "duże", "2": "małe"]),
+                       endpoints: .init(additionalProperties: ["1": true, "2": false]),
+                       _switch: true, _type: "light"),    // 2-gang
+        ]))
+        let app = AppState(api: mock)
+        await app.loadDiscovery()
+        await app.allLights(on: true)
+        let calls = await mock.calls
+        XCTAssertTrue(calls.contains(.setSwitch(3, true, nil)))   // single → no endpoint
+        XCTAssertTrue(calls.contains(.setSwitch(7, true, 1)))     // each gang addressed
+        XCTAssertTrue(calls.contains(.setSwitch(7, true, 2)))
+        XCTAssertFalse(calls.contains(.setSwitch(7, true, nil)))  // never the bogus aggregate
+    }
+
+    func testToggleGangSendsEndpoint() async {
+        let mock = MockHestiaAPI()
+        let app = AppState(api: mock)
+        await app.toggle(device("7", type: "light"), on: false, endpoint: 2)
+        let calls = await mock.calls
+        XCTAssertTrue(calls.contains(.setSwitch(7, false, 2)))
+    }
+
     func testAllBlindsBulk() async {
         let mock = MockHestiaAPI()
         await mock.setDiscovery(makeDiscovery(["2": .init(_type: "blind"), "5": .init(_type: "blind")]))

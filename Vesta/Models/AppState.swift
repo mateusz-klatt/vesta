@@ -61,12 +61,34 @@ final class AppState {
     func bootstrap() async {
         guard !didBootstrap else { return }
         didBootstrap = true
+        #if DEBUG
+        // Screenshot/demo bootstrap: `-vesta.url <url> [-vesta.user u -vesta.pass p]`.
+        // DEBUG-only — stripped from Release builds.
+        if let url = Self.launchValue("-vesta.url"), let canonical = BackendURLStore.canonicalize(url) {
+            BackendURLStore.shared.saveOverride(canonical)
+            backendURLString = canonical.absoluteString
+            if let user = Self.launchValue("-vesta.user"), let pass = Self.launchValue("-vesta.pass") {
+                await login(user: user, password: pass)
+            } else {
+                await connect()
+            }
+            return
+        }
+        #endif
         guard BackendURLStore.shared.hasOverride() else {
             phase = .unconfigured
             return
         }
         await connect()
     }
+
+    #if DEBUG
+    private static func launchValue(_ key: String) -> String? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: key), index + 1 < args.count else { return nil }
+        return args[index + 1]
+    }
+    #endif
 
     func connect() async {
         phase = .connecting
@@ -181,7 +203,24 @@ final class AppState {
     // MARK: - Whole-home
 
     func allLights(on: Bool) async {
-        await bulk(type: "light") { try await $0.setSwitch(node: $1, on: on, endpoint: nil) }
+        let api = self.api
+        await withTaskGroup(of: Void.self) { group in
+            for op in lightSwitchOps() {
+                group.addTask { try? await api.setSwitch(node: op.node, on: on, endpoint: op.endpoint) }
+            }
+        }
+        await loadDiscovery()
+    }
+
+    /// One switch op per gang on multi-gang lights, a single nil-endpoint op
+    /// otherwise — so "all lights" reaches every channel, not just gang 1.
+    private func lightSwitchOps() -> [(node: Int, endpoint: Int?)] {
+        allDevices.filter { $0.device._type == "light" }.flatMap { dev -> [(node: Int, endpoint: Int?)] in
+            guard let node = Int(dev.id) else { return [] }
+            let gangs = Gangs.list(states: dev.device.endpoints?.additionalProperties,
+                                   names: dev.device.endpointNames?.additionalProperties)
+            return gangs.isEmpty ? [(node, nil)] : gangs.map { (node, $0.key) }
+        }
     }
 
     func allBlinds(up: Bool) async {
