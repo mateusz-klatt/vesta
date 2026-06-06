@@ -242,7 +242,7 @@ private struct BlindRow: View {
             HStack {
                 DeviceLabel(item: item)
                 Spacer()
-                Text(positionLabel).font(.caption).foregroundStyle(Theme.textSecondary)
+                positionLabel.font(.caption).foregroundStyle(Theme.textSecondary)
             }
             Slider(value: $percent, in: 0...100, step: 1) { editing in
                 if !editing { Task { await app.setCover(item, percent: Int(percent)) } }
@@ -251,11 +251,11 @@ private struct BlindRow: View {
         }
     }
 
-    private var positionLabel: String {
+    private var positionLabel: Text {
         switch BlindState.from(percent: Int(percent)) {
-        case .lowered: return String(localized: "Lowered")
-        case .raised: return String(localized: "Raised")
-        case .partial(let p): return "\(p)%"
+        case .lowered: return Text("Lowered")
+        case .raised: return Text("Raised")
+        case .partial(let p): return Text(verbatim: "\(p)%")
         }
     }
 }
@@ -313,24 +313,26 @@ private struct SensorRow: View {
         HStack {
             DeviceLabel(item: item)
             Spacer()
-            Text(stateText).font(.caption).foregroundStyle(Theme.textSecondary)
+            stateText.font(.caption).foregroundStyle(Theme.textSecondary)
         }
     }
 
-    private var stateText: String {
+    // Returns a Text (not a String) so localized labels honor the in-app
+    // language override via the environment locale, not just the system language.
+    private var stateText: Text {
         let device = item.device
         if let door = device.door {
             switch door {
-            case "open": return String(localized: "Open")
-            case "closed": return String(localized: "Closed")
-            default: return door
+            case "open": return Text("Open")
+            case "closed": return Text("Closed")
+            default: return Text(verbatim: door)
             }
         }
         if let motion = device.motion {
-            return motion ? String(localized: "Motion") : String(localized: "No motion")
+            return motion ? Text("Motion") : Text("No motion")
         }
-        if let temp = app.formatTemp(device.temperature) { return temp }
-        return "—"
+        if let temp = app.formatTemp(device.temperature) { return Text(verbatim: temp) }
+        return Text(verbatim: "—")
     }
 }
 
