@@ -6,7 +6,7 @@ import SwiftUI
 struct TemperatureSlider: View {
     @Binding var celsius: Int
     let range: ClosedRange<Int>
-    var onCommit: (Int) -> Void = { _ in }
+    var onCommit: (Int) -> Void = { _ in /* no callback unless a caller opts in */ }
 
     var body: some View {
         Slider(
