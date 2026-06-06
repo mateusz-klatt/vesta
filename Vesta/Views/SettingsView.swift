@@ -45,7 +45,11 @@ struct SettingsView: View {
                         Text("Fahrenheit (°F)").tag(TempScale.fahrenheit)
                     }
                     Picker("Language", selection: $app.appLanguage) {
-                        (Text(verbatim: "🌐  ") + Text("System")).tag(String?.none)
+                        HStack(spacing: 0) {
+                            Text(verbatim: "🌐  ")
+                            Text("System")
+                        }
+                        .tag(String?.none)
                         ForEach(Self.languages, id: \.self) { code in
                             Text(verbatim: "\(Lang.flag(code))  \(Lang.autonym(code))").tag(String?.some(code))
                         }
