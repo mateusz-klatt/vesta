@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Top-level router: progress while probing, the connect/login surface when we
-/// need a backend or credentials, the rooms home once we have state.
+/// Top-level router: spinner while probing, the connect/onboarding/sign-in
+/// surface when there's no session, the rooms home once we have state.
 struct RootView: View {
     @Environment(AppState.self) private var app
 
@@ -13,7 +13,7 @@ struct RootView: View {
             case .connecting:
                 ProgressView("Connecting…")
                     .controlSize(.large)
-            case .needsAuth, .failed:
+            case .unconfigured, .needsAuth, .failed:
                 ConnectView()
             case .ready:
                 HomeView()
