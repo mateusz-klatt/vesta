@@ -3,12 +3,23 @@ import SwiftUI
 @main
 struct VestaApp: App {
     @State private var app = AppState()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
             content
                 .environment(app)
                 .tint(Theme.accent)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // iOS drops the SSE socket while suspended; re-sync the moment we return
+            // (reconnect + fresh snapshot) instead of waiting for the dead stream to
+            // be noticed, and stop the subscription while backgrounded.
+            switch phase {
+            case .active: app.enterForeground()
+            case .background: app.enterBackground()
+            default: break
+            }
         }
     }
 

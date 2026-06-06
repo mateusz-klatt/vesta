@@ -140,6 +140,23 @@ final class AppState {
         phase = .needsAuth
     }
 
+    // MARK: - App lifecycle
+
+    /// Back to the foreground: iOS dropped the event socket while we were suspended,
+    /// so restart the subscription — that reconnects and refetches a fresh snapshot,
+    /// catching anything that changed while we were away (no waiting for the dead
+    /// stream to time out). No-op unless we have a live session.
+    func enterForeground() {
+        guard phase == .ready else { return }
+        startEvents()
+    }
+
+    /// Going to the background: drop the subscription (it would die anyway), so we
+    /// don't hold a dead connection or spin reconnect attempts while suspended.
+    func enterBackground() {
+        eventTask?.cancel()
+    }
+
     func loadDiscovery() async {
         do {
             let discovery = try await api.discovery()

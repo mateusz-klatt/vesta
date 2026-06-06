@@ -48,6 +48,12 @@ final class AppStateTests: XCTestCase {
         AsyncStream { $0.finish() }
     }
 
+    /// An event source that connects and stays open without delivering, so the
+    /// event loop parks in its `for await` (no reconnect spin) until cancelled.
+    private static let openForever: @Sendable () -> AsyncStream<EventStream.Event> = {
+        AsyncStream { _ in }
+    }
+
     /// Poll the main actor until `cond` holds (or a timeout), letting background
     /// tasks (the event loop) make progress between checks.
     private func until(_ cond: @escaping () -> Bool, timeout: TimeInterval = 2) async {
@@ -55,6 +61,17 @@ final class AppStateTests: XCTestCase {
         while !cond() && Date().timeIntervalSince(start) < timeout {
             try? await Task.sleep(nanoseconds: 5_000_000)
         }
+    }
+
+    /// Wait until the mock has recorded at least `n` discovery (snapshot) calls.
+    private func discoveries(_ mock: MockHestiaAPI, atLeast n: Int, timeout: TimeInterval = 2) async -> Int {
+        let start = Date()
+        var count = await mock.calls.filter { $0 == .discovery }.count
+        while count < n && Date().timeIntervalSince(start) < timeout {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+            count = await mock.calls.filter { $0 == .discovery }.count
+        }
+        return count
     }
 
     private func device(_ id: String, type: String, on: Bool? = nil, setpoint: Double? = nil) -> IdentifiedDevice {
@@ -252,6 +269,28 @@ final class AppStateTests: XCTestCase {
 
         cont.finish()
         await app.signOut()                              // stop the event loop
+    }
+
+    func testForegroundResyncsSnapshot() async {
+        let mock = MockHestiaAPI()
+        await mock.setDiscovery(makeDiscovery(["1": .init(_switch: true, _type: "light")]))
+        let app = AppState(api: mock, events: Self.openForever)
+        await app.login(user: "u", password: "pw")        // .ready; event loop snapshots once
+        let before = await discoveries(mock, atLeast: 2)    // login snapshot + event-loop snapshot
+
+        app.enterForeground()                               // → reconnect + fresh snapshot
+        let after = await discoveries(mock, atLeast: before + 1)
+        XCTAssertGreaterThan(after, before)
+
+        app.enterBackground()                               // stops cleanly (no assertion needed)
+    }
+
+    func testForegroundIgnoredWhenNotReady() async {
+        let mock = MockHestiaAPI()
+        let app = AppState(api: mock, events: Self.openForever)   // phase stays .connecting
+        app.enterForeground()
+        let calls = await mock.calls
+        XCTAssertFalse(calls.contains(.discovery))          // no session → no snapshot/connect
     }
 
     func testSignOut() async {
