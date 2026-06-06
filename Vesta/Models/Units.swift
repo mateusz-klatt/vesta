@@ -48,3 +48,23 @@ enum Control {
         role == "viewer"
     }
 }
+
+/// How a blind position should read: fully lowered, fully raised, or a %.
+enum BlindState: Equatable {
+    case lowered
+    case raised
+    case partial(Int)
+
+    static func from(percent: Int) -> BlindState {
+        if percent <= 0 { return .lowered }
+        if percent >= 100 { return .raised }
+        return .partial(percent)
+    }
+}
+
+enum Lang {
+    /// Whether a BCP-47 language code is written right-to-left (ar/fa/he/…).
+    static func isRTL(_ code: String) -> Bool {
+        Locale.Language(identifier: code).characterDirection == .rightToLeft
+    }
+}

@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// Rooms home — the wife-friendly surface: live environment, A/C, one-tap
-/// whole-home controls, then devices grouped by room with the right control per
-/// type. A viewer-role session sees everything but controls are disabled.
+/// whole-home controls, then devices grouped by room. A viewer-role session sees
+/// everything but controls are disabled. Devices briefly highlight on live events.
 struct HomeView: View {
     @Environment(AppState.self) private var app
     @State private var showSettings = false
@@ -78,6 +78,7 @@ private struct KlimaCard: View {
     private var programs: [String: [Int]] { klima.powerOn?.additionalProperties ?? [:] }
     private var modes: [String] { programs.keys.sorted() }
     private var temps: [Int] { (programs[mode] ?? []).sorted() }
+    private var tempRange: ClosedRange<Int> { (temps.first ?? 16)...(max(temps.first ?? 16, temps.last ?? 30)) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -91,10 +92,12 @@ private struct KlimaCard: View {
             }
             .pickerStyle(.segmented)
             HStack {
-                Picker("Temperature", selection: $temp) {
-                    ForEach(temps, id: \.self) { Text(verbatim: "\($0)°").tag($0) }
-                }
-                .pickerStyle(.menu)
+                Text("Temperature").font(.subheadline).foregroundStyle(Theme.textSecondary)
+                Spacer()
+                Text(verbatim: "\(temp)°").foregroundStyle(Theme.textPrimary)
+            }
+            TemperatureSlider(celsius: $temp, range: tempRange)
+            HStack {
                 Spacer()
                 Button("Set") { Task { await app.klimaSet(mode: mode, temp: temp) } }
                     .buttonStyle(.borderedProminent)
@@ -169,11 +172,10 @@ private struct RoomCard: View {
     let room: RoomGroup
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(room.name).font(.headline)
             ForEach(room.devices) { item in
                 DeviceRow(item: item)
-                if item.id != room.devices.last?.id { Divider() }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -182,9 +184,22 @@ private struct RoomCard: View {
 }
 
 private struct DeviceRow: View {
+    @Environment(AppState.self) private var app
     let item: IdentifiedDevice
 
+    private var highlighted: Bool { app.recentlyChanged.contains(item.id) }
+
     var body: some View {
+        content
+            .padding(8)
+            .background(
+                highlighted ? Theme.accent.opacity(0.14) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 10)
+            )
+            .animation(.easeOut(duration: 0.6), value: highlighted)
+    }
+
+    @ViewBuilder private var content: some View {
         switch item.device._type {
         case "light", "plug": SwitchRow(item: item)
         case "blind": BlindRow(item: item)
@@ -227,12 +242,20 @@ private struct BlindRow: View {
             HStack {
                 DeviceLabel(item: item)
                 Spacer()
-                Text(verbatim: "\(Int(percent))%").font(.caption).foregroundStyle(Theme.textSecondary)
+                Text(positionLabel).font(.caption).foregroundStyle(Theme.textSecondary)
             }
             Slider(value: $percent, in: 0...100, step: 1) { editing in
                 if !editing { Task { await app.setCover(item, percent: Int(percent)) } }
             }
             .disabled(app.isReadOnly)
+        }
+    }
+
+    private var positionLabel: String {
+        switch BlindState.from(percent: Int(percent)) {
+        case .lowered: return String(localized: "Lowered")
+        case .raised: return String(localized: "Raised")
+        case .partial(let p): return "\(p)%"
         }
     }
 }
@@ -259,17 +282,17 @@ private struct ThermostatRow: View {
                 .labelsHidden()
                 .disabled(app.isReadOnly)
             }
-            Stepper(value: $target, in: 4...28) {
-                Text("Target \(app.formatSetpoint(target))")
+            HStack {
+                Text("Target \(app.formatSetpoint(target))").font(.caption).foregroundStyle(Theme.textSecondary)
+                Spacer()
             }
-            .onChange(of: target) { _, value in
+            TemperatureSlider(celsius: $target, range: 4...28) { value in
                 Task { await app.setThermostat(item, celsius: value) }
             }
             .disabled(app.isReadOnly)
         }
     }
 
-    /// "detected → setpoint" using the chosen scale.
     private var statusLine: String {
         let detected = app.formatTemp(item.device.temperature)
         let set = item.device.setpoint.map { app.formatSetpoint(Int($0.rounded())) }

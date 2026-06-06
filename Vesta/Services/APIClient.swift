@@ -70,7 +70,7 @@ enum APIError: LocalizedError, Equatable {
 /// Auth is a bearer token: ``login(user:password:)`` requests `bearer: true`,
 /// stores the token in the Keychain, and ``BearerAuthMiddleware`` attaches it to
 /// every subsequent request. Rebuilt when the user points Vesta at a new backend.
-actor APIClient {
+actor APIClient: HestiaAPI {
     private var serverURL: URL
     private var client: Client
 

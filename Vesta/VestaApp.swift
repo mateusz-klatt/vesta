@@ -6,11 +6,21 @@ struct VestaApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            content
                 .environment(app)
                 .tint(Theme.accent)
-                // In-app language override (instant for SwiftUI text); nil = system.
-                .environment(\.locale, Locale(identifier: app.appLanguage ?? Locale.current.identifier))
+        }
+    }
+
+    /// Apply the in-app language override (instant for SwiftUI text) and mirror the
+    /// layout for right-to-left languages. nil = follow the system.
+    @ViewBuilder private var content: some View {
+        if let language = app.appLanguage {
+            RootView()
+                .environment(\.locale, Locale(identifier: language))
+                .environment(\.layoutDirection, Lang.isRTL(language) ? .rightToLeft : .leftToRight)
+        } else {
+            RootView()
         }
     }
 }

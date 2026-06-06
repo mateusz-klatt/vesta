@@ -49,6 +49,27 @@ final class ControlMathTests: XCTestCase {
     }
 }
 
+final class BlindStateTests: XCTestCase {
+    func testFromPercent() {
+        XCTAssertEqual(BlindState.from(percent: 0), .lowered)
+        XCTAssertEqual(BlindState.from(percent: -5), .lowered)
+        XCTAssertEqual(BlindState.from(percent: 100), .raised)
+        XCTAssertEqual(BlindState.from(percent: 140), .raised)
+        XCTAssertEqual(BlindState.from(percent: 42), .partial(42))
+    }
+}
+
+final class LangTests: XCTestCase {
+    func testIsRTL() {
+        XCTAssertTrue(Lang.isRTL("ar"))
+        XCTAssertTrue(Lang.isRTL("he"))
+        XCTAssertTrue(Lang.isRTL("fa"))
+        XCTAssertFalse(Lang.isRTL("en"))
+        XCTAssertFalse(Lang.isRTL("pl"))
+        XCTAssertFalse(Lang.isRTL("ja"))
+    }
+}
+
 final class APIErrorTests: XCTestCase {
 
     func testWrapMapsURLErrorCodes() {

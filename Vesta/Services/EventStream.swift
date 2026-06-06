@@ -1,10 +1,15 @@
 import Foundation
 
-/// Consumes hestia's `/api/events` Server-Sent-Events stream and yields a tick
-/// whenever a state event arrives. OpenAPI has no streaming model, so this is
-/// plain `URLSession.bytes` line parsing; the UI reacts by refetching discovery.
+/// Consumes hestia's `/api/events` SSE stream. Each frame yields the node id of a
+/// device state change (or nil for globals/klima/discovery frames) so the UI can
+/// briefly highlight what just changed and refetch.
 enum EventStream {
-    static func ticks() -> AsyncStream<Void> {
+    private struct Frame: Decodable {
+        let type: String?
+        let node: Int?
+    }
+
+    static func changes() -> AsyncStream<Int?> {
         AsyncStream { continuation in
             let task = Task {
                 let url = AppConfig.serverURL.appendingPathComponent("api/events")
@@ -22,10 +27,13 @@ enum EventStream {
                     }
                     for try await line in bytes.lines {
                         if Task.isCancelled { break }
-                        if line.hasPrefix("data:") { continuation.yield(()) }
+                        guard line.hasPrefix("data:") else { continue }
+                        let json = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+                        let frame = try? JSONDecoder().decode(Frame.self, from: Data(json.utf8))
+                        continuation.yield(frame?.type == "state" ? frame?.node : nil)
                     }
                 } catch {
-                    // Stream ended or failed; caller may reconnect.
+                    // stream ended or failed; caller may reconnect
                 }
                 continuation.finish()
             }

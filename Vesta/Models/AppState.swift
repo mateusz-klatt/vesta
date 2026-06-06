@@ -33,10 +33,13 @@ final class AppState {
         didSet { UserDefaults.standard.set(appLanguage, forKey: Self.languageKey) }
     }
 
+    /// Node ids whose state changed in the last moment (for a brief highlight).
+    private(set) var recentlyChanged: Set<String> = []
+
     private static let tempScaleKey = "vesta.tempScale"
     private static let languageKey = "vesta.language"
 
-    private let api = APIClient()
+    private let api: any HestiaAPI
     private var eventTask: Task<Void, Never>?
     private var didBootstrap = false
 
@@ -45,7 +48,8 @@ final class AppState {
     var hasLights: Bool { allDevices.contains { $0.device._type == "light" } }
     var hasBlinds: Bool { allDevices.contains { $0.device._type == "blind" } }
 
-    init() {
+    init(api: any HestiaAPI = APIClient()) {
+        self.api = api
         tempScale = TempScale(rawValue: UserDefaults.standard.string(forKey: Self.tempScaleKey) ?? "C") ?? .celsius
         appLanguage = UserDefaults.standard.string(forKey: Self.languageKey)
     }
@@ -177,7 +181,7 @@ final class AppState {
     // MARK: - Whole-home
 
     func allLights(on: Bool) async {
-        await bulk(type: "light") { try await $0.setSwitch(node: $1, on: on) }
+        await bulk(type: "light") { try await $0.setSwitch(node: $1, on: on, endpoint: nil) }
     }
 
     func allBlinds(up: Bool) async {
@@ -197,7 +201,7 @@ final class AppState {
 
     // MARK: - Helpers
 
-    private func run(on item: IdentifiedDevice, _ action: @escaping @Sendable (APIClient, Int) async throws -> Void) async {
+    private func run(on item: IdentifiedDevice, _ action: @escaping @Sendable (any HestiaAPI, Int) async throws -> Void) async {
         guard let node = Int(item.id) else { return }
         do {
             try await action(api, node)
@@ -212,7 +216,7 @@ final class AppState {
         } catch { phase = .failed(APIError.wrap(error)) }
     }
 
-    private func bulk(type: String, _ action: @escaping @Sendable (APIClient, Int) async throws -> Void) async {
+    private func bulk(type: String, _ action: @escaping @Sendable (any HestiaAPI, Int) async throws -> Void) async {
         let nodes = allDevices.filter { $0.device._type == type }.compactMap { Int($0.id) }
         let api = self.api
         await withTaskGroup(of: Void.self) { group in
@@ -224,9 +228,20 @@ final class AppState {
     private func startEvents() {
         eventTask?.cancel()
         eventTask = Task { [weak self] in
-            for await _ in EventStream.ticks() {
+            for await node in EventStream.changes() {
+                if let node { self?.markChanged(String(node)) }
                 await self?.loadDiscovery()
             }
+        }
+    }
+
+    /// Flag a node as just-changed, then clear it after a beat so the UI can fade
+    /// a brief highlight.
+    private func markChanged(_ id: String) {
+        recentlyChanged.insert(id)
+        Task {
+            try? await Task.sleep(for: .milliseconds(1400))
+            recentlyChanged.remove(id)
         }
     }
 }
