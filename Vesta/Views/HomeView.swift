@@ -94,7 +94,7 @@ private struct KlimaCard: View {
             HStack {
                 Text("Temperature").font(.subheadline).foregroundStyle(Theme.textSecondary)
                 Spacer()
-                Text(verbatim: "\(temp)°").foregroundStyle(Theme.textPrimary)
+                Text(verbatim: app.formatSetpoint(temp)).foregroundStyle(Theme.textPrimary)
             }
             TemperatureSlider(celsius: $temp, range: tempRange)
             HStack {
@@ -119,7 +119,7 @@ private struct KlimaCard: View {
     private var pictogram: String {
         guard let state, state.power else { return "⏻" }
         let icon = ["cool": "❄️", "heat": "🔥", "auto": "🔄", "dry": "💧", "fan": "🌀"][state.mode ?? ""] ?? "❄️"
-        if let t = state.temp { return "\(icon) \(t)°" }
+        if let t = state.temp { return "\(icon) \(app.formatSetpoint(t))" }
         return icon
     }
 
