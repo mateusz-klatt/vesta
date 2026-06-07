@@ -2,7 +2,13 @@
 
 A native **SwiftUI** iOS client for [**hestia**](https://github.com/mateusz-klatt/hestia) — control your Keemple smart‑home from your phone, instead of a browser tab. Vesta talks to **your own** hestia server (you enter its URL), with a strongly‑typed API layer generated directly from hestia's OpenAPI contract.
 
-> Status: early scaffold. App Store name **Vesta** (`ie.klatt.vesta`) is reserved.
+> Status: feature‑complete; preparing the first TestFlight / App Store build. App Store name **Vesta** (`ie.klatt.vesta`) is reserved.
+
+| Rooms | Polski | العربية (RTL) | Connect |
+| --- | --- | --- | --- |
+| ![Rooms](docs/screenshots/rooms.png) | ![Polish](docs/screenshots/rooms-pl.png) | ![Arabic, right‑to‑left](docs/screenshots/rooms-ar.png) | ![Connect to your own server](docs/screenshots/connect.png) |
+
+<sub>One‑tap room‑grouped control — lights (incl. multi‑gang), blinds, thermostats and A/C — with live updates over SSE, **45 languages** with full right‑to‑left layout, and bring‑your‑own‑server onboarding (no hard‑coded host).</sub>
 
 ## Why a separate app
 
