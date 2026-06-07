@@ -36,6 +36,12 @@ struct HomeView: View {
             }
             .sheet(isPresented: $showSettings) { SettingsView().appLanguage(app.appLanguage) }
             .refreshable { await app.loadDiscovery() }
+            #if DEBUG
+            .onAppear {
+                // Screenshot automation: auto-present Settings for layout capture.
+                if ProcessInfo.processInfo.arguments.contains("-vesta.openSettings") { showSettings = true }
+            }
+            #endif
         }
     }
 }

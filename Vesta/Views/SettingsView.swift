@@ -45,11 +45,9 @@ struct SettingsView: View {
                         Text("Fahrenheit (°F)").tag(TempScale.fahrenheit)
                     }
                     Picker("Language", selection: $app.appLanguage) {
-                        HStack(spacing: 0) {
-                            Text(verbatim: "🌐  ")
-                            Text("System")
-                        }
-                        .tag(String?.none)
+                        // Single Text (not an HStack) so the menu picker's collapsed
+                        // value renders it; interpolating Text keeps "System" localized.
+                        Text("🌐  \(Text("System"))").tag(String?.none)
                         ForEach(Self.languages, id: \.self) { code in
                             Text(verbatim: "\(Lang.flag(code))  \(Lang.autonym(code))").tag(String?.some(code))
                         }
