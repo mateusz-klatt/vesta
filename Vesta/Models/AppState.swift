@@ -222,30 +222,18 @@ final class AppState {
 
     // MARK: - Whole-home
 
-    func allLights(on: Bool) async {
-        let api = self.api
-        await withTaskGroup(of: Void.self) { group in
-            for op in lightSwitchOps() {
-                group.addTask { try? await api.setSwitch(node: op.node, on: on, endpoint: op.endpoint) }
-            }
-        }
-        await loadDiscovery()
-    }
+    // Whole-home sweeps are a single server-side scene, never a client-side
+    // fan-out: the registry's opt-out list (exclude_from_all / per-gang
+    // endpoint_exclude) is deliberately not exposed to clients, so only the
+    // server can skip excluded devices/gangs (and pick level-vs-switch for
+    // dimmable lights).
 
-    /// One switch op per gang on multi-gang lights, a single nil-endpoint op
-    /// otherwise — so "all lights" reaches every channel, not just gang 1.
-    private func lightSwitchOps() -> [(node: Int, endpoint: Int?)] {
-        allDevices.filter { $0.device._type == "light" }.flatMap { dev -> [(node: Int, endpoint: Int?)] in
-            guard let node = Int(dev.id) else { return [] }
-            let gangs = Gangs.list(states: dev.device.endpoints?.additionalProperties,
-                                   names: dev.device.endpointNames?.additionalProperties)
-            return gangs.isEmpty ? [(node, nil)] : gangs.map { (node, $0.key) }
-        }
+    func allLights(on: Bool) async {
+        await runScene(on ? .lightsOn : .lightsOff)
     }
 
     func allBlinds(up: Bool) async {
-        let value = up ? 99 : 0
-        await bulk(type: "blind") { try await $0.setCover(node: $1, value: value) }
+        await runScene(up ? .blindsUp : .blindsDown)
     }
 
     // MARK: - Display helpers
@@ -275,13 +263,11 @@ final class AppState {
         } catch { phase = .failed(APIError.wrap(error)) }
     }
 
-    private func bulk(type: String, _ action: @escaping @Sendable (any HestiaAPI, Int) async throws -> Void) async {
-        let nodes = allDevices.filter { $0.device._type == type }.compactMap { Int($0.id) }
-        let api = self.api
-        await withTaskGroup(of: Void.self) { group in
-            for node in nodes { group.addTask { try? await action(api, node) } }
-        }
-        await loadDiscovery()
+    private func runScene(_ op: Components.Schemas.SceneRequest.OpPayload) async {
+        do {
+            try await api.scene(op)
+            await loadDiscovery()
+        } catch { phase = .failed(APIError.wrap(error)) }
     }
 
     /// Subscribe to live events and keep the subscription alive. hestia closes the
