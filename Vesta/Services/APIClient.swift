@@ -148,6 +148,20 @@ actor APIClient: HestiaAPI {
         try await sendControl(.cover(.init(node: node, op: .cover, value: max(0, min(99, value)))))
     }
 
+    /// Run a house-wide scene (all lights/blinds). The server expands the sweep
+    /// and honors the registry's whole-home exclusions, which aren't exposed to
+    /// clients — so this must stay a single server-side call.
+    func scene(_ op: Components.Schemas.SceneRequest.OpPayload) async throws {
+        refresh()
+        do {
+            switch try await client.scene(.init(body: .json(.init(op: op)))) {
+            case .ok: return
+            case .badRequest: throw APIError.http(400)
+            case .undocumented(let code, _): throw mapStatus(code)
+            }
+        } catch { throw APIError.wrap(error) }
+    }
+
     func setThermostat(node: Int, celsius: Int) async throws {
         try await sendControl(.thermostat(.init(celsius: .init(value1: max(4, min(28, celsius))), node: node, op: .thermostat)))
     }

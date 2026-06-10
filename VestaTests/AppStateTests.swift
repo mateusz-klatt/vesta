@@ -9,6 +9,7 @@ actor MockHestiaAPI: HestiaAPI {
         case login(String, String)
         case setSwitch(Int, Bool, Int?)
         case setCover(Int, Int)
+        case scene(Components.Schemas.SceneRequest.OpPayload)
         case setThermostat(Int, Int)
         case setThermostatPower(Int, Bool)
         case sendIR(String, String)
@@ -17,9 +18,11 @@ actor MockHestiaAPI: HestiaAPI {
     private(set) var calls: [Call] = []
     private var whoamiResult = Components.Schemas.WhoAmI(role: "operator", user: "u")
     private var discoveryResult: Components.Schemas.Discovery?
+    private var sceneError: APIError?
 
     func setWhoami(role: String?) { whoamiResult = .init(role: role, user: "u") }
     func setDiscovery(_ discovery: Components.Schemas.Discovery) { discoveryResult = discovery }
+    func setSceneError(_ error: APIError) { sceneError = error }
 
     func whoami() async throws -> Components.Schemas.WhoAmI { calls.append(.whoami); return whoamiResult }
     func discovery() async throws -> Components.Schemas.Discovery {
@@ -34,6 +37,10 @@ actor MockHestiaAPI: HestiaAPI {
     func logout() async { calls.append(.logout) }
     func setSwitch(node: Int, on: Bool, endpoint: Int?) async throws { calls.append(.setSwitch(node, on, endpoint)) }
     func setCover(node: Int, value: Int) async throws { calls.append(.setCover(node, value)) }
+    func scene(_ op: Components.Schemas.SceneRequest.OpPayload) async throws {
+        calls.append(.scene(op))
+        if let sceneError { throw sceneError }
+    }
     func setThermostat(node: Int, celsius: Int) async throws { calls.append(.setThermostat(node, celsius)) }
     func setThermostatPower(node: Int, on: Bool) async throws { calls.append(.setThermostatPower(node, on)) }
     func sendIR(file: String, button: String) async throws { calls.append(.sendIR(file, button)) }
@@ -109,37 +116,26 @@ final class AppStateTests: XCTestCase {
         XCTAssertTrue(app.hasBlinds)
     }
 
-    func testAllLightsBulkHitsEveryLight() async {
+    /// Whole-home sweeps go through the server scene endpoint — exactly one call,
+    /// no per-device fan-out (the server owns the exclusion list), then a refetch.
+    /// The home is populated (incl. a 2-gang light) so any reintroduced client-side
+    /// sweep would surface as setSwitch/setCover calls and fail the exact match.
+    func testAllLightsRunsServerScene() async {
         let mock = MockHestiaAPI()
         await mock.setDiscovery(makeDiscovery([
-            "1": .init(_switch: false, _type: "light"),
-            "7": .init(_switch: false, _type: "light"),
+            "1": .init(_switch: true, _type: "light"),
+            "7": .init(endpointNames: .init(additionalProperties: ["1": "duże", "2": "małe"]),
+                       endpoints: .init(additionalProperties: ["1": true, "2": false]),
+                       _switch: true, _type: "light"),    // 2-gang
             "2": .init(_type: "blind"),
         ]))
         let app = AppState(api: mock)
         await app.loadDiscovery()
+        let before = await mock.calls.count
         await app.allLights(on: true)
+        await app.allLights(on: false)
         let calls = await mock.calls
-        XCTAssertTrue(calls.contains(.setSwitch(1, true, nil)))
-        XCTAssertTrue(calls.contains(.setSwitch(7, true, nil)))
-    }
-
-    func testAllLightsHitsEveryGangOfMultiGang() async {
-        let mock = MockHestiaAPI()
-        await mock.setDiscovery(makeDiscovery([
-            "3": .init(_switch: false, _type: "light"),  // single-gang
-            "7": .init(endpointNames: .init(additionalProperties: ["1": "duże", "2": "małe"]),
-                       endpoints: .init(additionalProperties: ["1": true, "2": false]),
-                       _switch: true, _type: "light"),    // 2-gang
-        ]))
-        let app = AppState(api: mock)
-        await app.loadDiscovery()
-        await app.allLights(on: true)
-        let calls = await mock.calls
-        XCTAssertTrue(calls.contains(.setSwitch(3, true, nil)))   // single → no endpoint
-        XCTAssertTrue(calls.contains(.setSwitch(7, true, 1)))     // each gang addressed
-        XCTAssertTrue(calls.contains(.setSwitch(7, true, 2)))
-        XCTAssertFalse(calls.contains(.setSwitch(7, true, nil)))  // never the bogus aggregate
+        XCTAssertEqual(Array(calls[before...]), [.scene(.lightsOn), .discovery, .scene(.lightsOff), .discovery])
     }
 
     func testToggleGangSendsEndpoint() async {
@@ -150,15 +146,30 @@ final class AppStateTests: XCTestCase {
         XCTAssertTrue(calls.contains(.setSwitch(7, false, 2)))
     }
 
-    func testAllBlindsBulk() async {
+    func testAllBlindsRunsServerScene() async {
         let mock = MockHestiaAPI()
-        await mock.setDiscovery(makeDiscovery(["2": .init(_type: "blind"), "5": .init(_type: "blind")]))
+        await mock.setDiscovery(makeDiscovery([
+            "2": .init(_type: "blind"),
+            "3": .init(_type: "blind"),
+            "1": .init(_switch: true, _type: "light"),
+        ]))
         let app = AppState(api: mock)
         await app.loadDiscovery()
+        let before = await mock.calls.count
         await app.allBlinds(up: true)
+        await app.allBlinds(up: false)
         let calls = await mock.calls
-        XCTAssertTrue(calls.contains(.setCover(2, 99)))
-        XCTAssertTrue(calls.contains(.setCover(5, 99)))
+        XCTAssertEqual(Array(calls[before...]), [.scene(.blindsUp), .discovery, .scene(.blindsDown), .discovery])
+    }
+
+    func testSceneFailureSetsFailedPhase() async {
+        let mock = MockHestiaAPI()
+        await mock.setSceneError(.http(503))
+        let app = AppState(api: mock)
+        await app.allLights(on: true)
+        XCTAssertEqual(app.phase, .failed(.http(503)))
+        let calls = await mock.calls
+        XCTAssertFalse(calls.contains(.discovery))   // failed scene → no refetch
     }
 
     func testKlimaSetSendsIR() async {

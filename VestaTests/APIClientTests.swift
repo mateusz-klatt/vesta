@@ -64,6 +64,16 @@ final class APIClientTests: XCTestCase {
         await XCTAssertThrowsErrorEqual(try await api.setCover(node: 5, value: 50), APIError.http(400))
     }
 
+    func testSceneSucceeds() async throws {
+        let api = APIClient(transport: StubTransport { _ in (200, json(#"{"ok":true,"sent":5,"total":5}"#)) })
+        try await api.scene(.lightsOff)
+    }
+
+    func testSceneBadRequestMapped() async {
+        let api = APIClient(transport: StubTransport { _ in (400, json(#"{"ok":false,"error":"unknown scene"}"#)) })
+        await XCTAssertThrowsErrorEqual(try await api.scene(.blindsUp), APIError.http(400))
+    }
+
     func testIRUnavailableMapped() async {
         let api = APIClient(transport: StubTransport { _ in (503, json(#"{"ok":false,"error":"busy"}"#)) })
         await XCTAssertThrowsErrorEqual(try await api.sendIR(file: "k.ir", button: "off"), APIError.http(503))
