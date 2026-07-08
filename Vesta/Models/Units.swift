@@ -28,14 +28,33 @@ enum Units {
 
 /// Pure control-math helpers (extracted so they are unit-testable).
 enum Control {
+    // Blind position scale — the mapping between hestia's wire `cover` value (0–99,
+    // what the device speaks) and the displayed openness % on the slider. Deliberately
+    // NON-LINEAR to match how venetian blinds open: the slats stack/curl as the blind
+    // raises, so perceived openness LAGS the wire value (commanding ~64 looks half-open).
+    // The bottom is a dead-zone — wire 0 is the only fully-closed/opaque state, any small
+    // lift (≈ wire 10) already lets light through, and 1–9 look the same. Ported one-for-one
+    // from hestia's ui/src/render/cover.ts so Vesta's slider reads the same % as the web UI
+    // (the low-level `cover` op itself stays raw wire 0–99).
+    private static let blindVisibleWire = 10.0                       // smallest wire "open a crack" (1–9 look identical)
+    private static let blindOpenWire = 99.0                          // fully open
+    private static let blindSpan = blindOpenWire - blindVisibleWire  // 89
+    private static let blindExp = 1.4                                // perceived-openness curve; >1 because openness lags wire
+
     /// Map a 0…100 % UI position to hestia's 0…99 cover value.
     static func coverValue(percent: Int) -> Int {
-        Int((Double(max(0, min(100, percent))) / 100.0 * 99.0).rounded())
+        let p = Double(max(0, min(100, percent)))
+        if p <= 0 { return 0 }                          // fully closed
+        if p <= 1 { return Int(blindVisibleWire) }      // first step above closed → the see-through crack
+        return Int((blindVisibleWire + blindSpan * pow((p - 1) / 99, 1 / blindExp)).rounded())
     }
 
     /// Map hestia's 0…99 cover value back to a 0…100 % position.
     static func coverPercent(value: Int) -> Int {
-        Int((Double(max(0, min(99, value))) / 99.0 * 100.0).rounded())
+        let w = Double(max(0, min(99, value)))
+        if w <= 0 { return 0 }                          // fully closed, opaque
+        let t = min(1, max(0, (w - blindVisibleWire) / blindSpan))  // 1–9 → 0 → the 1 % floor
+        return Int((1 + 99 * pow(t, blindExp)).rounded())
     }
 
     /// The idempotent A/C IR signal name, e.g. `on_cool_22`.

@@ -23,17 +23,51 @@ final class UnitsTests: XCTestCase {
 
 final class ControlMathTests: XCTestCase {
 
-    func testCoverValueClampsAndMaps() {
-        XCTAssertEqual(Control.coverValue(percent: 0), 0)
-        XCTAssertEqual(Control.coverValue(percent: 100), 99)
-        XCTAssertEqual(Control.coverValue(percent: -20), 0)
-        XCTAssertEqual(Control.coverValue(percent: 250), 99)
-        XCTAssertEqual(Control.coverValue(percent: 50), 50)   // 49.5 → 50
+    // The perceptual blind curve — same anchors as hestia's cover.test.ts so the two
+    // clients agree on what a given slider position means for the same physical blind.
+    func testCoverPercentMapsOperatorAnchors() {
+        XCTAssertEqual(Control.coverPercent(value: 0), 0)    // fully closed, opaque
+        XCTAssertEqual(Control.coverPercent(value: 5), 1)    // dead-zone 1…9 reads as the 1 % crack
+        XCTAssertEqual(Control.coverPercent(value: 10), 1)   // first see-through crack
+        XCTAssertEqual(Control.coverPercent(value: 50), 33)  // looks ~1/3 open
+        XCTAssertEqual(Control.coverPercent(value: 64), 50)  // looks ~half open
+        XCTAssertEqual(Control.coverPercent(value: 99), 100) // fully open
     }
 
-    func testCoverPercentRoundTrips() {
-        XCTAssertEqual(Control.coverPercent(value: 0), 0)
-        XCTAssertEqual(Control.coverPercent(value: 99), 100)
+    func testCoverValueMapsOperatorAnchors() {
+        XCTAssertEqual(Control.coverValue(percent: 0), 0)    // closed
+        XCTAssertEqual(Control.coverValue(percent: 1), 10)   // first step above closed → the crack (never wire 1…9)
+        XCTAssertEqual(Control.coverValue(percent: 50), 64)  // drag to half → physically ~half
+        XCTAssertEqual(Control.coverValue(percent: 100), 99) // fully open
+    }
+
+    func testCoverValueNeverCommandsTheDeadZone() {
+        for percent in 0...100 {
+            let wire = Control.coverValue(percent: percent)
+            XCTAssertTrue(wire == 0 || wire >= 10, "percent \(percent) mapped to dead-zone wire \(wire)")
+        }
+    }
+
+    func testCoverScaleIsMonotonicBothDirections() {
+        var prevWire = -1
+        for percent in 0...100 {
+            let wire = Control.coverValue(percent: percent)
+            XCTAssertGreaterThanOrEqual(wire, prevWire)
+            prevWire = wire
+        }
+        var prevPercent = -1
+        for wire in 0...99 {
+            let percent = Control.coverPercent(value: wire)
+            XCTAssertGreaterThanOrEqual(percent, prevPercent)
+            prevPercent = percent
+        }
+    }
+
+    func testCoverScaleClampsOutOfRange() {
+        XCTAssertEqual(Control.coverPercent(value: -5), 0)
+        XCTAssertEqual(Control.coverPercent(value: 200), 100)
+        XCTAssertEqual(Control.coverValue(percent: -20), 0)
+        XCTAssertEqual(Control.coverValue(percent: 250), 99)
     }
 
     func testKlimaButton() {
