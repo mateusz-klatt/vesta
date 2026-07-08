@@ -236,6 +236,23 @@ final class AppState {
         await runScene(up ? .blindsUp : .blindsDown)
     }
 
+    /// Set every (non-excluded) blind to one position via the server scene. The UI
+    /// works in display %, so map through the perceptual curve to a wire value here.
+    func setAllBlinds(percent: Int) async {
+        await runScene(.blindsSet, value: Control.coverValue(percent: percent))
+    }
+
+    /// Mean displayed openness across the blinds that report a position, for the
+    /// whole-home slider to live-track. `nil` when none report yet, so the UI can
+    /// park the handle at a neutral 50 % without inventing a "50 %" readout.
+    var averageBlindPercent: Int? {
+        let percents = allDevices
+            .filter { $0.device._type == "blind" }
+            .compactMap { $0.device.level.map { Control.coverPercent(value: $0) } }
+        guard !percents.isEmpty else { return nil }
+        return Int((Double(percents.reduce(0, +)) / Double(percents.count)).rounded())
+    }
+
     // MARK: - Display helpers
 
     func formatTemp(_ celsius: Double?) -> String? {
@@ -263,9 +280,9 @@ final class AppState {
         } catch { phase = .failed(APIError.wrap(error)) }
     }
 
-    private func runScene(_ op: Components.Schemas.SceneRequest.OpPayload) async {
+    private func runScene(_ op: Components.Schemas.SceneRequest.OpPayload, value: Int? = nil) async {
         do {
-            try await api.scene(op)
+            try await api.scene(op, value: value)
             await loadDiscovery()
         } catch { phase = .failed(APIError.wrap(error)) }
     }
