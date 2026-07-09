@@ -9,7 +9,7 @@ actor MockHestiaAPI: HestiaAPI {
         case login(String, String)
         case setSwitch(Int, Bool, Int?)
         case setCover(Int, Int)
-        case scene(Components.Schemas.SceneRequest.OpPayload)
+        case scene(Components.Schemas.SceneRequest.OpPayload, Int?)
         case setThermostat(Int, Int)
         case setThermostatPower(Int, Bool)
         case sendIR(String, String)
@@ -37,8 +37,8 @@ actor MockHestiaAPI: HestiaAPI {
     func logout() async { calls.append(.logout) }
     func setSwitch(node: Int, on: Bool, endpoint: Int?) async throws { calls.append(.setSwitch(node, on, endpoint)) }
     func setCover(node: Int, value: Int) async throws { calls.append(.setCover(node, value)) }
-    func scene(_ op: Components.Schemas.SceneRequest.OpPayload) async throws {
-        calls.append(.scene(op))
+    func scene(_ op: Components.Schemas.SceneRequest.OpPayload, value: Int?) async throws {
+        calls.append(.scene(op, value))
         if let sceneError { throw sceneError }
     }
     func setThermostat(node: Int, celsius: Int) async throws { calls.append(.setThermostat(node, celsius)) }
@@ -135,7 +135,7 @@ final class AppStateTests: XCTestCase {
         await app.allLights(on: true)
         await app.allLights(on: false)
         let calls = await mock.calls
-        XCTAssertEqual(Array(calls[before...]), [.scene(.lightsOn), .discovery, .scene(.lightsOff), .discovery])
+        XCTAssertEqual(Array(calls[before...]), [.scene(.lightsOn, nil), .discovery, .scene(.lightsOff, nil), .discovery])
     }
 
     func testToggleGangSendsEndpoint() async {
@@ -159,7 +159,47 @@ final class AppStateTests: XCTestCase {
         await app.allBlinds(up: true)
         await app.allBlinds(up: false)
         let calls = await mock.calls
-        XCTAssertEqual(Array(calls[before...]), [.scene(.blindsUp), .discovery, .scene(.blindsDown), .discovery])
+        XCTAssertEqual(Array(calls[before...]), [.scene(.blindsUp, nil), .discovery, .scene(.blindsDown, nil), .discovery])
+    }
+
+    /// The whole-home slider is a single server scene carrying the wire position
+    /// (display % run through the perceptual curve), never a per-device fan-out.
+    func testSetAllBlindsRunsServerSceneWithWireValue() async {
+        let mock = MockHestiaAPI()
+        await mock.setDiscovery(makeDiscovery([
+            "2": .init(_type: "blind"),
+            "3": .init(_type: "blind"),
+        ]))
+        let app = AppState(api: mock)
+        await app.loadDiscovery()
+        let before = await mock.calls.count
+        await app.setAllBlinds(percent: 50)          // curve: display 50 % → wire 64
+        let calls = await mock.calls
+        XCTAssertEqual(Array(calls[before...]), [.scene(.blindsSet, 64), .discovery])
+    }
+
+    /// The slider's live position is the mean displayed openness across blinds that
+    /// report a wire level (curved), so it agrees with the per-room sliders.
+    func testAverageBlindPercentIsCurvedMean() async {
+        let mock = MockHestiaAPI()
+        await mock.setDiscovery(makeDiscovery([
+            "2": .init(level: 64, _type: "blind"),   // → 50 %
+            "3": .init(level: 99, _type: "blind"),   // → 100 %
+            "1": .init(_switch: true, _type: "light"),
+        ]))
+        let app = AppState(api: mock)
+        await app.loadDiscovery()
+        XCTAssertEqual(app.averageBlindPercent, 75)  // mean(50, 100)
+    }
+
+    /// No blind reports a position yet → nil, so the UI shows a dash rather than a
+    /// fabricated "50 %" (the slider still parks its handle at a neutral 50).
+    func testAverageBlindPercentIsNilWhenNoLevels() async {
+        let mock = MockHestiaAPI()
+        await mock.setDiscovery(makeDiscovery(["2": .init(_type: "blind")]))
+        let app = AppState(api: mock)
+        await app.loadDiscovery()
+        XCTAssertNil(app.averageBlindPercent)
     }
 
     func testSceneFailureSetsFailedPhase() async {

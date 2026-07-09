@@ -23,17 +23,51 @@ final class UnitsTests: XCTestCase {
 
 final class ControlMathTests: XCTestCase {
 
-    func testCoverValueClampsAndMaps() {
-        XCTAssertEqual(Control.coverValue(percent: 0), 0)
-        XCTAssertEqual(Control.coverValue(percent: 100), 99)
-        XCTAssertEqual(Control.coverValue(percent: -20), 0)
-        XCTAssertEqual(Control.coverValue(percent: 250), 99)
-        XCTAssertEqual(Control.coverValue(percent: 50), 50)   // 49.5 → 50
+    // The perceptual blind curve — same anchors as hestia's cover.test.ts so the two
+    // clients agree on what a given slider position means for the same physical blind.
+    func testCoverPercentMapsOperatorAnchors() {
+        XCTAssertEqual(Control.coverPercent(value: 0), 0)    // fully closed, opaque
+        XCTAssertEqual(Control.coverPercent(value: 5), 1)    // dead-zone 1…9 reads as the 1 % crack
+        XCTAssertEqual(Control.coverPercent(value: 10), 1)   // first see-through crack
+        XCTAssertEqual(Control.coverPercent(value: 50), 33)  // looks ~1/3 open
+        XCTAssertEqual(Control.coverPercent(value: 64), 50)  // looks ~half open
+        XCTAssertEqual(Control.coverPercent(value: 99), 100) // fully open
     }
 
-    func testCoverPercentRoundTrips() {
-        XCTAssertEqual(Control.coverPercent(value: 0), 0)
-        XCTAssertEqual(Control.coverPercent(value: 99), 100)
+    func testCoverValueMapsOperatorAnchors() {
+        XCTAssertEqual(Control.coverValue(percent: 0), 0)    // closed
+        XCTAssertEqual(Control.coverValue(percent: 1), 10)   // first step above closed → the crack (never wire 1…9)
+        XCTAssertEqual(Control.coverValue(percent: 50), 64)  // drag to half → physically ~half
+        XCTAssertEqual(Control.coverValue(percent: 100), 99) // fully open
+    }
+
+    func testCoverValueNeverCommandsTheDeadZone() {
+        for percent in 0...100 {
+            let wire = Control.coverValue(percent: percent)
+            XCTAssertTrue(wire == 0 || wire >= 10, "percent \(percent) mapped to dead-zone wire \(wire)")
+        }
+    }
+
+    func testCoverScaleIsMonotonicBothDirections() {
+        var prevWire = -1
+        for percent in 0...100 {
+            let wire = Control.coverValue(percent: percent)
+            XCTAssertGreaterThanOrEqual(wire, prevWire)
+            prevWire = wire
+        }
+        var prevPercent = -1
+        for wire in 0...99 {
+            let percent = Control.coverPercent(value: wire)
+            XCTAssertGreaterThanOrEqual(percent, prevPercent)
+            prevPercent = percent
+        }
+    }
+
+    func testCoverScaleClampsOutOfRange() {
+        XCTAssertEqual(Control.coverPercent(value: -5), 0)
+        XCTAssertEqual(Control.coverPercent(value: 200), 100)
+        XCTAssertEqual(Control.coverValue(percent: -20), 0)
+        XCTAssertEqual(Control.coverValue(percent: 250), 99)
     }
 
     func testKlimaButton() {
@@ -46,6 +80,67 @@ final class ControlMathTests: XCTestCase {
         XCTAssertFalse(Control.isReadOnly(role: "operator"))
         XCTAssertFalse(Control.isReadOnly(role: "admin"))
         XCTAssertFalse(Control.isReadOnly(role: nil))
+    }
+}
+
+final class FreshnessTests: XCTestCase {
+
+    // A fixed wall clock so "N ago" is deterministic. Sample stamps below are all
+    // relative to this instant, in hestia's `…Z` UTC ISO-8601 shape.
+    private let now = Freshness.parse("2026-06-22T12:00:00Z")!
+
+    func testParsesHestiaUTCStamp() {
+        let parsed = Freshness.parse("2026-06-22T08:00:00Z")
+        XCTAssertEqual(parsed, Date(timeIntervalSince1970: 1_782_115_200))
+        XCTAssertNil(Freshness.parse("not-a-date"))
+        XCTAssertNil(Freshness.parse(""))
+    }
+
+    func testFreshSampleIsNotFlagged() {
+        let meta = Freshness.evaluate(ts: "2026-06-22T11:58:00Z", batteryOk: true, now: now)
+        XCTAssertEqual(meta.age ?? -1, 120, accuracy: 0.5)  // 2 min ago
+        XCTAssertFalse(meta.isStale)
+        XCTAssertFalse(meta.batteryLow)
+        XCTAssertFalse(meta.warn)
+        XCTAssertTrue(meta.hasBadge)                        // a fresh reading still shows its age
+    }
+
+    func testStaleThresholdIsFifteenMinutes() {
+        // Exactly 15 min old is still fresh; a second past tips it to stale.
+        let atEdge = Freshness.evaluate(ts: "2026-06-22T11:45:00Z", batteryOk: nil, now: now)
+        XCTAssertFalse(atEdge.isStale)
+        XCTAssertFalse(atEdge.warn)
+        let pastEdge = Freshness.evaluate(ts: "2026-06-22T11:44:59Z", batteryOk: nil, now: now)
+        XCTAssertTrue(pastEdge.isStale)
+        XCTAssertTrue(pastEdge.warn)
+    }
+
+    func testLowBatteryWarnsEvenWhenReadingIsFresh() {
+        let meta = Freshness.evaluate(ts: "2026-06-22T11:59:30Z", batteryOk: false, now: now)
+        XCTAssertFalse(meta.isStale)
+        XCTAssertTrue(meta.batteryLow)
+        XCTAssertTrue(meta.warn)
+    }
+
+    func testNeverSampledShowsNothingUnlessBatteryLow() {
+        let quiet = Freshness.evaluate(ts: nil, batteryOk: true, now: now)
+        XCTAssertNil(quiet.sampledAt)
+        XCTAssertNil(quiet.age)
+        XCTAssertFalse(quiet.warn)
+        XCTAssertFalse(quiet.hasBadge)                      // "—" reading already says "no data"
+
+        // …but a low battery is worth surfacing even before the first sample.
+        let dying = Freshness.evaluate(ts: nil, batteryOk: false, now: now)
+        XCTAssertNil(dying.sampledAt)
+        XCTAssertTrue(dying.batteryLow)
+        XCTAssertTrue(dying.warn)
+        XCTAssertTrue(dying.hasBadge)
+    }
+
+    func testUnparseableStampIsTreatedAsNeverSampled() {
+        let meta = Freshness.evaluate(ts: "garbage", batteryOk: nil, now: now)
+        XCTAssertNil(meta.sampledAt)
+        XCTAssertFalse(meta.hasBadge)
     }
 }
 

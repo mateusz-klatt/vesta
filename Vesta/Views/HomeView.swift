@@ -52,22 +52,78 @@ private struct GlobalsHeader: View {
     @Environment(AppState.self) private var app
     let globals: Globals
 
+    // Outdoor temp + humidity come from one 433 feeder, whose battery flag rides along;
+    // render the block if any of the three has something to say (so a low battery still
+    // shows even if the temp reading is momentarily absent).
+    private var showOutdoor: Bool {
+        globals.outdoorTemp != nil || globals.outdoorHumidity != nil || globals.outdoorBatteryOk == false
+    }
+
     var body: some View {
-        HStack(spacing: 20) {
-            if let crib = app.formatTemp(globals.cribTemp) {
-                Label(crib, systemImage: "thermometer.medium")
+        // Tick once a minute so "N ago" keeps counting up and a reading crosses into
+        // "stale" (red) even when nothing else refreshes the snapshot — a silent sensor
+        // fires no event of its own. TimelineView pauses off-screen and while backgrounded,
+        // so it's free when unseen (a coarse 60 s beat is plenty for a minute-grained badge).
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            HStack(alignment: .top, spacing: 20) {
+                if let crib = app.formatTemp(globals.cribTemp) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label(crib, systemImage: "thermometer.medium")
+                        // Mains baby-monitor: no battery flag.
+                        FreshnessBadge(ts: globals.cribTempTs, now: context.date)
+                    }
+                }
+                if showOutdoor {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Label(app.formatTemp(globals.outdoorTemp) ?? "—", systemImage: "cloud.sun")
+                            if let hum = globals.outdoorHumidity {
+                                Text(verbatim: "\(Int(hum))%").foregroundStyle(Theme.textSecondary)
+                            }
+                        }
+                        // Local 433 feeder: temp + humidity share one battery.
+                        FreshnessBadge(ts: globals.outdoorTempTs, batteryOk: globals.outdoorBatteryOk, now: context.date)
+                    }
+                }
+                Spacer()
             }
-            if let out = app.formatTemp(globals.outdoorTemp) {
-                Label(out, systemImage: "cloud.sun")
-            }
-            if let hum = globals.outdoorHumidity {
-                Text(verbatim: "\(Int(hum))%").foregroundStyle(Theme.textSecondary)
-            }
-            Spacer()
         }
         .font(.subheadline)
         .foregroundStyle(Theme.textPrimary)
         .vestaCard()
+    }
+}
+
+/// The freshness / battery line under a globals sensor reading: a muted "N ago"
+/// that turns red when the last sample is stale or the sensor's battery is low —
+/// mirroring hestia's `freshnessMeta` badge. Renders nothing until the sensor has
+/// sampled (and its battery is fine); the reading's absence already says "no data".
+/// `now` is supplied by the parent's minute clock so the age (and the stale flip) stay live.
+private struct FreshnessBadge: View {
+    @Environment(\.locale) private var locale
+    let ts: String?
+    var batteryOk: Bool?
+    let now: Date
+
+    var body: some View {
+        let meta = Freshness.evaluate(ts: ts, batteryOk: batteryOk, now: now)
+        if meta.hasBadge {
+            HStack(spacing: 5) {
+                if let sampledAt = meta.sampledAt {
+                    Text(sampledAt.formatted(
+                        Date.RelativeFormatStyle(presentation: .named, unitsStyle: .abbreviated).locale(locale)
+                    ))
+                }
+                if meta.sampledAt != nil && meta.batteryLow {
+                    Text(verbatim: "·")
+                }
+                if meta.batteryLow {
+                    Text(verbatim: "🪫 ") + Text("Low battery")
+                }
+            }
+            .font(.caption2)
+            .foregroundStyle(meta.warn ? Color.red : Theme.textSecondary)
+        }
     }
 }
 
@@ -158,17 +214,65 @@ private struct WholeHomeCard: View {
                 }
             }
             if app.hasBlinds {
-                HStack {
-                    Label("All blinds", systemImage: "blinds.horizontal.closed").foregroundStyle(Theme.textSecondary)
-                    Spacer()
-                    Button("Raise") { Task { await app.allBlinds(up: true) } }.buttonStyle(.bordered)
-                    Button("Lower") { Task { await app.allBlinds(up: false) } }.buttonStyle(.bordered)
+                VStack(spacing: 8) {
+                    HStack {
+                        Label("All blinds", systemImage: "blinds.horizontal.closed").foregroundStyle(Theme.textSecondary)
+                        Spacer()
+                        Button("Raise") { Task { await app.allBlinds(up: true) } }.buttonStyle(.bordered)
+                        Button("Lower") { Task { await app.allBlinds(up: false) } }.buttonStyle(.bordered)
+                    }
+                    AllBlindsSlider(initial: app.averageBlindPercent ?? 50)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .disabled(app.isReadOnly)
         .vestaCard()
+    }
+}
+
+/// Whole-home blind position: one server scene sets every (non-excluded) blind.
+/// The handle live-tracks the average reported position, mirroring the per-room row.
+private struct AllBlindsSlider: View {
+    @Environment(AppState.self) private var app
+    @State private var percent: Double
+    @State private var isEditing = false
+    @State private var isSending = false
+
+    init(initial: Int) { _percent = State(initialValue: Double(initial)) }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Slider(value: $percent, in: 0...100, step: 1) { editing in
+                isEditing = editing
+                if !editing {
+                    Task {
+                        isSending = true
+                        await app.setAllBlinds(percent: Int(percent))
+                        isSending = false
+                    }
+                }
+            }
+            .disabled(app.isReadOnly)
+            Text(verbatim: readout)
+                .font(.caption).foregroundStyle(Theme.textSecondary)
+                .frame(minWidth: 34, alignment: .trailing)
+        }
+        .onChange(of: app.averageBlindPercent) { _, average in
+            // Follow the reported average when idle, so a sweep or external move updates
+            // the handle — but never fight an active drag or an in-flight send, or a
+            // stray snapshot would yank the handle out from under the user (this mirrors
+            // hestia's `busy || activeElement === slider` re-sync skip).
+            guard !isEditing, !isSending, let average else { return }
+            percent = Double(average)
+        }
+    }
+
+    // Show the live handle % while dragging; otherwise the reported average, or a dash
+    // when no blind reports a position (never a fabricated "50 %").
+    private var readout: String {
+        if isEditing || app.averageBlindPercent != nil { return "\(Int(percent))%" }
+        return "—"
     }
 }
 

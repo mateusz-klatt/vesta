@@ -150,11 +150,13 @@ actor APIClient: HestiaAPI {
 
     /// Run a house-wide scene (all lights/blinds). The server expands the sweep
     /// and honors the registry's whole-home exclusions, which aren't exposed to
-    /// clients — so this must stay a single server-side call.
-    func scene(_ op: Components.Schemas.SceneRequest.OpPayload) async throws {
+    /// clients — so this must stay a single server-side call. `value` is the wire
+    /// position (0–99) for `blindsSet`; nil for the valueless sweeps.
+    func scene(_ op: Components.Schemas.SceneRequest.OpPayload, value: Int?) async throws {
         refresh()
         do {
-            switch try await client.scene(.init(body: .json(.init(op: op)))) {
+            let wire = value.map { max(0, min(99, $0)) }
+            switch try await client.scene(.init(body: .json(.init(op: op, value: wire)))) {
             case .ok: return
             case .badRequest: throw APIError.http(400)
             case .undocumented(let code, _): throw mapStatus(code)

@@ -28,14 +28,33 @@ enum Units {
 
 /// Pure control-math helpers (extracted so they are unit-testable).
 enum Control {
+    // Blind position scale — the mapping between hestia's wire `cover` value (0–99,
+    // what the device speaks) and the displayed openness % on the slider. Deliberately
+    // NON-LINEAR to match how venetian blinds open: the slats stack/curl as the blind
+    // raises, so perceived openness LAGS the wire value (commanding ~64 looks half-open).
+    // The bottom is a dead-zone — wire 0 is the only fully-closed/opaque state, any small
+    // lift (≈ wire 10) already lets light through, and 1–9 look the same. Ported one-for-one
+    // from hestia's ui/src/render/cover.ts so Vesta's slider reads the same % as the web UI
+    // (the low-level `cover` op itself stays raw wire 0–99).
+    private static let blindVisibleWire = 10.0                       // smallest wire "open a crack" (1–9 look identical)
+    private static let blindOpenWire = 99.0                          // fully open
+    private static let blindSpan = blindOpenWire - blindVisibleWire  // 89
+    private static let blindExp = 1.4                                // perceived-openness curve; >1 because openness lags wire
+
     /// Map a 0…100 % UI position to hestia's 0…99 cover value.
     static func coverValue(percent: Int) -> Int {
-        Int((Double(max(0, min(100, percent))) / 100.0 * 99.0).rounded())
+        let p = Double(max(0, min(100, percent)))
+        if p <= 0 { return 0 }                          // fully closed
+        if p <= 1 { return Int(blindVisibleWire) }      // first step above closed → the see-through crack
+        return Int((blindVisibleWire + blindSpan * pow((p - 1) / 99, 1 / blindExp)).rounded())
     }
 
     /// Map hestia's 0…99 cover value back to a 0…100 % position.
     static func coverPercent(value: Int) -> Int {
-        Int((Double(max(0, min(99, value))) / 99.0 * 100.0).rounded())
+        let w = Double(max(0, min(99, value)))
+        if w <= 0 { return 0 }                          // fully closed, opaque
+        let t = min(1, max(0, (w - blindVisibleWire) / blindSpan))  // 1–9 → 0 → the 1 % floor
+        return Int((1 + 99 * pow(t, blindExp)).rounded())
     }
 
     /// The idempotent A/C IR signal name, e.g. `on_cool_22`.
@@ -46,6 +65,54 @@ enum Control {
     /// Roles that may only observe (controls disabled).
     static func isReadOnly(role: String?) -> Bool {
         role == "viewer"
+    }
+}
+
+/// Freshness of a node-less globals sensor sample (crib / outdoor): how old the last
+/// reading is and whether it — or the sensor's battery — should be flagged. Ported from
+/// hestia's `freshnessMeta` (ui/src/render/format.ts) so the badge means the same thing
+/// on both surfaces. Pure so it's unit-testable; the "N ago" wording is left to the OS.
+enum Freshness {
+    /// No sample for this long → the reading reads as stale. Matches hestia's `STALE_MS`:
+    /// generous enough to clear every feeder's cadence (local 433 ≈1/min, Open-Meteo ≈1/10min,
+    /// baby-monitor ≈1/90s) without false alarms, tight enough to catch a sensor that has gone
+    /// silent (dead battery / out of range / offline).
+    static let staleAfter: TimeInterval = 15 * 60
+
+    struct Result: Equatable {
+        /// Parsed instant of the last sample; nil when never sampled or the stamp won't parse.
+        var sampledAt: Date?
+        /// Seconds since that sample (nil when `sampledAt` is nil).
+        var age: TimeInterval?
+        /// Older than ``staleAfter``.
+        var isStale: Bool
+        /// Battery flag explicitly `false` — the local 433 sensor is running low.
+        var batteryLow: Bool
+        /// Stale reading OR low battery — the badge should be flagged (red).
+        var warn: Bool { isStale || batteryLow }
+        /// Something worth rendering: a sample to age, or a low battery to warn about.
+        /// A never-sampled sensor with a fine battery yields nothing (the "—" reading already says so).
+        var hasBadge: Bool { sampledAt != nil || batteryLow }
+    }
+
+    /// Evaluate a sample stamp (+ optional battery flag) against `now`. `now` is injected
+    /// for deterministic tests; the live UI passes the wall clock.
+    static func evaluate(ts: String?, batteryOk: Bool?, now: Date) -> Result {
+        var sampledAt: Date?
+        var age: TimeInterval?
+        var isStale = false
+        if let ts, let sampled = parse(ts) {
+            sampledAt = sampled
+            let seconds = now.timeIntervalSince(sampled)
+            age = seconds
+            isStale = seconds > staleAfter
+        }
+        return Result(sampledAt: sampledAt, age: age, isStale: isStale, batteryLow: batteryOk == false)
+    }
+
+    /// Parse hestia's `…Z` UTC ISO-8601 sample stamp (e.g. `2026-06-22T08:00:00Z`).
+    static func parse(_ ts: String) -> Date? {
+        try? Date(ts, strategy: .iso8601)
     }
 }
 
