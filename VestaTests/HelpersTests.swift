@@ -83,6 +83,67 @@ final class ControlMathTests: XCTestCase {
     }
 }
 
+final class FreshnessTests: XCTestCase {
+
+    // A fixed wall clock so "N ago" is deterministic. Sample stamps below are all
+    // relative to this instant, in hestia's `…Z` UTC ISO-8601 shape.
+    private let now = Freshness.parse("2026-06-22T12:00:00Z")!
+
+    func testParsesHestiaUTCStamp() {
+        let parsed = Freshness.parse("2026-06-22T08:00:00Z")
+        XCTAssertEqual(parsed, Date(timeIntervalSince1970: 1_782_115_200))
+        XCTAssertNil(Freshness.parse("not-a-date"))
+        XCTAssertNil(Freshness.parse(""))
+    }
+
+    func testFreshSampleIsNotFlagged() {
+        let meta = Freshness.evaluate(ts: "2026-06-22T11:58:00Z", batteryOk: true, now: now)
+        XCTAssertEqual(meta.age ?? -1, 120, accuracy: 0.5)  // 2 min ago
+        XCTAssertFalse(meta.isStale)
+        XCTAssertFalse(meta.batteryLow)
+        XCTAssertFalse(meta.warn)
+        XCTAssertTrue(meta.hasBadge)                        // a fresh reading still shows its age
+    }
+
+    func testStaleThresholdIsFifteenMinutes() {
+        // Exactly 15 min old is still fresh; a second past tips it to stale.
+        let atEdge = Freshness.evaluate(ts: "2026-06-22T11:45:00Z", batteryOk: nil, now: now)
+        XCTAssertFalse(atEdge.isStale)
+        XCTAssertFalse(atEdge.warn)
+        let pastEdge = Freshness.evaluate(ts: "2026-06-22T11:44:59Z", batteryOk: nil, now: now)
+        XCTAssertTrue(pastEdge.isStale)
+        XCTAssertTrue(pastEdge.warn)
+    }
+
+    func testLowBatteryWarnsEvenWhenReadingIsFresh() {
+        let meta = Freshness.evaluate(ts: "2026-06-22T11:59:30Z", batteryOk: false, now: now)
+        XCTAssertFalse(meta.isStale)
+        XCTAssertTrue(meta.batteryLow)
+        XCTAssertTrue(meta.warn)
+    }
+
+    func testNeverSampledShowsNothingUnlessBatteryLow() {
+        let quiet = Freshness.evaluate(ts: nil, batteryOk: true, now: now)
+        XCTAssertNil(quiet.sampledAt)
+        XCTAssertNil(quiet.age)
+        XCTAssertFalse(quiet.warn)
+        XCTAssertFalse(quiet.hasBadge)                      // "—" reading already says "no data"
+
+        // …but a low battery is worth surfacing even before the first sample.
+        let dying = Freshness.evaluate(ts: nil, batteryOk: false, now: now)
+        XCTAssertNil(dying.sampledAt)
+        XCTAssertTrue(dying.batteryLow)
+        XCTAssertTrue(dying.warn)
+        XCTAssertTrue(dying.hasBadge)
+    }
+
+    func testUnparseableStampIsTreatedAsNeverSampled() {
+        let meta = Freshness.evaluate(ts: "garbage", batteryOk: nil, now: now)
+        XCTAssertNil(meta.sampledAt)
+        XCTAssertFalse(meta.hasBadge)
+    }
+}
+
 final class BlindStateTests: XCTestCase {
     func testFromPercent() {
         XCTAssertEqual(BlindState.from(percent: 0), .lowered)

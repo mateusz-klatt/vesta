@@ -68,6 +68,54 @@ enum Control {
     }
 }
 
+/// Freshness of a node-less globals sensor sample (crib / outdoor): how old the last
+/// reading is and whether it — or the sensor's battery — should be flagged. Ported from
+/// hestia's `freshnessMeta` (ui/src/render/format.ts) so the badge means the same thing
+/// on both surfaces. Pure so it's unit-testable; the "N ago" wording is left to the OS.
+enum Freshness {
+    /// No sample for this long → the reading reads as stale. Matches hestia's `STALE_MS`:
+    /// generous enough to clear every feeder's cadence (local 433 ≈1/min, Open-Meteo ≈1/10min,
+    /// baby-monitor ≈1/90s) without false alarms, tight enough to catch a sensor that has gone
+    /// silent (dead battery / out of range / offline).
+    static let staleAfter: TimeInterval = 15 * 60
+
+    struct Result: Equatable {
+        /// Parsed instant of the last sample; nil when never sampled or the stamp won't parse.
+        var sampledAt: Date?
+        /// Seconds since that sample (nil when `sampledAt` is nil).
+        var age: TimeInterval?
+        /// Older than ``staleAfter``.
+        var isStale: Bool
+        /// Battery flag explicitly `false` — the local 433 sensor is running low.
+        var batteryLow: Bool
+        /// Stale reading OR low battery — the badge should be flagged (red).
+        var warn: Bool { isStale || batteryLow }
+        /// Something worth rendering: a sample to age, or a low battery to warn about.
+        /// A never-sampled sensor with a fine battery yields nothing (the "—" reading already says so).
+        var hasBadge: Bool { sampledAt != nil || batteryLow }
+    }
+
+    /// Evaluate a sample stamp (+ optional battery flag) against `now`. `now` is injected
+    /// for deterministic tests; the live UI passes the wall clock.
+    static func evaluate(ts: String?, batteryOk: Bool?, now: Date) -> Result {
+        var sampledAt: Date?
+        var age: TimeInterval?
+        var isStale = false
+        if let ts, let sampled = parse(ts) {
+            sampledAt = sampled
+            let seconds = now.timeIntervalSince(sampled)
+            age = seconds
+            isStale = seconds > staleAfter
+        }
+        return Result(sampledAt: sampledAt, age: age, isStale: isStale, batteryLow: batteryOk == false)
+    }
+
+    /// Parse hestia's `…Z` UTC ISO-8601 sample stamp (e.g. `2026-06-22T08:00:00Z`).
+    static func parse(_ ts: String) -> Date? {
+        try? Date(ts, strategy: .iso8601)
+    }
+}
+
 /// A multi-gang switch's individual channels (e.g. a 2-gang wall plate where one
 /// rocker is the ceiling light and the other a wall lamp). A plain single-gang
 /// device has no `endpoints` and is driven by its aggregate `switch` instead.
