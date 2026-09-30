@@ -1,0 +1,282 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "NSLocalNetworkUsageDescription": {
+      "comment": "Purpose shown by iOS when Vesta requests access to the local network to connect to the user's own hestia server.",
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يتصل Vesta بخادم hestia الذي تُدخل عنوانه. يتطلب الاتصال به على شبكتك المنزلية الوصول إلى الشبكة المحلية."
+          }
+        },
+        "bn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta আপনার দেওয়া ঠিকানার hestia সার্ভারে সংযোগ করে। আপনার বাড়ির নেটওয়ার্কে সংযোগ করতে স্থানীয় নেটওয়ার্কে প্রবেশের অনুমতি প্রয়োজন।"
+          }
+        },
+        "bs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta se povezuje s hestia serverom čiju adresu unesete. Povezivanje na vašoj kućnoj mreži zahtijeva pristup lokalnoj mreži."
+          }
+        },
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta se připojuje k serveru hestia na zadané adrese. Připojení ve vaší domácí síti vyžaduje přístup k místní síti."
+          }
+        },
+        "da": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta opretter forbindelse til hestia-serveren på den adresse, du angiver. På dit hjemmenetværk kræver det adgang til det lokale netværk."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta verbindet sich mit dem hestia-Server unter der von Ihnen eingegebenen Adresse. In Ihrem Heimnetzwerk ist dafür Zugriff auf das lokale Netzwerk erforderlich."
+          }
+        },
+        "el": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Το Vesta συνδέεται στον διακομιστή hestia στη διεύθυνση που εισάγετε. Η σύνδεση μέσω του οικιακού σας δικτύου απαιτεί πρόσβαση στο τοπικό δίκτυο."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta connects to the hestia server you enter — on your home network this requires local network access."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta se conecta al servidor hestia cuya dirección introduces. En tu red doméstica, esto requiere acceso a la red local."
+          }
+        },
+        "fa": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta به سرور hestia با نشانی‌ای که وارد می‌کنید متصل می‌شود. اتصال در شبکهٔ خانگی شما به دسترسی به شبکهٔ محلی نیاز دارد."
+          }
+        },
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta muodostaa yhteyden hestia-palvelimeen antamassasi osoitteessa. Kotiverkossasi tämä edellyttää pääsyä paikallisverkkoon."
+          }
+        },
+        "fil": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kumokonekta ang Vesta sa hestia server sa address na ilalagay mo. Sa network ng iyong tahanan, kailangan nito ng access sa lokal na network."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta se connecte au serveur hestia à l’adresse que vous saisissez. Sur votre réseau domestique, cela nécessite l’accès au réseau local."
+          }
+        },
+        "ga": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ceanglaíonn Vesta leis an bhfreastalaí hestia ag an seoladh a chuireann tú isteach. Ar do líonra baile, teastaíonn rochtain ar an líonra áitiúil chuige seo."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta מתחבר לשרת hestia בכתובת שהזנת. ברשת הביתית שלך נדרשת לשם כך גישה לרשת המקומית."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta आपके दर्ज किए गए पते पर hestia सर्वर से जुड़ता है। आपके घरेलू नेटवर्क पर इसके लिए स्थानीय नेटवर्क की पहुँच आवश्यक है।"
+          }
+        },
+        "hr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta se povezuje s hestia poslužiteljem na adresi koju unesete. Na vašoj kućnoj mreži za to je potreban pristup lokalnoj mreži."
+          }
+        },
+        "hu": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A Vesta a megadott címen található hestia-szerverhez csatlakozik. Az otthoni hálózaton ehhez hozzáférés szükséges a helyi hálózathoz."
+          }
+        },
+        "hy": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta-ն միանում է ձեր մուտքագրած հասցեով hestia սերվերին։ Ձեր տնային ցանցում դրա համար անհրաժեշտ է տեղային ցանցի հասանելիություն։"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta terhubung ke server hestia pada alamat yang Anda masukkan. Di jaringan rumah Anda, koneksi ini memerlukan akses ke jaringan lokal."
+          }
+        },
+        "is": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta tengist hestia-þjóninum á veffanginu sem þú slærð inn. Á heimanetinu þínu þarf til þess aðgang að staðarnetinu."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta si connette al server hestia all’indirizzo che inserisci. Sulla tua rete domestica, questa connessione richiede l’accesso alla rete locale."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta は入力されたアドレスの hestia サーバーに接続します。ホームネットワーク上で接続するには、ローカルネットワークへのアクセスが必要です。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta는 입력한 주소의 hestia 서버에 연결합니다. 홈 네트워크에서 연결하려면 로컬 네트워크 접근 권한이 필요합니다."
+          }
+        },
+        "lt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta jungiasi prie hestia serverio jūsų įvestu adresu. Namų tinkle tam reikia prieigos prie vietinio tinklo."
+          }
+        },
+        "lv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta izveido savienojumu ar hestia serveri jūsu ievadītajā adresē. Mājas tīklā tam ir nepieciešama piekļuve lokālajam tīklam."
+          }
+        },
+        "ms": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta bersambung ke pelayan hestia pada alamat yang anda masukkan. Pada rangkaian rumah anda, sambungan ini memerlukan akses kepada rangkaian setempat."
+          }
+        },
+        "my": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta သည် သင်ထည့်သွင်းသည့် လိပ်စာရှိ hestia ဆာဗာသို့ ချိတ်ဆက်သည်။ သင့်အိမ်ကွန်ရက်တွင် ချိတ်ဆက်ရန် ဒေသတွင်းကွန်ရက်ကို ဝင်ရောက်အသုံးပြုခွင့် လိုအပ်သည်။"
+          }
+        },
+        "nb": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta kobler til hestia-serveren på adressen du oppgir. På hjemmenettverket ditt krever dette tilgang til det lokale nettverket."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta maakt verbinding met de hestia-server op het adres dat je invoert. Op je thuisnetwerk is hiervoor toegang tot het lokale netwerk nodig."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta łączy się z serwerem hestia pod podanym przez Ciebie adresem. W sieci domowej wymaga to dostępu do sieci lokalnej."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O Vesta se conecta ao servidor hestia no endereço que você informa. Na sua rede doméstica, isso requer acesso à rede local."
+          }
+        },
+        "ro": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta se conectează la serverul hestia de la adresa pe care o introduceți. În rețeaua de acasă, acest lucru necesită acces la rețeaua locală."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta подключается к серверу hestia по введённому вами адресу. В домашней сети для этого необходим доступ к локальной сети."
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta sa pripája k serveru hestia na zadanej adrese. Vo vašej domácej sieti je na to potrebný prístup k lokálnej sieti."
+          }
+        },
+        "sq": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta lidhet me serverin hestia në adresën që vendosni. Në rrjetin tuaj të shtëpisë, kjo kërkon qasje në rrjetin lokal."
+          }
+        },
+        "sr-Latn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta se povezuje sa hestia serverom na adresi koju unesete. Na vašoj kućnoj mreži za to je potreban pristup lokalnoj mreži."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta ansluter till hestia-servern på adressen du anger. På ditt hemnätverk kräver detta åtkomst till det lokala nätverket."
+          }
+        },
+        "sw": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta inaunganisha kwenye seva ya hestia kwa anwani unayoingiza. Kwenye mtandao wako wa nyumbani, hii inahitaji ruhusa ya kufikia mtandao wa ndani."
+          }
+        },
+        "th": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta เชื่อมต่อกับเซิร์ฟเวอร์ hestia ตามที่อยู่ที่คุณป้อน การเชื่อมต่อผ่านเครือข่ายภายในบ้านของคุณต้องได้รับสิทธิ์เข้าถึงเครือข่ายท้องถิ่น"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta, girdiğiniz adresteki hestia sunucusuna bağlanır. Ev ağınızda bu bağlantı için yerel ağa erişim gerekir."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta підключається до сервера hestia за введеною вами адресою. У домашній мережі для цього потрібен доступ до локальної мережі."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta kết nối với máy chủ hestia tại địa chỉ bạn nhập. Trên mạng gia đình của bạn, việc này cần quyền truy cập mạng cục bộ."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta 会连接到您输入地址的 hestia 服务器。在家庭网络中连接时，需要获得本地网络访问权限。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta 會連線至您輸入位址的 hestia 伺服器。在家用網路中連線時，需要取得區域網路存取權限。"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

@@ -4,6 +4,29 @@ import HTTPTypes
 import OpenAPIRuntime
 @testable import Vesta
 
+final class PrivacyLocalizationTests: XCTestCase {
+    func testLocalNetworkPurposeIsBundledForEverySupportedLanguage() throws {
+        let bundle = Bundle.main
+        let locales = try XCTUnwrap(
+            bundle.object(forInfoDictionaryKey: "CFBundleLocalizations") as? [String]
+        )
+        XCTAssertFalse(locales.isEmpty)
+        for locale in locales {
+            // Read the exact locale file so English fallback cannot hide a
+            // missing catalog resource in the generated app bundle.
+            let url = bundle.bundleURL.appendingPathComponent("\(locale).lproj/InfoPlist.strings")
+            let data = try Data(contentsOf: url)
+            let values = try XCTUnwrap(
+                PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+                    as? [String: String],
+                locale
+            )
+            let purpose = try XCTUnwrap(values["NSLocalNetworkUsageDescription"], locale)
+            XCTAssertFalse(purpose.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, locale)
+        }
+    }
+}
+
 final class TokenStoreTests: XCTestCase {
     override func tearDown() { TokenStore.clear(); super.tearDown() }
 
