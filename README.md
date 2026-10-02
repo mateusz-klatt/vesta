@@ -44,12 +44,26 @@ hestia (aiohttp + pydantic v2)  ──emit──▶  openapi.json  ──pin─�
 
 ```sh
 brew install xcodegen      # one-time
-make setup                 # xcodegen generate
+make setup                 # generate project and install committed package pins
 make build                 # xcodebuild (simulator)
 open Vesta.xcodeproj       # or work in Xcode
 ```
 
-The first build resolves the swift-openapi packages and runs the generator plugin.
+Use Xcode 26 or newer (Swift 6.2 is required by the pinned Swift Collections).
+The first build downloads the pinned packages and runs the generator plugin.
+`make setup` copies `ci_scripts/Package.resolved` into the generated workspace;
+`make build`, `make test`, and `make coverage` forbid automatic package resolution
+and require those committed versions. GitHub CI uses these same Make targets;
+Xcode Cloud also installs this pin file before its managed build.
+
+For a deliberate dependency refresh, generate the project, update packages in
+Xcode, then copy
+`Vesta.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved` back to
+`ci_scripts/Package.resolved` before running a Make target (setup restores the
+committed pins). Review the versions and revisions and commit the pin file.
+Changes to package declarations in `project.yml` require regenerating the lockfile,
+including its origin hash. Validate updates with `make test` and `make coverage`
+on macOS; the GitHub build/test and SonarCloud workflows perform these checks.
 
 ## Licensing
 

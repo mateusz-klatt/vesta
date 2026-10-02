@@ -2,7 +2,9 @@
 
 SIMULATOR ?= iPhone 17 Pro
 DESTINATION = platform=iOS Simulator,name=$(SIMULATOR)
-XCB = xcodebuild -project Vesta.xcodeproj -scheme Vesta -destination '$(DESTINATION)' -skipPackagePluginValidation
+XCB = xcodebuild -project Vesta.xcodeproj -scheme Vesta -destination '$(DESTINATION)' -skipPackagePluginValidation -disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile
+
+RESOLVED_PACKAGES = Vesta.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 
 COVERAGE_RESULT_BUNDLE = build/test-results.xcresult
 COVERAGE_REPORT = build/sonarqube-generic-coverage.xml
@@ -13,6 +15,8 @@ HESTIA_SPEC ?= ../hestia/docs/api/openapi.json
 setup:
 	@command -v xcodegen >/dev/null 2>&1 || (echo "xcodegen not installed; run: brew install xcodegen" && exit 1)
 	xcodegen generate
+	mkdir -p $(dir $(RESOLVED_PACKAGES))
+	cp ci_scripts/Package.resolved $(RESOLVED_PACKAGES)
 
 build: setup
 	$(XCB) build
