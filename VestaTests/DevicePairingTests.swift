@@ -272,6 +272,40 @@ final class DevicePairingTests: XCTestCase {
         }
     }
 
+    func testAutoPairingOnlyUsesHTTPSAndTheLoginServer() async throws {
+        let api = MockDevicePairingAPI()
+        let pairing = ReceiptPairing(api: api, store: MemoryDeviceTokenStore(), serverURL: { fakeServer })
+        try await pairing.pair(username: "owner", password: "fake-password", deviceName: "iPhone",
+                               server: URL(string: "https://other.example")!)
+        let http = URL(string: "http://192.168.1.10:8080")!
+        let lan = ReceiptPairing(api: api, store: MemoryDeviceTokenStore(), serverURL: { http })
+        try await lan.pair(username: "owner", password: "fake-password", deviceName: "iPhone", server: http)
+        let calls = await api.calls
+        XCTAssertEqual(calls, [])
+        XCTAssertEqual(pairing.status, .notPaired)
+        XCTAssertEqual(lan.status, .notPaired)
+    }
+
+    func testSignOutDuringLoginStopsAutoPairing() async throws {
+        let api = MockDevicePairingAPI()
+        let pairing = ReceiptPairing(api: api, store: MemoryDeviceTokenStore(), serverURL: { fakeServer })
+        let hestia = MockHestiaAPI()
+        await hestia.setWhoami(role: "admin")
+        await hestia.setHoldLogin()
+        let app = AppState(api: hestia, receiptPairing: pairing, events: noEvents)
+
+        let login = Task { await app.login(user: "owner", password: "fake-password") }
+        while await hestia.calls.isEmpty { await Task.yield() }
+        await app.signOut()
+        await hestia.releaseLogin()
+        await login.value
+
+        let calls = await api.calls
+        XCTAssertEqual(calls, [])
+        XCTAssertEqual(pairing.status, .notPaired)
+        XCTAssertEqual(app.phase, .needsAuth)
+    }
+
     func testDeviceNameIsStableAndFitsHestiasLimit() {
         let name = ReceiptPairing.deviceName
         XCTAssertEqual(name, ReceiptPairing.deviceName)

@@ -19,10 +19,18 @@ actor MockHestiaAPI: HestiaAPI {
     private var whoamiResult = Components.Schemas.WhoAmI(role: "operator", user: "u")
     private var discoveryResult: Components.Schemas.Discovery?
     private var sceneError: APIError?
+    private var holdLogin = false
+    private var loginGate: CheckedContinuation<Void, Never>?
 
     func setWhoami(role: String?) { whoamiResult = .init(role: role, user: "u") }
     func setDiscovery(_ discovery: Components.Schemas.Discovery) { discoveryResult = discovery }
     func setSceneError(_ error: APIError) { sceneError = error }
+    func setHoldLogin() { holdLogin = true }
+    func releaseLogin() {
+        holdLogin = false
+        loginGate?.resume()
+        loginGate = nil
+    }
 
     func whoami() async throws -> Components.Schemas.WhoAmI { calls.append(.whoami); return whoamiResult }
     func discovery() async throws -> Components.Schemas.Discovery {
@@ -32,7 +40,9 @@ actor MockHestiaAPI: HestiaAPI {
     }
     @discardableResult
     func login(user: String, password: String) async throws -> Components.Schemas.LoginSuccess {
-        calls.append(.login(user, password)); return .init(ok: true, token: "t", user: user)
+        calls.append(.login(user, password))
+        if holdLogin { await withCheckedContinuation { loginGate = $0 } }
+        return .init(ok: true, token: "t", user: user)
     }
     func logout() async { calls.append(.logout) }
     func setSwitch(node: Int, on: Bool, endpoint: Int?) async throws { calls.append(.setSwitch(node, on, endpoint)) }

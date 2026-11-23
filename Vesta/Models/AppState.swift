@@ -44,6 +44,9 @@ final class AppState {
     private let makeEvents: @Sendable () -> AsyncStream<EventStream.Event>
     private var eventTask: Task<Void, Never>?
     private var didBootstrap = false
+    /// Bumped on sign-out and backend change so a login still in flight
+    /// can't pair against the new session.
+    private var sessionGeneration = 0
 
     private var allDevices: [IdentifiedDevice] { rooms.flatMap(\.devices) }
     var isReadOnly: Bool { Control.isReadOnly(role: whoami?.role) }
@@ -119,6 +122,7 @@ final class AppState {
     @discardableResult
     func saveAndConnect(_ raw: String) -> Bool {
         guard let url = BackendURLStore.canonicalize(raw) else { return false }
+        sessionGeneration += 1
         let changed = url != AppConfig.serverURL
         BackendURLStore.shared.saveOverride(url)
         backendURLString = url.absoluteString
@@ -134,8 +138,11 @@ final class AppState {
 
     func login(user: String, password: String) async {
         receiptPairing.refreshStatus()
+        let generation = sessionGeneration
+        let server = receiptPairing.server
         do {
             _ = try await api.login(user: user, password: password)
+            guard generation == sessionGeneration else { return }
             whoami = try await api.whoami()
             await loadDiscovery()
             startEvents()
@@ -143,17 +150,20 @@ final class AppState {
             phase = .failed(APIError.wrap(error))
             return
         }
-        await pairReceiptsAfterLogin(user: user, password: password)
+        guard generation == sessionGeneration else { return }
+        await pairReceiptsAfterLogin(user: user, password: password, server: server)
     }
 
     /// Admins get a receipts device token from the same credentials, so they
     /// don't have to copy a pairing code. Any failure leaves the code flow.
-    private func pairReceiptsAfterLogin(user: String, password: String) async {
+    private func pairReceiptsAfterLogin(user: String, password: String, server: URL) async {
         guard Control.canAddReceipts(role: whoami?.role), receiptPairing.status != .paired else { return }
-        try? await receiptPairing.pair(username: user, password: password, deviceName: ReceiptPairing.deviceName)
+        try? await receiptPairing.pair(username: user, password: password,
+                                       deviceName: ReceiptPairing.deviceName, server: server)
     }
 
     func signOut() async {
+        sessionGeneration += 1
         eventTask?.cancel()
         whoami = nil
         try? await receiptPairing.unpair()

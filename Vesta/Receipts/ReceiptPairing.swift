@@ -46,10 +46,20 @@ final class ReceiptPairing {
     /// hestia rotates the token of an unrevoked device with the same name, so
     /// the name stays stable for this install and differs between two iPhones.
     static var deviceName: String {
-        let model = UIDevice.current.model
-        guard let vendor = UIDevice.current.identifierForVendor?.uuidString.prefix(4) else { return model }
-        return "\(model) \(vendor)"
+        let key = "vesta.receipts.deviceSuffix"
+        let defaults = UserDefaults.standard
+        let suffix: String
+        if let stored = defaults.string(forKey: key), stored.count == 8, stored.allSatisfy(\.isHexDigit) {
+            suffix = stored
+        } else {
+            suffix = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8))
+            defaults.set(suffix, forKey: key)
+        }
+        return "\(UIDevice.current.model) \(suffix)"
     }
+
+    /// The backend pairing requests go to right now.
+    var server: URL { serverURL() }
 
     func pair(code: ReceiptPairingCode, deviceName: String) async throws {
         try await issue { api, server in
@@ -58,21 +68,25 @@ final class ReceiptPairing {
     }
 
     /// Pairs right after an admin login. The password is used for this one
-    /// request and never stored.
-    func pair(username: String, password: String, deviceName: String) async throws {
-        try await issue { api, server in
+    /// request and never stored. It only goes over HTTPS, and only to the
+    /// server the login used; otherwise this does nothing.
+    func pair(username: String, password: String, deviceName: String, server expected: URL) async throws {
+        guard expected.scheme == "https" else { return }
+        try await issue(expecting: expected) { api, server in
             try await api.login(username: username, password: password, deviceName: deviceName, server: server)
         }
     }
 
     private func issue(
+        expecting expected: URL? = nil,
         _ request: (any DevicePairingAPI, URL) async throws -> ReceiptDeviceToken
     ) async throws {
         guard !isBusy, status != .paired else { return }
+        let server = serverURL()
+        if let expected, expected != server { return }
         isPairing = true
         pairingCancelled = false
         defer { isPairing = false }
-        let server = serverURL()
         let token: ReceiptDeviceToken
         do {
             token = try await request(api, server)
