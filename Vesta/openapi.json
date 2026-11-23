@@ -621,6 +621,35 @@
         "title": "BudgetReceiptDetail",
         "type": "object"
       },
+      "BudgetReceiptDeviceLoginRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "device_name": {
+            "description": "Printable device name.",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Device Name",
+            "type": "string"
+          },
+          "password": {
+            "format": "password",
+            "title": "Password",
+            "type": "string",
+            "writeOnly": true
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "password",
+          "device_name"
+        ],
+        "title": "BudgetReceiptDeviceLoginRequest",
+        "type": "object"
+      },
       "BudgetReceiptDeviceRedeemRequest": {
         "additionalProperties": false,
         "properties": {
@@ -3461,6 +3490,145 @@
         },
         "summary": "Delete receipt lines before their owned receipt using expected_version CAS.",
         "x-required-role": "admin"
+      }
+    },
+    "/api/budget/receipts/device-token/login": {
+      "post": {
+        "description": "Requires budget HTTP and receipts. Send uncompressed application/json (at most 4096 bytes) without Cookie or Authorization. Shares the /api/login quota of 10 attempts per minute per username and IPv4 address or IPv6 /64. An unrevoked token with the same device name is rotated. At five active tokens, issuance revokes the least recently used token.",
+        "operationId": "loginBudgetReceiptDevice",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BudgetReceiptDeviceLoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetReceiptDeviceRedeemResult"
+                }
+              }
+            },
+            "description": "One-time receipt device token with a sliding 90-day TTL and a 180-day hard cap."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Invalid JSON request or budget_auth_ambiguous if Cookie or Authorization is present."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Generic device_token_rejected for invalid credentials or an ineligible account."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Budget HTTP or receipts are disabled."
+          },
+          "408": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Request body read timed out."
+          },
+          "411": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Content-Length is required."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "JSON body exceeds 4096 bytes."
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Content-Type must be application/json."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Too many password attempts (device_token_rate_limited).",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until another password attempt is allowed.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Internal error."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Budget configuration unavailable."
+          }
+        },
+        "summary": "Issue a receipts-scoped device token using an enabled budget owner's password.",
+        "x-required-role": "public"
       }
     },
     "/api/budget/receipts/device-token/redeem": {

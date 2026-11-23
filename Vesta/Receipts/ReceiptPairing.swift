@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 
 @MainActor
 @Observable
@@ -42,7 +43,31 @@ final class ReceiptPairing {
         return token
     }
 
+    /// hestia rotates the token of an unrevoked device with the same name, so
+    /// the name stays stable for this install and differs between two iPhones.
+    static var deviceName: String {
+        let model = UIDevice.current.model
+        guard let vendor = UIDevice.current.identifierForVendor?.uuidString.prefix(4) else { return model }
+        return "\(model) \(vendor)"
+    }
+
     func pair(code: ReceiptPairingCode, deviceName: String) async throws {
+        try await issue { api, server in
+            try await api.redeem(code: code, deviceName: deviceName, server: server)
+        }
+    }
+
+    /// Pairs right after an admin login. The password is used for this one
+    /// request and never stored.
+    func pair(username: String, password: String, deviceName: String) async throws {
+        try await issue { api, server in
+            try await api.login(username: username, password: password, deviceName: deviceName, server: server)
+        }
+    }
+
+    private func issue(
+        _ request: (any DevicePairingAPI, URL) async throws -> ReceiptDeviceToken
+    ) async throws {
         guard !isBusy, status != .paired else { return }
         isPairing = true
         pairingCancelled = false
@@ -50,7 +75,7 @@ final class ReceiptPairing {
         let server = serverURL()
         let token: ReceiptDeviceToken
         do {
-            token = try await api.redeem(code: code, deviceName: deviceName, server: server)
+            token = try await request(api, server)
         } catch let error as DevicePairingError {
             throw error
         } catch {

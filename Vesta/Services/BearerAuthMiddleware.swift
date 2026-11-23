@@ -26,8 +26,9 @@ struct BearerAuthMiddleware: ClientMiddleware {
     ) async throws -> (HTTPResponse, HTTPBody?) {
         var request = request
         let requiresDevice = Self.receiptOperations.contains(operationID)
-        let isRedeem = operationID == Operations.RedeemBudgetReceiptDevice.id
-        guard requiresDevice || isRedeem else {
+        let issuesDeviceToken = operationID == Operations.RedeemBudgetReceiptDevice.id
+            || operationID == Operations.LoginBudgetReceiptDevice.id
+        guard requiresDevice || issuesDeviceToken else {
             if let path = request.path, path == "/api/budget" || path.hasPrefix("/api/budget/") {
                 request.headerFields[.authorization] = nil
                 request.headerFields[.cookie] = nil

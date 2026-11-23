@@ -141,7 +141,16 @@ final class AppState {
             startEvents()
         } catch {
             phase = .failed(APIError.wrap(error))
+            return
         }
+        await pairReceiptsAfterLogin(user: user, password: password)
+    }
+
+    /// Admins get a receipts device token from the same credentials, so they
+    /// don't have to copy a pairing code. Any failure leaves the code flow.
+    private func pairReceiptsAfterLogin(user: String, password: String) async {
+        guard Control.canAddReceipts(role: whoami?.role), receiptPairing.status != .paired else { return }
+        try? await receiptPairing.pair(username: user, password: password, deviceName: ReceiptPairing.deviceName)
     }
 
     func signOut() async {
