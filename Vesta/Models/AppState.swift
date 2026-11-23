@@ -46,6 +46,11 @@ final class AppState {
 
     private var allDevices: [IdentifiedDevice] { rooms.flatMap(\.devices) }
     var isReadOnly: Bool { Control.isReadOnly(role: whoami?.role) }
+    /// Receipts (hestia budget) are admin-only on the server; hide the entry
+    /// point for everyone else rather than letting them hit a 403.
+    var receiptsAPI: (any ReceiptsAPI)? {
+        Control.canAddReceipts(role: whoami?.role) ? api as? any ReceiptsAPI : nil
+    }
     var hasLights: Bool { allDevices.contains { $0.device._type == "light" } }
     var hasBlinds: Bool { allDevices.contains { $0.device._type == "blind" } }
 

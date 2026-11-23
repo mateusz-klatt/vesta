@@ -74,7 +74,7 @@ enum APIError: LocalizedError, Equatable {
 /// every subsequent request. Rebuilt when the user points Vesta at a new backend.
 actor APIClient: HestiaAPI {
     private var serverURL: URL
-    private var client: Client
+    private(set) var client: Client
     private let transport: any ClientTransport
 
     init(transport: any ClientTransport = URLSessionTransport()) {
@@ -87,11 +87,11 @@ actor APIClient: HestiaAPI {
         Client(
             serverURL: url,
             transport: transport,
-            middlewares: [BearerAuthMiddleware(token: { TokenStore.load() })]
+            middlewares: [BearerAuthMiddleware(token: { TokenStore.load() }), ExplicitNullsMiddleware()]
         )
     }
 
-    private func refresh() {
+    func refresh() {
         let current = AppConfig.serverURL
         if current != serverURL {
             serverURL = current
@@ -197,7 +197,7 @@ actor APIClient: HestiaAPI {
         } catch { throw APIError.wrap(error) }
     }
 
-    private func mapStatus(_ code: Int) -> APIError {
+    func mapStatus(_ code: Int) -> APIError {
         (code == 401 || code == 403) ? .unauthorized : .http(code)
     }
 }

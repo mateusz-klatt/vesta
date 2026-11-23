@@ -97,6 +97,9 @@ targets:
         # DEBUG. NSAllowsLocalNetworking (not NSAllowsArbitraryLoads) keeps ATS
         # intact for public hosts and stays clear of App Review flags.
         NSLocalNetworkUsageDescription: Vesta connects to the hestia server you enter — on your home network this requires local network access.
+        # Receipts: the document camera reads a paper receipt; text recognition
+        # runs on the device and only the (card-redacted) text reaches hestia.
+        NSCameraUsageDescription: Vesta uses the camera to scan a receipt. The text is read on your iPhone; the photo is not saved or uploaded.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         UILaunchScreen:

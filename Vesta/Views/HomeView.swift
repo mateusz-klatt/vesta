@@ -6,6 +6,7 @@ import SwiftUI
 struct HomeView: View {
     @Environment(AppState.self) private var app
     @State private var showSettings = false
+    @State private var showReceipt = false
 
     var body: some View {
         NavigationStack {
@@ -30,11 +31,20 @@ struct HomeView: View {
             .background(Theme.background)
             .navigationTitle("Rooms")
             .toolbar {
+                if app.receiptsAPI != nil {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { showReceipt = true } label: { Image(systemName: "doc.text.viewfinder") }
+                            .accessibilityLabel("Add receipt")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
                 }
             }
             .sheet(isPresented: $showSettings) { SettingsView().appLanguage(app.appLanguage) }
+            .sheet(isPresented: $showReceipt) {
+                if let api = app.receiptsAPI { ReceiptScanView(api: api).appLanguage(app.appLanguage) }
+            }
             .refreshable { await app.loadDiscovery() }
             #if DEBUG
             .onAppear {

@@ -66,6 +66,10 @@ enum Control {
     static func isReadOnly(role: String?) -> Bool {
         role == "viewer"
     }
+
+    static func canAddReceipts(role: String?) -> Bool {
+        role == "admin"
+    }
 }
 
 /// Freshness of a node-less globals sensor sample (crib / outdoor): how old the last
