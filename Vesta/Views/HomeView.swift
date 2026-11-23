@@ -41,6 +41,7 @@ struct HomeView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                        .accessibilityLabel("Settings")
                 }
             }
             .sheet(isPresented: $showSettings) { SettingsView().appLanguage(app.appLanguage) }
@@ -298,11 +299,12 @@ private struct AllBlindsSlider: View {
 // MARK: - Rooms
 
 private struct RoomCard: View {
+    @Environment(\.locale) private var locale
     let room: RoomGroup
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(room.name).font(.headline)
+            Text(verbatim: room.name(locale: locale)).font(.headline)
             ForEach(room.devices) { item in
                 DeviceRow(item: item)
             }
@@ -516,12 +518,13 @@ private struct SensorRow: View {
 
 /// Device name + a localized type/subtitle line, shared by every row.
 private struct DeviceLabel: View {
+    @Environment(\.locale) private var locale
     let item: IdentifiedDevice
     var subtitle: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(item.displayName).foregroundStyle(Theme.textPrimary)
+            Text(verbatim: item.displayName(locale: locale)).foregroundStyle(Theme.textPrimary)
             Group {
                 if let subtitle { Text(verbatim: subtitle) }
                 else { Text(typeLabel(item.device._type)) }

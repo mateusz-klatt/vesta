@@ -2,6 +2,27 @@ import XCTest
 import Foundation
 @testable import Vesta
 
+final class DisplayNameLocalizationTests: XCTestCase {
+    func testFallbackNamesUseTheSelectedLocale() {
+        let device = IdentifiedDevice(id: "7", device: .init(_type: "light"))
+        let room = RoomGroup(id: "", devices: [device])
+        let polish = Locale(identifier: "pl")
+        XCTAssertEqual(device.displayName(locale: polish), "Węzeł 7")
+        XCTAssertEqual(room.name(locale: polish), "Bez pokoju")
+        XCTAssertEqual(device.displayName(locale: Locale(identifier: "en")), "Node 7")
+        XCTAssertEqual(room.name(locale: Locale(identifier: "en")), "No room")
+    }
+
+    func testServerNamesArePreservedInEveryLocale() {
+        let device = IdentifiedDevice(id: "7", device: .init(name: "My lamp", _type: "light"))
+        let room = RoomGroup(id: "My room", devices: [device])
+        for code in ["en", "pl", "ar"] {
+            XCTAssertEqual(device.displayName(locale: Locale(identifier: code)), "My lamp")
+            XCTAssertEqual(room.name(locale: Locale(identifier: code)), "My room")
+        }
+    }
+}
+
 final class UnitsTests: XCTestCase {
 
     func testFormatCelsius() {
