@@ -43,7 +43,9 @@ enum PANRedactor {
         // 12–19 digit window is strong enough evidence to win over protection.
         var hits = luhnRanges(in: line) + matches(maskedPAN, in: scan)
         if inBlock {
-            hits += blockDigitRanges(in: scan)
+            // Amounts are not protected inside a card block: a PAN split by a
+            // dot or comma (`NR KARTY: 422222222.2222`) looks like money.
+            hits += blockDigitRanges(in: masked(line, hiding: protectedRanges(in: line, money: false)))
             hits += matches(hexToken, in: scan).filter { range in
                 (scan as NSString).substring(with: range).contains(where: \.isLetter)
             }
@@ -70,8 +72,8 @@ enum PANRedactor {
         pattern: #"(?i)\bNIP\b[\s:.]*((?:\d[\s\-]?){9}\d)"#
     )
 
-    private static func protectedRanges(in line: String) -> [NSRange] {
-        var ranges = protectedPatterns.flatMap { matches($0, in: line) }
+    private static func protectedRanges(in line: String, money: Bool = true) -> [NSRange] {
+        var ranges = protectedPatterns.dropFirst(money ? 0 : 1).flatMap { matches($0, in: line) }
         let ns = line as NSString
         for match in nipPattern.matches(in: line, range: NSRange(location: 0, length: ns.length)) {
             let digits = ns.substring(with: match.range(at: 1)).filter(\.isASCIIDigit)
@@ -200,10 +202,10 @@ enum PANRedactor {
         cardLabel.firstMatch(in: line, range: NSRange(location: 0, length: (line as NSString).length)) != nil
     }
 
-    /// Digit runs (1–2 spaces or a dash between digits) not glued to a letter;
-    /// a colon in front is fine (`NR KARTY:53511234`).
+    /// Digit runs (1–2 spaces, a dash, a dot or a comma between digits) not
+    /// glued to a letter; a colon in front is fine (`NR KARTY:53511234`).
     private static let blockRun = try! NSRegularExpression(
-        pattern: #"(?<![\p{L}\d])\d(?:(?:  ?|-)?\d)*(?![\p{L}\d])"#
+        pattern: #"(?<![\p{L}\d])\d(?:(?:  ?|[-.,])?\d)*(?![\p{L}\d])"#
     )
     private static let hexToken = try! NSRegularExpression(pattern: #"(?i)(?<![\p{L}\d])[a-f0-9]{10,32}(?![\p{L}\d])"#)
 

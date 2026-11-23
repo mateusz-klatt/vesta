@@ -91,7 +91,14 @@ struct ReceiptForm: Equatable {
     /// signs the shop name after NFC + whitespace normalisation, so a
     /// whitespace-only edit keeps the match.
     var matchFieldsEdited: Bool {
-        Self.matchKey(shopName) != Self.matchKey(parsedShopName) || nip != parsedNIP
+        outgoingShopName != Self.matchKey(parsedShopName) || nip != parsedNIP
+    }
+
+    /// The shop name exactly as confirm sends it: card-redacted, normalised
+    /// the way hestia signs it, and capped at 128 characters. The link check
+    /// compares this value, so a truncation can't slip past it.
+    var outgoingShopName: String {
+        String(Self.matchKey(PANRedactor.redact(shopName)).prefix(128))
     }
 
     static func matchKey(_ shop: String) -> String {
@@ -131,7 +138,7 @@ struct ReceiptForm: Equatable {
         guard isValid, let day, let total = normalizedTotal else { return nil }
         let chosen = canLink && !matchFieldsEdited ? candidates.first { CandidateID($0) == candidate } : nil
         // Free text leaves the phone too: the same card redaction applies.
-        let shop = PANRedactor.redact(shopName).trimmingCharacters(in: .whitespaces)
+        let shop = outgoingShopName
         return ReceiptConfirmRequest(
             currency: currency,
             expectedVersion: version,
@@ -139,7 +146,7 @@ struct ReceiptForm: Equatable {
             link: chosen.map { .init(accountId: $0.accountId, candidateToken: $0.candidateToken, entryReference: $0.entryReference) },
             paymentMethod: payment,
             rawNip: nip.isEmpty ? nil : nip,
-            rawShopName: shop.isEmpty ? nil : String(shop.prefix(128)),
+            rawShopName: shop.isEmpty ? nil : shop,
             receiptDate: day.iso,
             receiptId: receiptID,
             receiptKind: kind,
@@ -205,23 +212,28 @@ struct ReceiptForm: Equatable {
 actor ReceiptDraftJanitor {
     static let shared = ReceiptDraftJanitor()
 
-    private var queue: [(id: String, version: Int)] = []
+    private typealias Item = (id: String, version: Int, server: String)
+    private var queue: [Item] = []
     private var draining = false
 
     var pendingCount: Int { queue.count }
 
-    func enqueue(id: String, version: Int) { queue.append((id, version)) }
+    /// `server` is the hestia origin the draft lives on: a draft ID only means
+    /// something there, so it's only ever deleted through a session on it.
+    func enqueue(id: String, version: Int, server: String) { queue.append((id, version, server)) }
 
-    /// Delete everything queued; failures stay queued for the next drain. A
-    /// drain already running picks up anything enqueued meanwhile.
-    func drain(using api: any ReceiptsAPI) async {
+    /// Delete everything queued for `server`; failures stay queued for the next
+    /// drain, and drafts from another server wait until Vesta points there
+    /// again (or expire on their own after 48 h). A drain already running
+    /// picks up anything enqueued meanwhile.
+    func drain(using api: any ReceiptsAPI, server: String) async {
         guard !draining else { return }
         draining = true
         defer { draining = false }
-        while !queue.isEmpty {
-            let batch = queue
-            queue = []
-            var failed: [(id: String, version: Int)] = []
+        while queue.contains(where: { $0.server == server }) {
+            let batch = queue.filter { $0.server == server }
+            queue.removeAll { $0.server == server }
+            var failed: [Item] = []
             for item in batch {
                 do {
                     try await api.deleteReceipt(id: item.id, expectedVersion: item.version)
@@ -256,19 +268,26 @@ final class ReceiptFlow {
     var error: ReceiptError?
     private(set) var isBusy = false
     private(set) var parsed: ReceiptParseResult?
+    /// The server ``parsed`` was created on.
+    private var parsedOn = ""
     private(set) var confirmed: ReceiptDetail?
 
     private let api: any ReceiptsAPI
     private let recognizer: any ReceiptTextRecognizing
     private let janitor: ReceiptDraftJanitor
+    private let server: @MainActor () -> String
     private var abandoned = false
 
+    /// `server` names the hestia origin ``api`` currently talks to (it follows
+    /// ``AppConfig/serverURL``); queued deletes are scoped to it.
     init(api: any ReceiptsAPI,
          recognizer: any ReceiptTextRecognizing = VisionReceiptRecognizer(),
-         janitor: ReceiptDraftJanitor = .shared) {
+         janitor: ReceiptDraftJanitor = .shared,
+         server: @escaping @MainActor () -> String = { AppConfig.serverURL.absoluteString }) {
         self.api = api
         self.recognizer = recognizer
         self.janitor = janitor
+        self.server = server
     }
 
     var candidates: [ReceiptCandidate] { parsed?.candidates ?? [] }
@@ -311,14 +330,17 @@ final class ReceiptFlow {
         error = nil
         do {
             let prepared = try ReceiptText.prepare(text)
+            let origin = server()
             await deleteCurrentDraft()      // re-reading replaces any earlier draft
+            guard !abandoned else { return } // closed while cleanup ran: send nothing
             let result = try await api.parseReceiptText(prepared)
             if abandoned {                  // the sheet closed while we waited
-                await janitor.enqueue(id: result.receiptId, version: result.version)
-                await janitor.drain(using: api)
+                await janitor.enqueue(id: result.receiptId, version: result.version, server: origin)
+                await janitor.drain(using: api, server: server())
                 return
             }
             parsed = result
+            parsedOn = origin
             form = ReceiptForm(draft: result.draft, candidates: result.candidates)
             step = .review
         } catch {
@@ -363,8 +385,8 @@ final class ReceiptFlow {
     func deleteCurrentDraft() async {
         if let parsed {
             self.parsed = nil
-            await janitor.enqueue(id: parsed.receiptId, version: parsed.version)
+            await janitor.enqueue(id: parsed.receiptId, version: parsed.version, server: parsedOn)
         }
-        await janitor.drain(using: api)
+        await janitor.drain(using: api, server: server())
     }
 }

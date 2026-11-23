@@ -36,6 +36,14 @@ final class PANRedactorTests: XCTestCase {
         XCTAssertEqual(PANRedactor.redact(text), text)
     }
 
+    func testCardBlockCatchesAmountShapedPAN() {
+        XCTAssertEqual(PANRedactor.redact("NR KARTY: 422222222.2222"), "NR KARTY: [REDACTED]")
+        XCTAssertEqual(PANRedactor.redact("KARTA\n4222,22222,2222"), "KARTA\n[REDACTED]")
+        // Amounts and dates in the block survive.
+        let block = "KARTA VISA\nKWOTA 45,99 PLN\nDATA 23.11.2026 18:04"
+        XCTAssertEqual(PANRedactor.redact(block), block)
+    }
+
     func testRedactsMaskedPANs() {
         XCTAssertEqual(PANRedactor.redact("****1234"), "[REDACTED]")
         XCTAssertEqual(PANRedactor.redact("5351********1234"), "[REDACTED]")
@@ -425,6 +433,23 @@ final class ReceiptFormTests: XCTestCase {
         XCTAssertNotNil(form.request(receiptID: p.receiptId, version: 1, candidates: p.candidates)?.link)
     }
 
+    func testWhitespaceEditOfAMaxLengthShopSendsTheSignedName() throws {
+        var p = try parsed()
+        let signed = String(repeating: "A", count: 64) + " " + String(repeating: "B", count: 63)
+        p.draft.rawShopName = signed
+        var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
+        form.shopName = String(repeating: "A", count: 64) + "  " + String(repeating: "B", count: 63)
+        XCTAssertFalse(form.matchFieldsEdited)
+        let request = try XCTUnwrap(form.request(receiptID: p.receiptId, version: 1, candidates: p.candidates))
+        XCTAssertEqual(request.rawShopName, signed)
+        XCTAssertNotNil(request.link)
+        // Past the cap the truncated value differs, so the link is dropped.
+        form.shopName = signed + "C"
+        XCTAssertFalse(form.matchFieldsEdited)    // the cap cuts the extra character
+        form.shopName = "X" + signed
+        XCTAssertTrue(form.matchFieldsEdited)
+    }
+
     func testShopFieldIsRedactedOnTheWire() throws {
         let p = try parsed()
         var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
@@ -503,11 +528,15 @@ actor MockReceiptsAPI: ReceiptsAPI {
     private var deleteError: ReceiptError?
     private var parseGate: CheckedContinuation<Void, Never>?
     private var holdParse = false
+    private var deleteGate: CheckedContinuation<Void, Never>?
+    private var holdDelete = false
 
     func failParse(_ error: ReceiptError) { parseError = error }
     func failDelete(_ error: ReceiptError?) { deleteError = error }
     func holdNextParse() { holdParse = true }
     func releaseParse() { parseGate?.resume(); parseGate = nil }
+    func holdNextDelete() { holdDelete = true }
+    func releaseDelete() { deleteGate?.resume(); deleteGate = nil }
 
     func parseReceiptText(_ text: String) async throws -> ReceiptParseResult {
         calls.append(.parse(text))
@@ -526,6 +555,10 @@ actor MockReceiptsAPI: ReceiptsAPI {
 
     func deleteReceipt(id: String, expectedVersion: Int) async throws {
         calls.append(.delete(id, expectedVersion))
+        if holdDelete {
+            holdDelete = false
+            await withCheckedContinuation { deleteGate = $0 }
+        }
         if let deleteError { throw deleteError }
     }
 }
@@ -612,6 +645,48 @@ final class ReceiptFlowTests: XCTestCase {
         XCTAssertEqual(drained, 0)
         let deletes = await api.calls.filter { if case .delete = $0 { true } else { false } }
         XCTAssertEqual(deletes.count, 3)
+    }
+
+    func testQueuedDeletesOnlyGoToTheirOwnServer() async {
+        let api = MockReceiptsAPI()
+        let janitor = ReceiptDraftJanitor()
+        var origin = "https://a.example"
+        let flow = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: []), janitor: janitor) { origin }
+        flow.useText("A")
+        await flow.send()
+        await api.failDelete(.api(.offline))
+        await flow.abandon()                       // A's draft stays queued
+        await api.failDelete(nil)
+        origin = "https://b.example"
+        let onB = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: []), janitor: janitor) { origin }
+        await onB.abandon()
+        var deletes = await api.calls.filter { if case .delete = $0 { true } else { false } }
+        XCTAssertEqual(deletes.count, 1)           // nothing sent to B
+        let queued = await janitor.pendingCount
+        XCTAssertEqual(queued, 1)
+        origin = "https://a.example"
+        let backOnA = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: []), janitor: janitor) { origin }
+        await backOnA.abandon()
+        deletes = await api.calls.filter { if case .delete = $0 { true } else { false } }
+        XCTAssertEqual(deletes.count, 2)
+        let drained = await janitor.pendingCount
+        XCTAssertEqual(drained, 0)
+    }
+
+    func testCancelDuringCleanupSendsNoText() async {
+        let api = MockReceiptsAPI()
+        let janitor = ReceiptDraftJanitor()
+        await janitor.enqueue(id: "old", version: 1, server: AppConfig.serverURL.absoluteString)
+        await api.holdNextDelete()
+        let flow = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: []), janitor: janitor)
+        flow.useText("A")
+        let sending = Task { await flow.send() }
+        while await api.calls.isEmpty { await Task.yield() }
+        await flow.abandon()                       // closed while the old draft is deleted
+        await api.releaseDelete()
+        await sending.value
+        let calls = await api.calls
+        XCTAssertEqual(calls, [.delete("old", 1)])
     }
 
     func testOverlappingSendsIssueOneRequest() async {
