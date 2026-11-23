@@ -154,13 +154,22 @@ struct ReceiptForm: Equatable {
 
     private static let posix = Locale(identifier: "en_US_POSIX")
 
-    /// hestia's money format: optional minus, ≤ 9 integer digits, ≤ 4 decimals,
-    /// dot separator. Surrounding spaces are trimmed and a keyboard comma becomes
-    /// a dot; anything else is rejected. Never goes through Double.
+    /// hestia's money format, canonicalised: optional minus, ≤ 9 integer
+    /// digits without leading zeros, ≤ 4 decimals without trailing zeros, dot
+    /// separator (`000007,9800` → `7.98`, `8.00` → `8`). Surrounding spaces are
+    /// trimmed and a keyboard comma becomes a dot; anything else is rejected.
+    /// The same string is validated and sent. Never goes through Double.
     static func money(_ raw: String) -> String? {
         let normalized = raw.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
-        guard normalized.wholeMatch(of: /-?[0-9]{1,9}(\.[0-9]{1,4})?/) != nil else { return nil }
-        return normalized
+        guard let match = normalized.wholeMatch(of: /(-?)([0-9]+)(?:\.([0-9]+))?/) else { return nil }
+        var integer = String(match.2.drop { $0 == "0" })
+        if integer.isEmpty { integer = "0" }
+        var fraction = String(match.3 ?? "")
+        while fraction.hasSuffix("0") { fraction.removeLast() }
+        guard integer.count <= 9, fraction.count <= 4 else { return nil }
+        let isZero = integer == "0" && fraction.isEmpty
+        let sign = match.1.isEmpty || isZero ? "" : "-"
+        return sign + integer + (fraction.isEmpty ? "" : "." + fraction)
     }
 
     static func lineValid(_ line: ReceiptLine) -> Bool {
@@ -180,14 +189,52 @@ struct ReceiptForm: Equatable {
     }
 }
 
+/// Drafts to delete on hestia, kept outside any one sheet so a cleanup that
+/// fails (or is still in flight when the sheet closes) is retried by the next
+/// flow instead of being lost with the discarded one. Draining is serialised.
+actor ReceiptDraftJanitor {
+    static let shared = ReceiptDraftJanitor()
+
+    private var queue: [(id: String, version: Int)] = []
+    private var draining = false
+
+    var pendingCount: Int { queue.count }
+
+    func enqueue(id: String, version: Int) { queue.append((id, version)) }
+
+    /// Delete everything queued; failures stay queued for the next drain. A
+    /// drain already running picks up anything enqueued meanwhile.
+    func drain(using api: any ReceiptsAPI) async {
+        guard !draining else { return }
+        draining = true
+        defer { draining = false }
+        while !queue.isEmpty {
+            let batch = queue
+            queue = []
+            var failed: [(id: String, version: Int)] = []
+            for item in batch {
+                do {
+                    try await api.deleteReceipt(id: item.id, expectedVersion: item.version)
+                } catch ReceiptError.notFound {
+                    // Already gone (expired / deleted elsewhere).
+                } catch {
+                    failed.append(item)
+                }
+            }
+            queue.append(contentsOf: failed)
+            if !failed.isEmpty { return }       // offline etc.: try again next time
+        }
+    }
+}
+
 /// Capture → edit text → review the parsed draft → confirm. The photo only
 /// lives for the duration of ``recognize(_:)``; hestia receives the redacted
 /// text and nothing else.
 ///
 /// One request at a time (``isBusy`` guards every network step). Leaving the
 /// flow (``abandon()``) deletes the open draft, including one whose parse
-/// response arrives after the sheet is gone; a delete that fails is retried on
-/// the next attempt instead of being forgotten.
+/// response arrives after the sheet is gone; deletes go through
+/// ``ReceiptDraftJanitor`` so a failed one is retried by a later flow.
 @MainActor
 @Observable
 final class ReceiptFlow {
@@ -203,13 +250,15 @@ final class ReceiptFlow {
 
     private let api: any ReceiptsAPI
     private let recognizer: any ReceiptTextRecognizing
+    private let janitor: ReceiptDraftJanitor
     private var abandoned = false
-    /// Drafts whose delete failed: (id, version), retried by ``discardDraft()``.
-    private(set) var pendingDeletes: [(id: String, version: Int)] = []
 
-    init(api: any ReceiptsAPI, recognizer: any ReceiptTextRecognizing = VisionReceiptRecognizer()) {
+    init(api: any ReceiptsAPI,
+         recognizer: any ReceiptTextRecognizing = VisionReceiptRecognizer(),
+         janitor: ReceiptDraftJanitor = .shared) {
         self.api = api
         self.recognizer = recognizer
+        self.janitor = janitor
     }
 
     var candidates: [ReceiptCandidate] { parsed?.candidates ?? [] }
@@ -232,8 +281,14 @@ final class ReceiptFlow {
         }
     }
 
-    /// Text from Live Text / the clipboard, or OCR output.
+    /// Text from Live Text / the clipboard, or OCR output. An absurdly large
+    /// paste is refused before redaction (which is linear, but no reason to
+    /// spend it on something hestia will reject anyway).
     func useText(_ raw: String) {
+        guard raw.utf8.count <= ReceiptText.maxBytes * 2 else {
+            error = .tooLarge
+            return
+        }
         text = PANRedactor.redact(raw)
         error = nil
         step = .edit
@@ -249,7 +304,8 @@ final class ReceiptFlow {
             await deleteCurrentDraft()      // re-reading replaces any earlier draft
             let result = try await api.parseReceiptText(prepared)
             if abandoned {                  // the sheet closed while we waited
-                await delete(id: result.receiptId, version: result.version)
+                await janitor.enqueue(id: result.receiptId, version: result.version)
+                await janitor.drain(using: api)
                 return
             }
             parsed = result
@@ -297,20 +353,8 @@ final class ReceiptFlow {
     func deleteCurrentDraft() async {
         if let parsed {
             self.parsed = nil
-            pendingDeletes.append((parsed.receiptId, parsed.version))
+            await janitor.enqueue(id: parsed.receiptId, version: parsed.version)
         }
-        let queue = pendingDeletes
-        pendingDeletes = []
-        for item in queue { await delete(id: item.id, version: item.version) }
-    }
-
-    private func delete(id: String, version: Int) async {
-        do {
-            try await api.deleteReceipt(id: id, expectedVersion: version)
-        } catch ReceiptError.notFound {
-            // Already gone (expired / deleted elsewhere): nothing to retry.
-        } catch {
-            pendingDeletes.append((id, version))
-        }
+        await janitor.drain(using: api)
     }
 }

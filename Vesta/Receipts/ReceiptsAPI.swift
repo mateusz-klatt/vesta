@@ -31,7 +31,8 @@ enum ReceiptError: LocalizedError, Equatable {
     case forbidden
     /// 413 `budget_receipt_quota_exceeded`: 20 open drafts.
     case draftQuota
-    /// 413 otherwise, or caught on the device before sending.
+    /// 413 otherwise (parse-text 48 KiB / confirm 128 KiB body), or caught on
+    /// the device before sending (32 KB / 500 lines).
     case tooLarge
     /// 409 `budget_receipt_conflict`: changed elsewhere since it was loaded.
     case versionConflict
@@ -71,7 +72,7 @@ enum ReceiptError: LocalizedError, Equatable {
         case .notFound: "Drafts expire after 48 hours. Scan the receipt again."
         case .forbidden: "Only an admin can add receipts, and the server must allow the app to send them."
         case .draftQuota: "Confirm or discard some drafts on the server, then try again."
-        case .tooLarge: "The receipt is too large for the server. Keep the text under 500 lines and 32 KB."
+        case .tooLarge: "The receipt is too large for the server. Shorten the text and read it again."
         case .versionConflict: "Scan the receipt again to start from the current version."
         case .alreadyLinked: "Pick a different transaction or save the receipt without one."
         case .staleCandidate: "Scan the receipt again to refresh the matching transactions."

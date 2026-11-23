@@ -17355,12 +17355,12 @@
         }
       }
     },
-    "The receipt is too large for the server. Keep the text under 500 lines and 32 KB.": {
+    "The receipt is too large for the server. Shorten the text and read it again.": {
       "localizations": {
         "pl": {
           "stringUnit": {
             "state": "translated",
-            "value": "Paragon jest za duży dla serwera. Tekst może mieć najwyżej 500 linii i 32 KB."
+            "value": "Paragon jest za duży dla serwera. Skróć tekst i odczytaj go ponownie."
           }
         }
       }

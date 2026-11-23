@@ -105,6 +105,29 @@ final class PANRedactorTests: XCTestCase {
         XCTAssertEqual(PANRedactor.redact("KARTA\n23-11-2026 1234"), "KARTA\n23-11-2026 1234")
     }
 
+    func testDateShapedPANFragmentsAreStillRedacted() {
+        XCTAssertEqual(PANRedactor.redact("CARD: 4111-11-11 1111 1111"), "CARD: [REDACTED]")
+    }
+
+    func testLetterGluedPAN() {
+        XCTAssertEqual(PANRedactor.redact("VISA4111111111111111"), "VISA[REDACTED]")
+    }
+
+    func testOverlappingWindowsLeaveNoTail() {
+        XCTAssertEqual(PANRedactor.redact("1111 4111 1111 1111 1111"), "[REDACTED]")
+    }
+
+    func testPANGluedInsideLongerDigitRun() {
+        XCTAssertFalse(PANRedactor.redact("9994111111111111111999").contains("4111111111111111"))
+    }
+
+    func testManyShortGroupsStayFast() {
+        let line = String(repeating: "1 ", count: 16_000)
+        let start = Date()
+        _ = PANRedactor.redact(line)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 2)
+    }
+
     func testNIPChecksum() {
         XCTAssertTrue(PANRedactor.validNIP("7791011327"))
         XCTAssertFalse(PANRedactor.validNIP("1234567890"))
@@ -437,7 +460,9 @@ final class ReceiptFormTests: XCTestCase {
         form.total = " 7,98 "                      // comma + stray spaces from the keyboard
         XCTAssertNil(form.mismatch)
         XCTAssertEqual(form.request(receiptID: p.receiptId, version: 1, candidates: [])?.totalAmount, "7.98")
-        form.total = "7,98000"                     // > 4 decimals: hestia rejects
+        form.total = "007,98000"                   // canonicalised to what hestia accepts
+        XCTAssertEqual(form.request(receiptID: p.receiptId, version: 1, candidates: [])?.totalAmount, "7.98")
+        form.total = "7.98765"                     // > 4 decimals: hestia rejects
         XCTAssertFalse(form.isValid)
         form.total = "7.98"
         form.nip = "123"
@@ -453,8 +478,11 @@ final class ReceiptFormTests: XCTestCase {
         XCTAssertNil(ReceiptForm.money("1e3"))
         XCTAssertNil(ReceiptForm.money("abc"))
         XCTAssertNil(ReceiptForm.money("1234567890"))        // > 9 integer digits
-        XCTAssertEqual(ReceiptForm.money(" 12,50 "), "12.50")
+        XCTAssertEqual(ReceiptForm.money(" 12,50 "), "12.5")
         XCTAssertEqual(ReceiptForm.money("-3"), "-3")
+        XCTAssertEqual(ReceiptForm.money("000000007,9800"), "7.98")
+        XCTAssertEqual(ReceiptForm.money("-0.00"), "0")
+        XCTAssertNil(ReceiptForm.money("7.98765"))
     }
 }
 
@@ -558,19 +586,24 @@ final class ReceiptFlowTests: XCTestCase {
         XCTAssertNotEqual(flow.step, .review)
     }
 
-    func testFailedDeleteIsRetried() async {
+    func testFailedDeleteIsRetriedByALaterFlow() async {
         let api = MockReceiptsAPI()
-        let flow = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: []))
+        let janitor = ReceiptDraftJanitor()
+        let flow = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: []), janitor: janitor)
         flow.useText("A")
         await flow.send()
         await api.failDelete(.api(.offline))
         await flow.backToEdit()
-        XCTAssertEqual(flow.pendingDeletes.count, 1)
+        await flow.abandon()                       // sheet closes while still offline
+        let stillQueued = await janitor.pendingCount
+        XCTAssertEqual(stillQueued, 1)
         await api.failDelete(nil)
-        await flow.abandon()
-        XCTAssertTrue(flow.pendingDeletes.isEmpty)
+        let next = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: []), janitor: janitor)
+        await next.abandon()                       // any later flow drains the queue
+        let drained = await janitor.pendingCount
+        XCTAssertEqual(drained, 0)
         let deletes = await api.calls.filter { if case .delete = $0 { true } else { false } }
-        XCTAssertEqual(deletes.count, 2)
+        XCTAssertEqual(deletes.count, 3)
     }
 
     func testOverlappingSendsIssueOneRequest() async {

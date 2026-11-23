@@ -38,7 +38,10 @@ enum PANRedactor {
 
     private static func redactLine(_ line: String, inBlock: Bool) -> String {
         let scan = masked(line, hiding: protectedRanges(in: line))
-        var hits = luhnRanges(in: scan) + matches(maskedPAN, in: scan)
+        // Luhn runs on the ORIGINAL line: a real PAN can contain date- or
+        // amount-shaped fragments (`4111-11-11 1111 1111`), and a Luhn-valid
+        // 12–19 digit window is strong enough evidence to win over protection.
+        var hits = luhnRanges(in: line) + matches(maskedPAN, in: scan)
         if inBlock {
             hits += blockDigitRanges(in: scan)
             hits += matches(hexToken, in: scan).filter { range in
@@ -90,9 +93,10 @@ enum PANRedactor {
     // MARK: - 1. Luhn windows over digit groups
 
     /// Digit groups (OCR look-alikes allowed inside a group) joined by 1–2
-    /// spaces or a dash. A group must not touch a letter or digit outside it.
+    /// spaces or a dash. Only digits bound a run, so a PAN glued to a label
+    /// (`VISA4111…`) is still found.
     private static let groupRun = try! NSRegularExpression(
-        pattern: #"(?<![\p{L}\d])[0-9][0-9OoIl]*(?:(?:  ?|-)[0-9OoIl]+)*(?![\p{L}\d])"#
+        pattern: #"(?<!\d)[0-9][0-9OoIl]*(?:(?:  ?|-)[0-9OoIl]+)*(?!\d)"#
     )
     private static let group = try! NSRegularExpression(pattern: #"[0-9OoIl]+"#)
 
@@ -100,21 +104,35 @@ enum PANRedactor {
         let ns = line as NSString
         var found: [NSRange] = []
         for run in groupRun.matches(in: line, range: NSRange(location: 0, length: ns.length)) {
-            let groups: [(range: NSRange, digits: String)] = group.matches(in: line, range: run.range).compactMap { match in
+            let groups: [(range: NSRange, digits: [UInt8])] = group.matches(in: line, range: run.range).compactMap { match in
                 guard let digits = ocrDigits(ns.substring(with: match.range)) else { return nil }
                 return (match.range, digits)
             }
-            // Longest window first, so a 16-digit PAN wins over a 12-digit prefix.
-            var used = IndexSet()
-            for length in stride(from: groups.count, through: 1, by: -1) {
-                for start in 0...(groups.count - length) {
-                    let window = start..<(start + length)
-                    guard used.intersection(IndexSet(integersIn: window)).isEmpty else { continue }
-                    let digits = groups[window].map(\.digits).joined()
-                    guard panLength.contains(digits.count), luhnValid(digits) else { continue }
-                    let first = groups[window.lowerBound].range, last = groups[window.upperBound - 1].range
+            // A single group longer than a PAN (digits glued together) can still
+            // hide one: slide 12–19 digit windows inside it.
+            for group in groups where group.digits.count > panLength.upperBound {
+                let digits = group.digits
+                for start in digits.indices {
+                    for length in panLength where start + length <= digits.count {
+                        guard luhnValid(digits[start..<(start + length)]) else { continue }
+                        found.append(NSRange(location: group.range.location + start, length: length))
+                    }
+                }
+            }
+            // Every window of whole groups with 12–19 digits; valid ones are all
+            // kept and merged later, so overlapping candidates can't leave a
+            // PAN's tail behind. A window stops growing past 19 digits, so the
+            // work is linear in the number of groups.
+            var window: [UInt8] = []
+            window.reserveCapacity(panLength.upperBound + 8)
+            for start in groups.indices {
+                window.removeAll(keepingCapacity: true)
+                for end in start..<groups.count {
+                    window += groups[end].digits
+                    if window.count > panLength.upperBound { break }
+                    guard panLength.contains(window.count), luhnValid(window[...]) else { continue }
+                    let first = groups[start].range, last = groups[end].range
                     found.append(NSRange(location: first.location, length: NSMaxRange(last) - first.location))
-                    used.insert(integersIn: window)
                 }
             }
         }
@@ -122,30 +140,40 @@ enum PANRedactor {
     }
 
     /// Map OCR look-alikes to digits; nil if the group has no real digit (a
-    /// word like `Il` is not a number).
-    private static func ocrDigits(_ token: String) -> String? {
-        guard token.contains(where: \.isASCIIDigit) else { return nil }
-        return String(token.map { char -> Character in
-            switch char {
-            case "O", "o": "0"
-            case "I", "l": "1"
-            default: char
+    /// word like `Il` is not a number). One character maps to one digit, so
+    /// offsets inside a group map straight back onto the line.
+    private static func ocrDigits(_ token: String) -> [UInt8]? {
+        var digits: [UInt8] = []
+        var sawDigit = false
+        for unit in token.utf8 {
+            switch unit {
+            case UInt8(ascii: "0")...UInt8(ascii: "9"): digits.append(unit - UInt8(ascii: "0")); sawDigit = true
+            case UInt8(ascii: "O"), UInt8(ascii: "o"): digits.append(0)
+            case UInt8(ascii: "I"), UInt8(ascii: "l"): digits.append(1)
+            default: return nil
             }
-        })
+        }
+        return sawDigit ? digits : nil
     }
 
     static func luhnValid(_ digits: String) -> Bool {
         guard !digits.isEmpty, digits.allSatisfy(\.isASCIIDigit) else { return false }
+        return luhnValid(digits.utf8.map { $0 - UInt8(ascii: "0") }[...])
+    }
+
+    static func luhnValid(_ digits: ArraySlice<UInt8>) -> Bool {
         var sum = 0
-        for (offset, char) in digits.reversed().enumerated() {
-            var value = Int(String(char))!
-            if offset % 2 == 1 {
+        var double = false
+        for digit in digits.reversed() {
+            var value = Int(digit)
+            if double {
                 value *= 2
                 if value > 9 { value -= 9 }
             }
             sum += value
+            double.toggle()
         }
-        return sum % 10 == 0
+        return !digits.isEmpty && sum % 10 == 0
     }
 
     /// Polish NIP checksum (weights 6 5 7 2 3 4 5 6 7, mod 11).
