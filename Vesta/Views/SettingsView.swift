@@ -7,6 +7,8 @@ struct SettingsView: View {
 
     @State private var urlText = ""
     @State private var urlInvalid = false
+    @State private var showPairing = false
+    @State private var pairingMessage: LocalizedStringResource?
 
     /// Languages Vesta ships (matches the String Catalog).
     static let languages = [
@@ -54,6 +56,36 @@ struct SettingsView: View {
                     }
                 }
 
+                if app.receiptsAPI != nil {
+                    Section("Receipts") {
+                        if app.receiptPairing.status == .paired {
+                            Text("Paired")
+                            Button("Unpair iPhone", role: .destructive) {
+                                pairingMessage = nil
+                                Task {
+                                    do {
+                                        try await app.receiptPairing.unpair()
+                                    } catch {
+                                        pairingMessage = DevicePairingError.storage.message
+                                    }
+                                }
+                            }
+                        } else {
+                            Text("Not paired")
+                            Button {
+                                showPairing = true
+                            } label: {
+                                if app.receiptPairing.status == .pairAgain { Text("Pair again") }
+                                else { Text("Pair iPhone") }
+                            }
+                        }
+                        if let pairingMessage {
+                            Text(pairingMessage).foregroundStyle(Theme.textSecondary)
+                        }
+                    }
+                    .disabled(app.receiptPairing.isBusy)
+                }
+
                 Section {
                     Button("Sign out", role: .destructive) {
                         Task { await app.signOut(); dismiss() }
@@ -67,6 +99,7 @@ struct SettingsView: View {
                 ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
             }
             .onAppear { urlText = app.backendURLString }
+            .sheet(isPresented: $showPairing) { ReceiptPairingView().appLanguage(app.appLanguage) }
         }
     }
 }

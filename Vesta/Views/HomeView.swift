@@ -6,6 +6,7 @@ import SwiftUI
 struct HomeView: View {
     @Environment(AppState.self) private var app
     @State private var showSettings = false
+    @State private var showPairing = false
     @State private var receiptFlow: ReceiptFlow?
 
     var body: some View {
@@ -31,12 +32,19 @@ struct HomeView: View {
             .background(Theme.background)
             .navigationTitle("Rooms")
             .toolbar {
-                if app.receiptsAPI != nil {
+                if let api = app.receiptsAPI {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button {
-                            if let api = app.receiptsAPI { receiptFlow = ReceiptFlow(api: api) }
-                        } label: { Image(systemName: "doc.text.viewfinder") }
-                            .accessibilityLabel("Add receipt")
+                            if app.receiptPairing.status == .paired {
+                                receiptFlow = ReceiptFlow(api: api)
+                            } else {
+                                showPairing = true
+                            }
+                        } label: {
+                            Image(systemName: app.receiptPairing.status == .paired ? "doc.text.viewfinder" : "link")
+                        }
+                        .accessibilityLabel(app.receiptPairing.status == .paired ? Text("Add receipt") : Text("Pair iPhone"))
+                        .disabled(app.receiptPairing.isBusy)
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -45,6 +53,7 @@ struct HomeView: View {
                 }
             }
             .sheet(isPresented: $showSettings) { SettingsView().appLanguage(app.appLanguage) }
+            .sheet(isPresented: $showPairing) { ReceiptPairingView().appLanguage(app.appLanguage) }
             .sheet(isPresented: Binding(get: { receiptFlow != nil }, set: { if !$0 { closeReceipt() } })) {
                 if let receiptFlow { ReceiptScanView(flow: receiptFlow).appLanguage(app.appLanguage) }
             }

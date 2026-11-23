@@ -620,9 +620,15 @@ final class CapturingTransport: ClientTransport, @unchecked Sendable {
     }
 }
 
+@MainActor
 final class ReceiptsClientTests: XCTestCase {
+    private func pairedClient(transport: any ClientTransport) -> APIClient {
+        let store = MemoryDeviceTokenStore(.init(server: AppConfig.serverURL, credential: fakeDeviceToken))
+        return APIClient(transport: transport, receiptPairing: ReceiptPairing(store: store))
+    }
+
     func testParseDecodesDraftAndCandidates() async throws {
-        let api = APIClient(transport: StubTransport { request in
+        let api = pairedClient(transport: StubTransport { request in
             XCTAssertEqual(request.path, "/api/budget/receipts/parse-text")
             return (200, body(sampleParseJSON))
         })
@@ -634,23 +640,23 @@ final class ReceiptsClientTests: XCTestCase {
     }
 
     func testParseDisabledMapped() async {
-        let api = APIClient(transport: StubTransport { _ in (404, body(#"{"ok":false,"error":"budget_receipts_disabled"}"#)) })
+        let api = pairedClient(transport: StubTransport { _ in (404, body(#"{"error":{"code":"budget_receipts_disabled"}}"#)) })
         await assertReceiptError(try await api.parseReceiptText("x"), .disabled)
     }
 
     func testParseForbiddenWithEmptyBody() async {
-        let api = APIClient(transport: StubTransport { _ in (403, nil) })
+        let api = pairedClient(transport: StubTransport { _ in (403, nil) })
         await assertReceiptError(try await api.parseReceiptText("x"), .forbidden)
     }
 
     func testParseQuotaMapped() async {
-        let api = APIClient(transport: StubTransport { _ in (413, body(#"{"ok":false,"error":"budget_receipt_quota_exceeded"}"#)) })
+        let api = pairedClient(transport: StubTransport { _ in (413, body(#"{"ok":false,"error":"budget_receipt_quota_exceeded"}"#)) })
         await assertReceiptError(try await api.parseReceiptText("x"), .draftQuota)
     }
 
     func testConfirmWireBodyHasEveryKeyIncludingNulls() async throws {
         let transport = CapturingTransport(status: 409, body: #"{"ok":false,"error":"budget_receipt_stale_source"}"#)
-        let api = APIClient(transport: transport)
+        let api = pairedClient(transport: transport)
         let parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: body(sampleParseJSON))
         var form = ReceiptForm(draft: parsed.draft, candidates: parsed.candidates)
         form.time = ""
@@ -676,11 +682,78 @@ final class ReceiptsClientTests: XCTestCase {
     }
 
     func testDeleteOK() async throws {
-        let api = APIClient(transport: StubTransport { _ in (200, body(#"{"ok":true,"deleted":true}"#)) })
+        let api = pairedClient(transport: StubTransport { _ in (200, body(#"{"ok":true,"deleted":true}"#)) })
         try await api.deleteReceipt(id: sampleReceiptID, expectedVersion: 1)
+    }
+
+    func testOnlyReceiptOperationsSendTheDeviceToken() async throws {
+        let store = MemoryDeviceTokenStore(.init(server: AppConfig.serverURL, credential: fakeDeviceToken))
+        let transport = CapturingTransport(status: 400, body: #"{"error":{"code":"budget_auth_ambiguous"}}"#)
+        let api = APIClient(transport: transport, receiptPairing: ReceiptPairing(store: store),
+                            sessionToken: { "fake-session-token" })
+
+        await assertReceiptError(try await api.parseReceiptText("x"), .ambiguousAuth)
+        assertBearer(transport, path: "/api/budget/receipts/parse-text", bearer: "fake-device-token")
+
+        let parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: body(sampleParseJSON))
+        let form = ReceiptForm(draft: parsed.draft, candidates: parsed.candidates)
+        let confirm = try XCTUnwrap(form.request(receiptID: parsed.receiptId, version: 1, candidates: parsed.candidates))
+        await assertReceiptError(try await api.confirmReceipt(confirm), .ambiguousAuth)
+        assertBearer(transport, path: "/api/budget/receipts/confirm", bearer: "fake-device-token")
+
+        await assertReceiptError(try await api.deleteReceipt(id: sampleReceiptID, expectedVersion: 1), .ambiguousAuth)
+        assertBearer(transport, path: "/api/budget/receipts/delete", bearer: "fake-device-token")
+
+        _ = try? await api.whoami()
+        assertBearer(transport, path: "/api/whoami", bearer: "fake-session-token")
+    }
+
+    private func assertBearer(_ transport: CapturingTransport, path: String, bearer: String,
+                              file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(transport.last?.request.path, path, file: file, line: line)
+        XCTAssertEqual(transport.last?.request.headerFields[.authorization], "Bearer \(bearer)", file: file, line: line)
+        XCTAssertNil(transport.last?.request.headerFields[.cookie], file: file, line: line)
+    }
+
+    func testUnpairedReceiptsNeverFallBackToTheSessionToken() async {
+        let transport = CapturingTransport(status: 403, body: "")
+        let api = APIClient(transport: transport, receiptPairing: ReceiptPairing(store: MemoryDeviceTokenStore()),
+                            sessionToken: { "fake-session-token" })
+        await assertReceiptError(try await api.parseReceiptText("x"), .pairAgain)
+        XCTAssertNil(transport.last)
+    }
+
+    func testExpiredTokenIsRemovedAndRequiresPairingAgain() async {
+        let store = MemoryDeviceTokenStore(.init(server: AppConfig.serverURL, credential: fakeDeviceToken))
+        let pairing = ReceiptPairing(store: store)
+        let api = APIClient(transport: CapturingTransport(status: 401, body: #"{"error":{"code":"device_token_expired"}}"#),
+                            receiptPairing: pairing)
+        await assertReceiptError(try await api.parseReceiptText("x"), .pairAgain)
+        XCTAssertNil(store.load())
+        XCTAssertEqual(pairing.status, .pairAgain)
+    }
+
+    func testRevokedTokenIsRemovedEvenOnDraftCleanup() async {
+        let store = MemoryDeviceTokenStore(.init(server: AppConfig.serverURL, credential: fakeDeviceToken))
+        let pairing = ReceiptPairing(store: store)
+        let api = APIClient(transport: CapturingTransport(status: 401, body: #"{"error":{"code":"device_token_revoked"}}"#),
+                            receiptPairing: pairing)
+        await assertReceiptError(try await api.deleteReceipt(id: sampleReceiptID, expectedVersion: 1), .pairAgain)
+        XCTAssertNil(store.load())
+        XCTAssertEqual(pairing.status, .pairAgain)
+    }
+
+    func testParseRateLimitDoesNotClearCredential() async {
+        let store = MemoryDeviceTokenStore(.init(server: AppConfig.serverURL, credential: fakeDeviceToken))
+        let pairing = ReceiptPairing(store: store)
+        let api = APIClient(transport: StubTransport { _ in (429, nil) }, receiptPairing: pairing)
+        await assertReceiptError(try await api.parseReceiptText("x"), .rateLimited)
+        XCTAssertEqual(pairing.status, .paired)
+        XCTAssertNotNil(store.load())
     }
 }
 
+@MainActor
 func assertReceiptError<T>(
     _ expression: @autoclosure () async throws -> T,
     _ expected: ReceiptError,

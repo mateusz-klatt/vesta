@@ -37520,6 +37520,196 @@
           }
         }
       }
+    },
+    "Couldn’t pair this iPhone. Check the code or get a new one from hestia and try again.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nie udało się sparować tego iPhone’a. Sprawdź kod lub pobierz nowy w hestii i spróbuj ponownie."
+          }
+        }
+      }
+    },
+    "Couldn’t update pairing on this iPhone. Try again while it’s unlocked.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nie udało się zmienić parowania na tym iPhonie. Odblokuj go i spróbuj ponownie."
+          }
+        }
+      }
+    },
+    "Enter the 8-character pairing code from hestia.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wprowadź 8-znakowy kod parowania z hestii."
+          }
+        }
+      }
+    },
+    "In hestia, choose Add device to get a one-time pairing code.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "W hestii wybierz „Dodaj urządzenie”, aby uzyskać jednorazowy kod parowania."
+          }
+        }
+      }
+    },
+    "Multiple credentials": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wiele danych uwierzytelniających"
+          }
+        }
+      }
+    },
+    "Not paired": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Niesparowany"
+          }
+        }
+      }
+    },
+    "Pair again": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sparuj ponownie"
+          }
+        }
+      }
+    },
+    "Pair iPhone": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sparuj iPhone’a"
+          }
+        }
+      }
+    },
+    "Pair this iPhone with hestia to continue.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sparuj tego iPhone’a z hestią, aby kontynuować."
+          }
+        }
+      }
+    },
+    "Paired": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sparowany"
+          }
+        }
+      }
+    },
+    "Pairing code": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kod parowania"
+          }
+        }
+      }
+    },
+    "QR scanning is unavailable. Enter the pairing code instead.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skanowanie kodu QR jest niedostępne. Wpisz kod parowania."
+          }
+        }
+      }
+    },
+    "Receipt limit reached": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Osiągnięto limit paragonów"
+          }
+        }
+      }
+    },
+    "Receipts": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paragony"
+          }
+        }
+      }
+    },
+    "Scan QR": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skanuj kod QR"
+          }
+        }
+      }
+    },
+    "The server received more than one credential. Check your connection and try again.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Serwer otrzymał więcej niż jeden zestaw danych uwierzytelniających. Sprawdź połączenie i spróbuj ponownie."
+          }
+        }
+      }
+    },
+    "This isn’t a hestia pairing QR code.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "To nie jest kod QR parowania hestii."
+          }
+        }
+      }
+    },
+    "Too many receipts, try again in a minute": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Za dużo paragonów. Spróbuj ponownie za minutę."
+          }
+        }
+      }
+    },
+    "Unpair iPhone": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rozparuj iPhone’a"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
