@@ -195,6 +195,801 @@
         "title": "AutomationsList",
         "type": "object"
       },
+      "BudgetError": {
+        "properties": {
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "ok": {
+            "const": false,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "error"
+        ],
+        "title": "BudgetError",
+        "type": "object"
+      },
+      "BudgetReceiptCandidate": {
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "amount": {
+            "title": "Amount",
+            "type": "string"
+          },
+          "booking_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Booking Date"
+          },
+          "candidate_token": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Candidate Token",
+            "type": "string"
+          },
+          "credit_debit_indicator": {
+            "enum": [
+              "DBIT",
+              "CRDT"
+            ],
+            "title": "Credit Debit Indicator",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "date_distance": {
+            "title": "Date Distance",
+            "type": "integer"
+          },
+          "entry_reference": {
+            "title": "Entry Reference",
+            "type": "string"
+          },
+          "merchant_token_hit": {
+            "title": "Merchant Token Hit",
+            "type": "boolean"
+          },
+          "transaction_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Transaction Date"
+          },
+          "value_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Value Date"
+          }
+        },
+        "required": [
+          "account_id",
+          "entry_reference",
+          "amount",
+          "currency",
+          "credit_debit_indicator",
+          "merchant_token_hit",
+          "date_distance",
+          "candidate_token"
+        ],
+        "title": "BudgetReceiptCandidate",
+        "type": "object"
+      },
+      "BudgetReceiptConfirmRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "currency": {
+            "pattern": "^[A-Z]{3}$",
+            "title": "Currency",
+            "type": "string"
+          },
+          "expected_version": {
+            "minimum": 1,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/BudgetReceiptLineInput"
+            },
+            "maxItems": 300,
+            "title": "Lines",
+            "type": "array"
+          },
+          "link": {
+            "$ref": "#/components/schemas/BudgetReceiptLinkRequest"
+          },
+          "payment_method": {
+            "enum": [
+              "card",
+              "blik",
+              "cash",
+              "mixed",
+              "unknown"
+            ],
+            "title": "Payment Method",
+            "type": "string"
+          },
+          "raw_nip": {
+            "pattern": "^(?:|[0-9]{10})$",
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Raw Nip"
+          },
+          "raw_shop_name": {
+            "maxLength": 128,
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Raw Shop Name"
+          },
+          "receipt_date": {
+            "format": "date",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            "title": "Receipt Date",
+            "type": "string"
+          },
+          "receipt_id": {
+            "pattern": "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+            "title": "Receipt Id",
+            "type": "string"
+          },
+          "receipt_kind": {
+            "enum": [
+              "purchase",
+              "refund"
+            ],
+            "title": "Receipt Kind",
+            "type": "string"
+          },
+          "receipt_time": {
+            "pattern": "^(?:|(?:[01][0-9]|2[0-3]):[0-5][0-9])$",
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Receipt Time"
+          },
+          "total_amount": {
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$",
+            "title": "Total Amount",
+            "type": "string"
+          }
+        },
+        "required": [
+          "receipt_id",
+          "expected_version",
+          "receipt_kind",
+          "receipt_date",
+          "total_amount",
+          "currency",
+          "payment_method",
+          "lines"
+        ],
+        "title": "BudgetReceiptConfirmRequest",
+        "type": "object"
+      },
+      "BudgetReceiptConfirmResult": {
+        "properties": {
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/BudgetReceiptDetail"
+          }
+        },
+        "required": [
+          "ok",
+          "receipt"
+        ],
+        "title": "BudgetReceiptConfirmResult",
+        "type": "object"
+      },
+      "BudgetReceiptDeleteRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "minimum": 1,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "receipt_id": {
+            "pattern": "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+            "title": "Receipt Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "receipt_id",
+          "expected_version"
+        ],
+        "title": "BudgetReceiptDeleteRequest",
+        "type": "object"
+      },
+      "BudgetReceiptDeleteResult": {
+        "properties": {
+          "deleted": {
+            "const": true,
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "deleted"
+        ],
+        "title": "BudgetReceiptDeleteResult",
+        "type": "object"
+      },
+      "BudgetReceiptDetail": {
+        "properties": {
+          "chain_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Chain Key"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "number"
+          },
+          "currency": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Currency"
+          },
+          "image_available": {
+            "title": "Image Available",
+            "type": "boolean"
+          },
+          "image_expires_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "title": "Image Expires At"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/BudgetReceiptLine"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "linked": {
+            "title": "Linked",
+            "type": "boolean"
+          },
+          "linked_account_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Linked Account Id"
+          },
+          "linked_entry_ref": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Linked Entry Ref"
+          },
+          "math_delta": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Math Delta"
+          },
+          "payment_method": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Payment Method"
+          },
+          "raw_nip": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Raw Nip"
+          },
+          "raw_shop_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Raw Shop Name"
+          },
+          "raw_text_expires_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "title": "Raw Text Expires At"
+          },
+          "receipt_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Receipt Date"
+          },
+          "receipt_id": {
+            "pattern": "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+            "title": "Receipt Id",
+            "type": "string"
+          },
+          "receipt_kind": {
+            "enum": [
+              "purchase",
+              "refund"
+            ],
+            "title": "Receipt Kind",
+            "type": "string"
+          },
+          "receipt_time": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Receipt Time"
+          },
+          "shop_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Shop Id"
+          },
+          "source_kind": {
+            "enum": [
+              "live_text",
+              "local_ocr",
+              "cloud_ai"
+            ],
+            "title": "Source Kind",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "draft",
+              "confirmed",
+              "needs_review"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "total_amount": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Total Amount"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "number"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "receipt_id",
+          "receipt_kind",
+          "status",
+          "source_kind",
+          "linked",
+          "version",
+          "created_at",
+          "updated_at",
+          "image_available",
+          "lines"
+        ],
+        "title": "BudgetReceiptDetail",
+        "type": "object"
+      },
+      "BudgetReceiptDeviceRedeemRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "description": "Eight Crockford base32 characters after uppercasing, stripping spaces and dashes, and mapping O to 0 and I or L to 1. U is rejected.",
+            "maxLength": 4096,
+            "minLength": 8,
+            "title": "Code",
+            "type": "string"
+          },
+          "device_name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Device Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "device_name"
+        ],
+        "title": "BudgetReceiptDeviceRedeemRequest",
+        "type": "object"
+      },
+      "BudgetReceiptDeviceRedeemResult": {
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "scope": {
+            "const": "receipts",
+            "title": "Scope",
+            "type": "string"
+          },
+          "token": {
+            "maxLength": 43,
+            "minLength": 43,
+            "title": "Token",
+            "type": "string"
+          },
+          "token_id": {
+            "pattern": "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+            "title": "Token Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "token_id",
+          "scope",
+          "expires_at"
+        ],
+        "title": "BudgetReceiptDeviceRedeemResult",
+        "type": "object"
+      },
+      "BudgetReceiptDeviceRevokeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "token_id": {
+            "pattern": "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+            "title": "Token Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token_id"
+        ],
+        "title": "BudgetReceiptDeviceRevokeRequest",
+        "type": "object"
+      },
+      "BudgetReceiptDeviceRevokeResult": {
+        "properties": {
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "BudgetReceiptDeviceRevokeResult",
+        "type": "object"
+      },
+      "BudgetReceiptLine": {
+        "properties": {
+          "discount_amount": {
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$",
+            "title": "Discount Amount",
+            "type": "string"
+          },
+          "gross_line_total": {
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$",
+            "title": "Gross Line Total",
+            "type": "string"
+          },
+          "line_kind": {
+            "enum": [
+              "item",
+              "deposit",
+              "basket_discount",
+              "other"
+            ],
+            "title": "Line Kind",
+            "type": "string"
+          },
+          "line_no": {
+            "title": "Line No",
+            "type": "integer"
+          },
+          "net_line_total": {
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$",
+            "title": "Net Line Total",
+            "type": "string"
+          },
+          "ptu_code": {
+            "enum": [
+              "A",
+              "B",
+              "C",
+              "D",
+              "E",
+              "F",
+              "G"
+            ],
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Ptu Code"
+          },
+          "quantity": {
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "raw_name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Raw Name",
+            "type": "string"
+          },
+          "raw_name_key": {
+            "title": "Raw Name Key",
+            "type": "string"
+          },
+          "raw_unit": {
+            "maxLength": 16,
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Raw Unit"
+          },
+          "unit_price_raw": {
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$",
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Unit Price Raw"
+          }
+        },
+        "required": [
+          "line_kind",
+          "raw_name",
+          "quantity",
+          "gross_line_total",
+          "discount_amount",
+          "net_line_total",
+          "line_no",
+          "raw_name_key"
+        ],
+        "title": "BudgetReceiptLine",
+        "type": "object"
+      },
+      "BudgetReceiptLineInput": {
+        "additionalProperties": false,
+        "properties": {
+          "discount_amount": {
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$",
+            "title": "Discount Amount",
+            "type": "string"
+          },
+          "gross_line_total": {
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$",
+            "title": "Gross Line Total",
+            "type": "string"
+          },
+          "line_kind": {
+            "enum": [
+              "item",
+              "deposit",
+              "basket_discount",
+              "other"
+            ],
+            "title": "Line Kind",
+            "type": "string"
+          },
+          "net_line_total": {
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$",
+            "title": "Net Line Total",
+            "type": "string"
+          },
+          "ptu_code": {
+            "enum": [
+              "A",
+              "B",
+              "C",
+              "D",
+              "E",
+              "F",
+              "G"
+            ],
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Ptu Code"
+          },
+          "quantity": {
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "raw_name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Raw Name",
+            "type": "string"
+          },
+          "raw_unit": {
+            "maxLength": 16,
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Raw Unit"
+          },
+          "unit_price_raw": {
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$",
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Unit Price Raw"
+          }
+        },
+        "required": [
+          "line_kind",
+          "raw_name",
+          "quantity",
+          "gross_line_total",
+          "discount_amount",
+          "net_line_total"
+        ],
+        "title": "BudgetReceiptLineInput",
+        "type": "object"
+      },
+      "BudgetReceiptLinkRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Account Id",
+            "type": "string"
+          },
+          "candidate_token": {
+            "description": "HMAC bound to the owner, transaction, three dates and merchant evidence shown at preview.",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Candidate Token",
+            "type": "string"
+          },
+          "entry_reference": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Entry Reference",
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id",
+          "entry_reference",
+          "candidate_token"
+        ],
+        "title": "BudgetReceiptLinkRequest",
+        "type": "object"
+      },
+      "BudgetReceiptParseResult": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/BudgetReceiptCandidate"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "draft": {
+            "$ref": "#/components/schemas/BudgetReceiptDetail"
+          },
+          "receipt_id": {
+            "pattern": "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+            "title": "Receipt Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "receipt_id",
+          "draft",
+          "candidates",
+          "version"
+        ],
+        "title": "BudgetReceiptParseResult",
+        "type": "object"
+      },
+      "BudgetReceiptParseTextRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "source_kind": {
+            "description": "Defaults to paste, stored as live_text. local_ocr is stored as local_ocr.",
+            "enum": [
+              "paste",
+              "local_ocr"
+            ],
+            "title": "Source Kind",
+            "type": "string"
+          },
+          "text": {
+            "description": "UTF-8 text is additionally capped at 32 KiB and 500 lines.",
+            "maxLength": 32768,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "BudgetReceiptParseTextRequest",
+        "type": "object"
+      },
       "ChangePasswordRequest": {
         "additionalProperties": false,
         "description": "POST /api/me/password \u2014 the signed-in user changes their OWN password. ``current`` is verified\n(a stolen cookie alone can't rotate it) before the ``new`` hash is written. ``new`` is 8..1024.",
@@ -2405,6 +3200,619 @@
           }
         },
         "summary": "Delete a rule by id (deleted=false, still 200, for an absent id)",
+        "x-required-role": "admin"
+      }
+    },
+    "/api/budget/receipts/confirm": {
+      "post": {
+        "description": "Default-off with HESTIA_BUDGET_RECEIPTS_ENABLED. Requires a SQLite admin owner's browser cookie with exact Origin, or a receipts device token. Cookie plus Authorization returns 400 budget_auth_ambiguous. 411 means Content-Length is required and 415 means Content-Type must be application/json.",
+        "operationId": "confirmBudgetReceipt",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BudgetReceiptConfirmRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetReceiptConfirmResult"
+                }
+              }
+            },
+            "description": "owner-scoped stored state; no bank request"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "A missing or invalid credential, device_token_expired, or device_token_revoked."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "admin owner or browser-origin requirement failed; middleware may return an empty body"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "unknown, disabled or foreign resource"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Stale expected_version (budget_receipt_conflict), the bank transaction is already linked (budget_receipt_tx_already_linked), or the candidate token no longer matches the owner, transaction, dates and merchant evidence shown at preview (budget_receipt_stale_source). A missing SQLite users backend also returns 409 (budget_requires_sqlite_users)."
+          },
+          "411": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Content-Length is required."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "JSON body exceeds 131072 bytes."
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Content-Type must be application/json."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "internal error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "budget configuration unavailable"
+          }
+        },
+        "summary": "Validate exact line and total identities, review an optional bank link; JSON body cap 128 KiB.",
+        "x-required-role": "admin"
+      }
+    },
+    "/api/budget/receipts/delete": {
+      "post": {
+        "description": "Default-off with HESTIA_BUDGET_RECEIPTS_ENABLED. Requires a SQLite admin owner's browser cookie with exact Origin, or a receipts device token. Cookie plus Authorization returns 400 budget_auth_ambiguous. 411 means Content-Length is required and 415 means Content-Type must be application/json.",
+        "operationId": "deleteBudgetReceipt",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BudgetReceiptDeleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetReceiptDeleteResult"
+                }
+              }
+            },
+            "description": "owner-scoped stored state; no bank request"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "A missing or invalid credential, device_token_expired, or device_token_revoked."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "admin owner or browser-origin requirement failed; middleware may return an empty body"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "unknown, disabled or foreign resource"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Stale expected_version (budget_receipt_conflict). A missing SQLite users backend also returns 409 (budget_requires_sqlite_users)."
+          },
+          "411": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Content-Length is required."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "JSON body exceeds 16384 bytes."
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Content-Type must be application/json."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "internal error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "budget configuration unavailable"
+          }
+        },
+        "summary": "Delete receipt lines before their owned receipt using expected_version CAS.",
+        "x-required-role": "admin"
+      }
+    },
+    "/api/budget/receipts/device-token/redeem": {
+      "post": {
+        "description": "Default-off with HESTIA_BUDGET_RECEIPTS_ENABLED. Cookie plus Authorization returns 400 budget_auth_ambiguous. Send an application/json body of at most 4096 bytes without cookie or Authorization. After five bad codes, issue a new code to unlock pending pairing.",
+        "operationId": "redeemBudgetReceiptDevice",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BudgetReceiptDeviceRedeemRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetReceiptDeviceRedeemResult"
+                }
+              }
+            },
+            "description": "One-time receipt device token with a sliding 90-day TTL and a 180-day hard cap."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Generic device_token_rejected for invalid framing, input or pairing state. Cookie plus Authorization returns 400 budget_auth_ambiguous."
+          },
+          "403": {
+            "description": "A browser session below the admin role floor is forbidden."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Receipts are disabled."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Rate limited per IP and globally (Retry-After). The error is device_token_rejected."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Internal error."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Budget configuration unavailable."
+          }
+        },
+        "summary": "Exchange a pairing code for a receipts-scoped bearer, once.",
+        "x-required-role": "public"
+      }
+    },
+    "/api/budget/receipts/device-token/revoke": {
+      "post": {
+        "description": "Default-off with HESTIA_BUDGET_RECEIPTS_ENABLED. Cookie plus Authorization returns 400 budget_auth_ambiguous.  The browser owner may revoke any of their tokens. A device token may revoke only itself; any other id is 403.",
+        "operationId": "revokeBudgetReceiptDevice",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BudgetReceiptDeviceRevokeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetReceiptDeviceRevokeResult"
+                }
+              }
+            },
+            "description": "Idempotent. An unknown id for this owner is still ok."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "A missing or invalid credential, device_token_expired, or device_token_revoked."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "admin owner or browser-origin requirement failed; middleware may return an empty body"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "unknown, disabled or foreign resource"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "SQLite session users required"
+          },
+          "411": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Content-Length is required."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "JSON body exceeds 4096 bytes."
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Content-Type must be application/json."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "internal error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "budget configuration unavailable"
+          }
+        },
+        "summary": "Revoke one receipts device token.",
+        "x-required-role": "admin"
+      }
+    },
+    "/api/budget/receipts/parse-text": {
+      "post": {
+        "description": "Default-off with HESTIA_BUDGET_RECEIPTS_ENABLED. Requires a SQLite admin owner's browser cookie with exact Origin, or a receipts device token. Cookie plus Authorization returns 400 budget_auth_ambiguous. 411 means Content-Length is required and 415 means Content-Type must be application/json.",
+        "operationId": "parseBudgetReceiptText",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BudgetReceiptParseTextRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetReceiptParseResult"
+                }
+              }
+            },
+            "description": "owner-scoped stored state; no bank request"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "A missing or invalid credential, device_token_expired, or device_token_revoked."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "admin owner or browser-origin requirement failed; middleware may return an empty body"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "unknown, disabled or foreign resource"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "SQLite users backend is required (budget_requires_sqlite_users)."
+          },
+          "411": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Content-Length is required."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "JSON body exceeds 49152 bytes, or the owner already has 20 active drafts (budget_receipt_quota_exceeded)."
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Content-Type must be application/json."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "A receipts device token is limited to 30 parse-text requests per minute (Retry-After). Browser cookie requests are not limited here."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "internal error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "budget configuration unavailable"
+          }
+        },
+        "summary": "Paste Live Text, redact PAN data and create a 48-hour draft; JSON body cap 48 KiB.",
         "x-required-role": "admin"
       }
     },

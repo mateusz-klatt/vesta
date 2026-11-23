@@ -2,23 +2,69 @@ import Foundation
 import HTTPTypes
 import OpenAPIRuntime
 
-/// Attaches `Authorization: Bearer <token>` to every request when a token is
-/// stored. hestia issues the token to native clients that log in with
-/// `bearer: true`; the browser uses an httponly cookie instead.
+/// Receipt operations use the device token. Login bearers are restricted to
+/// endpoints outside the budget API.
 struct BearerAuthMiddleware: ClientMiddleware {
     let token: @Sendable () -> String?
+    var receiptPairing: ReceiptPairing?
+    // Unpair can revoke after the active pairing/backend has changed.
+    var revoking: ReceiptDeviceToken?
+
+    private static let receiptOperations: Set<String> = [
+        Operations.ParseBudgetReceiptText.id, Operations.ConfirmBudgetReceipt.id,
+        Operations.DeleteBudgetReceipt.id, Operations.RevokeBudgetReceiptDevice.id,
+        // The phone does not pin the OpenAPI paths for these read operations.
+        "listBudgetReceipts", "searchBudgetReceipts", "getBudgetReceiptDetail", "getBudgetReceiptImage",
+    ]
 
     func intercept(
         _ request: HTTPRequest,
         body: HTTPBody?,
         baseURL: URL,
-        operationID _: String,
+        operationID: String,
         next: @Sendable (HTTPRequest, HTTPBody?, URL) async throws -> (HTTPResponse, HTTPBody?)
     ) async throws -> (HTTPResponse, HTTPBody?) {
         var request = request
-        if let token = token() {
-            request.headerFields[.authorization] = "Bearer \(token)"
+        let requiresDevice = Self.receiptOperations.contains(operationID)
+        let isRedeem = operationID == Operations.RedeemBudgetReceiptDevice.id
+        guard requiresDevice || isRedeem else {
+            if let path = request.path, path == "/api/budget" || path.hasPrefix("/api/budget/") {
+                request.headerFields[.authorization] = nil
+                request.headerFields[.cookie] = nil
+            } else if let token = token() {
+                request.headerFields[.authorization] = "Bearer \(token)"
+            }
+            return try await next(request, body, baseURL)
         }
-        return try await next(request, body, baseURL)
+
+        request.headerFields[.cookie] = nil
+        request.headerFields[.authorization] = nil
+        var pairedDevice: StoredReceiptDeviceToken?
+        if requiresDevice {
+            if operationID == Operations.RevokeBudgetReceiptDevice.id, let revoking {
+                request.headerFields[.authorization] = "Bearer \(revoking.token)"
+            } else {
+                guard let device = await receiptPairing?.credential(for: baseURL) else { throw ReceiptError.pairAgain }
+                pairedDevice = device
+                request.headerFields[.authorization] = "Bearer \(device.credential.token)"
+            }
+        }
+
+        let (response, responseBody) = try await next(request, body, baseURL)
+        let status = response.status.code
+        guard status != 200 else { return (response, responseBody) }
+
+        // Accept both the pinned flat error and the nested v2 error envelope.
+        let code = await Self.errorCode(in: responseBody)
+        let error = ReceiptError.from(status: status, code: code)
+        if error == .pairAgain, let pairedDevice {
+            await receiptPairing?.invalidate(pairedDevice)
+        }
+        throw error
+    }
+
+    private static func errorCode(in body: HTTPBody?) async -> String? {
+        guard let body, let data = try? await Data(collecting: body, upTo: 16 * 1024) else { return nil }
+        return (try? JSONDecoder().decode(BudgetErrorEnvelope.self, from: data))?.code
     }
 }

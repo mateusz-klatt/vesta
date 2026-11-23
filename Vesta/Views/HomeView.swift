@@ -6,6 +6,8 @@ import SwiftUI
 struct HomeView: View {
     @Environment(AppState.self) private var app
     @State private var showSettings = false
+    @State private var showPairing = false
+    @State private var receiptFlow: ReceiptFlow?
 
     var body: some View {
         NavigationStack {
@@ -30,11 +32,31 @@ struct HomeView: View {
             .background(Theme.background)
             .navigationTitle("Rooms")
             .toolbar {
+                if let api = app.receiptsAPI {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            if app.receiptPairing.status == .paired {
+                                receiptFlow = ReceiptFlow(api: api)
+                            } else {
+                                showPairing = true
+                            }
+                        } label: {
+                            Image(systemName: app.receiptPairing.status == .paired ? "doc.text.viewfinder" : "link")
+                        }
+                        .accessibilityLabel(app.receiptPairing.status == .paired ? Text("Add receipt") : Text("Pair iPhone"))
+                        .disabled(app.receiptPairing.isBusy)
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                        .accessibilityLabel("Settings")
                 }
             }
             .sheet(isPresented: $showSettings) { SettingsView().appLanguage(app.appLanguage) }
+            .sheet(isPresented: $showPairing) { ReceiptPairingView().appLanguage(app.appLanguage) }
+            .sheet(isPresented: Binding(get: { receiptFlow != nil }, set: { if !$0 { closeReceipt() } })) {
+                if let receiptFlow { ReceiptScanView(flow: receiptFlow).appLanguage(app.appLanguage) }
+            }
             .refreshable { await app.loadDiscovery() }
             #if DEBUG
             .onAppear {
@@ -43,6 +65,13 @@ struct HomeView: View {
             }
             #endif
         }
+    }
+
+    /// Sheet gone (Cancel, Done or swipe): drop any open draft server-side.
+    private func closeReceipt() {
+        guard let flow = receiptFlow else { return }
+        receiptFlow = nil
+        Task { await flow.abandon() }
     }
 }
 
@@ -279,11 +308,12 @@ private struct AllBlindsSlider: View {
 // MARK: - Rooms
 
 private struct RoomCard: View {
+    @Environment(\.locale) private var locale
     let room: RoomGroup
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(room.name).font(.headline)
+            Text(verbatim: room.name(locale: locale)).font(.headline)
             ForEach(room.devices) { item in
                 DeviceRow(item: item)
             }
@@ -497,12 +527,13 @@ private struct SensorRow: View {
 
 /// Device name + a localized type/subtitle line, shared by every row.
 private struct DeviceLabel: View {
+    @Environment(\.locale) private var locale
     let item: IdentifiedDevice
     var subtitle: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(item.displayName).foregroundStyle(Theme.textPrimary)
+            Text(verbatim: item.displayName(locale: locale)).foregroundStyle(Theme.textPrimary)
             Group {
                 if let subtitle { Text(verbatim: subtitle) }
                 else { Text(typeLabel(item.device._type)) }

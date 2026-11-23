@@ -12,14 +12,22 @@ struct IdentifiedDevice: Identifiable, Sendable {
     let id: String
     let device: Device
 
-    var displayName: String { device.name ?? String(localized: "Node \(id)") }
+    // A resource's locale selects the translation language. String's direct
+    // locale argument only controls formatting, ignoring the in-app picker.
+    func displayName(locale: Locale) -> String {
+        device.name ?? String(localized: LocalizedStringResource("Node \(id)", locale: locale))
+    }
 }
 
 /// Devices grouped by their registry room, for the Rooms view.
 struct RoomGroup: Identifiable, Sendable {
     let id: String          // room name (or "" for unassigned)
     var devices: [IdentifiedDevice]
-    var name: String { id.isEmpty ? String(localized: "No room") : id }
+    var name: String { name(locale: .current) }
+
+    func name(locale: Locale) -> String {
+        id.isEmpty ? String(localized: LocalizedStringResource("No room", locale: locale)) : id
+    }
 
     static func group(_ discovery: Components.Schemas.Discovery) -> [RoomGroup] {
         let items = discovery.devices.additionalProperties

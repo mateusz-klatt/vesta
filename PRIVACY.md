@@ -1,6 +1,6 @@
 # Vesta — Privacy Policy
 
-_Last updated: 6 June 2026_
+_Last updated: 23 November 2026_
 
 Vesta is a native iOS client for a **self-hosted hestia home server**. It is not a
 cloud service and has no backend of its own.
@@ -26,6 +26,25 @@ Vesta communicates **only** with the hestia server whose address you provide. Yo
 home data (devices, rooms, temperatures, etc.) lives on that server, which you or
 the person who set it up control. Vesta sends commands to, and reads status from,
 that server and nowhere else.
+
+## Receipts (optional, admin accounts only)
+
+If your hestia server has its budget module and receipts turned on, an admin can
+add a paper receipt from Vesta:
+
+- **Camera and photos.** Vesta asks for camera access only to scan a receipt (or
+  you can pick a photo you already have). The image is used **only on your
+  device** to read the text, and is then discarded — it is not saved by Vesta
+  and is **never uploaded**, to your server or anywhere else.
+- **Text recognition happens on your iPhone** (Apple's Vision framework). No
+  cloud OCR service is used.
+- **Card numbers are removed before sending.** Payment-card numbers and
+  terminal card data are replaced with `[REDACTED]` on the device.
+- **What is sent, and to whom.** Only the receipt text you reviewed (shop, date,
+  items, prices, totals, payment method) is sent — **only to your own hestia
+  server** — and, if you choose, linked to a transaction your server already
+  has. This is household spending data; it is stored and retained by your server
+  under its own policy, not by Vesta.
 
 ## Removing your data
 

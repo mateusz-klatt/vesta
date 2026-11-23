@@ -40,18 +40,26 @@ final class AppState {
     private static let languageKey = "vesta.language"
 
     private let api: any HestiaAPI
+    let receiptPairing: ReceiptPairing
     private let makeEvents: @Sendable () -> AsyncStream<EventStream.Event>
     private var eventTask: Task<Void, Never>?
     private var didBootstrap = false
 
     private var allDevices: [IdentifiedDevice] { rooms.flatMap(\.devices) }
     var isReadOnly: Bool { Control.isReadOnly(role: whoami?.role) }
+    /// Receipts (hestia budget) are admin-only on the server; hide the entry
+    /// point for everyone else rather than letting them hit a 403.
+    var receiptsAPI: (any ReceiptsAPI)? {
+        Control.canAddReceipts(role: whoami?.role) ? api as? any ReceiptsAPI : nil
+    }
     var hasLights: Bool { allDevices.contains { $0.device._type == "light" } }
     var hasBlinds: Bool { allDevices.contains { $0.device._type == "blind" } }
 
-    init(api: any HestiaAPI = APIClient(),
+    init(api: (any HestiaAPI)? = nil,
+         receiptPairing: ReceiptPairing = ReceiptPairing(),
          events: @escaping @Sendable () -> AsyncStream<EventStream.Event> = { EventStream.changes() }) {
-        self.api = api
+        self.receiptPairing = receiptPairing
+        self.api = api ?? APIClient(receiptPairing: receiptPairing)
         self.makeEvents = events
         tempScale = TempScale(rawValue: UserDefaults.standard.string(forKey: Self.tempScaleKey) ?? "C") ?? .celsius
         appLanguage = UserDefaults.standard.string(forKey: Self.languageKey)
@@ -94,6 +102,7 @@ final class AppState {
     #endif
 
     func connect() async {
+        receiptPairing.refreshStatus()
         phase = .connecting
         do {
             whoami = try await api.whoami()
@@ -110,11 +119,13 @@ final class AppState {
     @discardableResult
     func saveAndConnect(_ raw: String) -> Bool {
         guard let url = BackendURLStore.canonicalize(raw) else { return false }
+        let changed = url != AppConfig.serverURL
         BackendURLStore.shared.saveOverride(url)
         backendURLString = url.absoluteString
         eventTask?.cancel()
         let api = self.api
         Task {
+            if changed { try? await receiptPairing.unpair() }
             await api.logout()
             await connect()
         }
@@ -122,6 +133,7 @@ final class AppState {
     }
 
     func login(user: String, password: String) async {
+        receiptPairing.refreshStatus()
         do {
             _ = try await api.login(user: user, password: password)
             whoami = try await api.whoami()
@@ -134,8 +146,9 @@ final class AppState {
 
     func signOut() async {
         eventTask?.cancel()
-        await api.logout()
         whoami = nil
+        try? await receiptPairing.unpair()
+        await api.logout()
         rooms = []
         phase = .needsAuth
     }
@@ -147,6 +160,7 @@ final class AppState {
     /// catching anything that changed while we were away (no waiting for the dead
     /// stream to time out). No-op unless we have a live session.
     func enterForeground() {
+        receiptPairing.refreshStatus()
         guard phase == .ready else { return }
         startEvents()
     }
