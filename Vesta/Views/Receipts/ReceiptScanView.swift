@@ -6,11 +6,9 @@ import SwiftUI
 /// Only the redacted text is sent; the photo never leaves the phone.
 struct ReceiptScanView: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var flow: ReceiptFlow
-
-    init(api: any ReceiptsAPI) {
-        _flow = State(initialValue: ReceiptFlow(api: api))
-    }
+    /// Owned by the presenter, whose sheet `onDismiss` calls ``ReceiptFlow/abandon()``
+    /// so a swipe-down or Cancel both clean up the open draft.
+    let flow: ReceiptFlow
 
     var body: some View {
         NavigationStack {
@@ -29,9 +27,7 @@ struct ReceiptScanView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     if flow.step != .done {
-                        Button("Cancel") {
-                            Task { await flow.discardDraft(); dismiss() }
-                        }
+                        Button("Cancel") { dismiss() }
                     }
                 }
             }
@@ -39,7 +35,9 @@ struct ReceiptScanView: View {
                 if flow.isBusy { ProgressView().controlSize(.large) }
             }
         }
+        // Cleanup runs on any dismissal; this only guards review edits from a stray swipe.
         .interactiveDismissDisabled(flow.step == .review)
+
     }
 }
 
@@ -131,8 +129,14 @@ private struct ReceiptReviewStep: View {
         Form {
             Section("Receipt") {
                 TextField("Shop", text: $flow.form.shopName)
+                    .onSubmit { flow.form.shopName = PANRedactor.redact(flow.form.shopName) }
                 TextField("NIP", text: $flow.form.nip).keyboardType(.numberPad)
-                DatePicker("Date", selection: $flow.form.date, displayedComponents: .date)
+                if flow.form.day != nil {
+                    DatePicker("Date", selection: dayBinding, displayedComponents: .date)
+                } else {
+                    Button("Set date") { flow.form.day = ReceiptDay(date: .now) }
+                        .foregroundStyle(.red)
+                }
                 TextField("Time (HH:MM)", text: $flow.form.time).keyboardType(.numbersAndPunctuation)
                 Picker("Type", selection: $flow.form.kind) {
                     Text("Purchase").tag(ReceiptConfirmRequest.ReceiptKindPayload.purchase)
@@ -169,21 +173,30 @@ private struct ReceiptReviewStep: View {
                 Text("Items (\(flow.form.lines.count))")
             } footer: {
                 if let delta = flow.form.mismatch {
-                    Text("Items and total differ by \(abs(delta).formatted()). Go back and fix the text.")
+                    Text("Items and total differ by \(delta.formatted()). Go back and fix the text.")
+                        .foregroundStyle(.red)
+                } else if !flow.form.invalidLines.isEmpty {
+                    Text("Some item amounts don’t add up. Go back and fix the text.")
                         .foregroundStyle(.red)
                 }
             }
 
             if flow.form.canLink {
                 Section {
-                    Picker("Bank transaction", selection: $flow.form.candidateRef) {
-                        Text("Don’t link").tag(String?.none)
-                        ForEach(flow.candidates, id: \.entryReference) { candidate in
-                            Text(verbatim: Self.describe(candidate)).tag(String?.some(candidate.entryReference))
+                    if flow.form.matchFieldsEdited {
+                        Text("Shop or NIP changed, so these matches no longer apply. Save without a link, or go back and read the text again.")
+                            .font(.footnote).foregroundStyle(Theme.textSecondary)
+                    } else {
+                        Picker("Bank transaction", selection: $flow.form.candidate) {
+                            Text("Don’t link").tag(ReceiptForm.CandidateID?.none)
+                            ForEach(flow.candidates, id: \.candidateToken) { candidate in
+                                Text(verbatim: Self.describe(candidate))
+                                    .tag(ReceiptForm.CandidateID?.some(.init(candidate)))
+                            }
                         }
+                        .pickerStyle(.inline)
+                        .labelsHidden()
                     }
-                    .pickerStyle(.inline)
-                    .labelsHidden()
                 } header: {
                     Text("Bank transaction")
                 } footer: {
@@ -201,6 +214,13 @@ private struct ReceiptReviewStep: View {
                 Button("Back to text") { Task { await flow.backToEdit() } }
             }
         }
+    }
+
+    private var dayBinding: Binding<Date> {
+        Binding(
+            get: { flow.form.day?.date ?? .now },
+            set: { flow.form.day = ReceiptDay(date: $0) }
+        )
     }
 
     private static func describe(_ candidate: ReceiptCandidate) -> String {

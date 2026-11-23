@@ -6,7 +6,7 @@ import SwiftUI
 struct HomeView: View {
     @Environment(AppState.self) private var app
     @State private var showSettings = false
-    @State private var showReceipt = false
+    @State private var receiptFlow: ReceiptFlow?
 
     var body: some View {
         NavigationStack {
@@ -33,7 +33,9 @@ struct HomeView: View {
             .toolbar {
                 if app.receiptsAPI != nil {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button { showReceipt = true } label: { Image(systemName: "doc.text.viewfinder") }
+                        Button {
+                            if let api = app.receiptsAPI { receiptFlow = ReceiptFlow(api: api) }
+                        } label: { Image(systemName: "doc.text.viewfinder") }
                             .accessibilityLabel("Add receipt")
                     }
                 }
@@ -42,8 +44,8 @@ struct HomeView: View {
                 }
             }
             .sheet(isPresented: $showSettings) { SettingsView().appLanguage(app.appLanguage) }
-            .sheet(isPresented: $showReceipt) {
-                if let api = app.receiptsAPI { ReceiptScanView(api: api).appLanguage(app.appLanguage) }
+            .sheet(isPresented: Binding(get: { receiptFlow != nil }, set: { if !$0 { closeReceipt() } })) {
+                if let receiptFlow { ReceiptScanView(flow: receiptFlow).appLanguage(app.appLanguage) }
             }
             .refreshable { await app.loadDiscovery() }
             #if DEBUG
@@ -53,6 +55,13 @@ struct HomeView: View {
             }
             #endif
         }
+    }
+
+    /// Sheet gone (Cancel, Done or swipe): drop any open draft server-side.
+    private func closeReceipt() {
+        guard let flow = receiptFlow else { return }
+        receiptFlow = nil
+        Task { await flow.abandon() }
     }
 }
 

@@ -67,6 +67,49 @@ final class PANRedactorTests: XCTestCase {
     func testLabelIsCaseInsensitive() {
         XCTAssertEqual(PANRedactor.redact("nr karty 12345678"), "nr karty [REDACTED]")
     }
+
+    // Bypasses found in review.
+
+    func testIrregularSpacingAndOCRLookalikes() {
+        XCTAssertEqual(PANRedactor.redact("4111  1111 1111 1111"), "[REDACTED]")
+        XCTAssertEqual(PANRedactor.redact("VISA: 4O00 0000 0000 0002"), "VISA: [REDACTED]")
+        XCTAssertEqual(PANRedactor.redact("4l11 1111 1111 1111"), "[REDACTED]")
+    }
+
+    func testColonGluedNumberAndSplitMaskTail() {
+        XCTAssertEqual(PANRedactor.redact("NR KARTY:53511234"), "NR KARTY:[REDACTED]")
+        XCTAssertEqual(PANRedactor.redact("KARTA: **** 12 34"), "KARTA: [REDACTED]")
+    }
+
+    func testLowercaseAIDAndStandaloneARQC() {
+        XCTAssertEqual(PANRedactor.redact("aid a0000000041010"), "aid [REDACTED]")
+        XCTAssertEqual(PANRedactor.redact("ARQC 9f3c2b1a0d4e5f60"), "ARQC [REDACTED]")
+    }
+
+    func testPANNextToDateIsRedactedDateKept() {
+        XCTAssertEqual(PANRedactor.redact("2026-11-23 4111 1111 1111 1111"), "2026-11-23 [REDACTED]")
+    }
+
+    // False positives found in review.
+
+    func testKeepsNIPInsideCardBlock() {
+        XCTAssertEqual(PANRedactor.redact("KARTA\nNIP 7791011327"), "KARTA\nNIP 7791011327")
+        XCTAssertEqual(PANRedactor.redact("KARTA\nNIP 779-101-13-27"), "KARTA\nNIP 779-101-13-27")
+    }
+
+    func testKeepsAmountAfterMaskChars() {
+        XCTAssertEqual(PANRedactor.redact("SUMA PLN ****45,99"), "SUMA PLN ****45,99")
+    }
+
+    func testKeepsDayFirstDateInsideCardBlock() {
+        XCTAssertEqual(PANRedactor.redact("KARTA\n23-11-2026 1234"), "KARTA\n23-11-2026 1234")
+    }
+
+    func testNIPChecksum() {
+        XCTAssertTrue(PANRedactor.validNIP("7791011327"))
+        XCTAssertFalse(PANRedactor.validNIP("1234567890"))
+        XCTAssertFalse(PANRedactor.validNIP("779101132"))
+    }
 }
 
 // MARK: - Line ordering
@@ -198,6 +241,26 @@ let sampleParseJSON = #"""
 
 private func body(_ s: String) -> Data { Data(s.utf8) }
 
+/// Records the final request and body bytes (after every middleware) and
+/// answers with a canned status + JSON.
+final class CapturingTransport: ClientTransport, @unchecked Sendable {
+    private let status: Int
+    private let response: String
+    private let lock = NSLock()
+    private var captured: (request: HTTPRequest, body: Data)?
+    var last: (request: HTTPRequest, body: Data)? { lock.withLock { captured } }
+
+    init(status: Int, body: String) { (self.status, self.response) = (status, body) }
+
+    func send(_ request: HTTPRequest, body: HTTPBody?, baseURL: URL, operationID: String) async throws -> (HTTPResponse, HTTPBody?) {
+        let data = if let body { try await Data(collecting: body, upTo: 1 << 20) } else { Data() }
+        lock.withLock { captured = (request, data) }
+        var response = HTTPResponse(status: .init(code: status))
+        response.headerFields[.contentType] = "application/json"
+        return (response, HTTPBody(self.response))
+    }
+}
+
 final class ReceiptsClientTests: XCTestCase {
     func testParseDecodesDraftAndCandidates() async throws {
         let api = APIClient(transport: StubTransport { request in
@@ -226,16 +289,31 @@ final class ReceiptsClientTests: XCTestCase {
         await assertReceiptError(try await api.parseReceiptText("x"), .draftQuota)
     }
 
-    func testConfirmSendsEveryKeyIncludingNulls() async throws {
-        let api = APIClient(transport: StubTransport { request in
-            XCTAssertEqual(request.path, "/api/budget/receipts/confirm")
-            return (409, body(#"{"ok":false,"error":"budget_receipt_stale_source"}"#))
-        })
+    func testConfirmWireBodyHasEveryKeyIncludingNulls() async throws {
+        let transport = CapturingTransport(status: 409, body: #"{"ok":false,"error":"budget_receipt_stale_source"}"#)
+        let api = APIClient(transport: transport)
         let parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: body(sampleParseJSON))
         var form = ReceiptForm(draft: parsed.draft, candidates: parsed.candidates)
         form.time = ""
-        let request = form.request(receiptID: parsed.receiptId, version: parsed.version, candidates: parsed.candidates)
+        form.payment = .cash                       // → link: null
+        let request = try XCTUnwrap(form.request(receiptID: parsed.receiptId, version: parsed.version, candidates: parsed.candidates))
         await assertReceiptError(try await api.confirmReceipt(request), .staleCandidate)
+
+        let sent = try XCTUnwrap(transport.last)
+        XCTAssertEqual(sent.request.path, "/api/budget/receipts/confirm")
+        XCTAssertEqual(sent.request.headerFields[.contentLength], String(sent.body.count))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: sent.body) as? [String: Any])
+        let keys = try XCTUnwrap(ExplicitNullsMiddleware.required["confirmBudgetReceipt"])
+        XCTAssertEqual(Set(object.keys), Set(keys.top))
+        XCTAssertTrue(object["link"] is NSNull)
+        XCTAssertTrue(object["receipt_time"] is NSNull)
+        let line = try XCTUnwrap((object["lines"] as? [[String: Any]])?.first)
+        XCTAssertEqual(Set(line.keys), Set(keys.lines))
+        XCTAssertTrue(line["raw_unit"] is NSNull)
+    }
+
+    func testBudgetDisabledMapped() {
+        XCTAssertEqual(ReceiptError.from(status: 404, code: "budget_disabled"), .disabled)
     }
 
     func testDeleteOK() async throws {
@@ -271,15 +349,16 @@ final class ReceiptFormTests: XCTestCase {
         let form = ReceiptForm(draft: p.draft, candidates: p.candidates)
         XCTAssertEqual(form.shopName, "BIEDRONKA")
         XCTAssertEqual(form.payment, .card)
-        XCTAssertEqual(form.candidateRef, "tx1")
+        XCTAssertEqual(form.candidate, ReceiptForm.CandidateID(p.candidates[0]))
+        XCTAssertEqual(form.day?.iso, "2026-11-22")
         XCTAssertNil(form.mismatch)
         XCTAssertTrue(form.isValid)
     }
 
     func testRequestCarriesLinkAndCanonicalFields() throws {
         let p = try parsed()
-        let request = ReceiptForm(draft: p.draft, candidates: p.candidates)
-            .request(receiptID: p.receiptId, version: p.version, candidates: p.candidates)
+        let request = try XCTUnwrap(ReceiptForm(draft: p.draft, candidates: p.candidates)
+            .request(receiptID: p.receiptId, version: p.version, candidates: p.candidates))
         XCTAssertEqual(request.receiptDate, "2026-11-22")
         XCTAssertEqual(request.totalAmount, "7.98")
         XCTAssertEqual(request.link?.entryReference, "tx1")
@@ -291,29 +370,91 @@ final class ReceiptFormTests: XCTestCase {
         let p = try parsed()
         var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
         form.payment = .cash
-        XCTAssertNil(form.request(receiptID: p.receiptId, version: 1, candidates: p.candidates).link)
+        XCTAssertNil(form.request(receiptID: p.receiptId, version: 1, candidates: p.candidates)?.link)
+    }
+
+    func testSameEntryOnTwoAccountsPicksTheChosenAccount() throws {
+        let p = try parsed()
+        let a = p.candidates[0]
+        var b = a
+        b.accountId = "acc2"
+        b.candidateToken = "tok-b"
+        var form = ReceiptForm(draft: p.draft, candidates: [a, b])
+        form.candidate = .init(b)
+        let link = try XCTUnwrap(form.request(receiptID: p.receiptId, version: 1, candidates: [a, b])?.link)
+        XCTAssertEqual(link.accountId, "acc2")
+        XCTAssertEqual(link.candidateToken, "tok-b")
+    }
+
+    func testEditingShopOrNIPDropsTheStaleLink() throws {
+        let p = try parsed()
+        var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
+        form.shopName = "BIEDRONKA 123"
+        XCTAssertTrue(form.matchFieldsEdited)
+        XCTAssertNil(form.request(receiptID: p.receiptId, version: 1, candidates: p.candidates)?.link)
+    }
+
+    func testShopFieldIsRedactedOnTheWire() throws {
+        let p = try parsed()
+        var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
+        form.shopName = "SKLEP 4111 1111 1111 1111"
+        XCTAssertEqual(form.request(receiptID: p.receiptId, version: 1, candidates: [])?.rawShopName, "SKLEP [REDACTED]")
+    }
+
+    func testMissingDateMustBePicked() throws {
+        let p = try parsed()
+        var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
+        form.day = nil
+        XCTAssertFalse(form.isValid)
+        XCTAssertNil(form.request(receiptID: p.receiptId, version: 1, candidates: []))
+    }
+
+    func testCalendarDayRoundTripsThroughPickerDate() throws {
+        let day = try XCTUnwrap(ReceiptDay(iso: "2026-11-22"))
+        XCTAssertEqual(ReceiptDay(date: day.date), day)
+        XCTAssertNil(ReceiptDay(iso: "2026-02-30"))
+    }
+
+    func testInvalidLineSignsBlockSave() throws {
+        let p = try parsed()
+        var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
+        var bad = form.lines[0]
+        bad.grossLineTotal = "3"
+        bad.discountAmount = "4"
+        bad.netLineTotal = "-1"
+        form.lines = [bad, form.lines[1]]
+        form.total = "3.49"
+        XCTAssertEqual(form.invalidLines, [1])
+        XCTAssertFalse(form.isValid)
     }
 
     func testMismatchAndValidation() throws {
         let p = try parsed()
         var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
         form.total = "8.00"
-        XCTAssertEqual(form.mismatch, Decimal(string: "-0.02"))
+        XCTAssertEqual(form.mismatch, Decimal(string: "0.02"))
         XCTAssertFalse(form.isValid)
-        form.total = "7,98"                        // comma from the keyboard
+        form.total = " 7,98 "                      // comma + stray spaces from the keyboard
         XCTAssertNil(form.mismatch)
-        XCTAssertEqual(form.request(receiptID: p.receiptId, version: 1, candidates: []).totalAmount, "7.98")
+        XCTAssertEqual(form.request(receiptID: p.receiptId, version: 1, candidates: [])?.totalAmount, "7.98")
+        form.total = "7,98000"                     // > 4 decimals: hestia rejects
+        XCTAssertFalse(form.isValid)
+        form.total = "7.98"
         form.nip = "123"
+        XCTAssertFalse(form.isValid)
+        form.nip = "1234567890"                    // right length, bad checksum
         XCTAssertFalse(form.isValid)
         form.nip = ""
         form.time = "25:00"
         XCTAssertFalse(form.isValid)
     }
 
-    func testDecimalNeverAcceptsGarbage() {
-        XCTAssertNil(ReceiptForm.decimal("1e3"))
-        XCTAssertNil(ReceiptForm.decimal("abc"))
-        XCTAssertEqual(ReceiptForm.decimal("12,50"), Decimal(string: "12.50"))
+    func testMoneyMatchesHestiaFormat() {
+        XCTAssertNil(ReceiptForm.money("1e3"))
+        XCTAssertNil(ReceiptForm.money("abc"))
+        XCTAssertNil(ReceiptForm.money("1234567890"))        // > 9 integer digits
+        XCTAssertEqual(ReceiptForm.money(" 12,50 "), "12.50")
+        XCTAssertEqual(ReceiptForm.money("-3"), "-3")
     }
 }
 
@@ -323,11 +464,21 @@ actor MockReceiptsAPI: ReceiptsAPI {
     enum Call: Equatable { case parse(String), confirm(String?), delete(String, Int) }
     private(set) var calls: [Call] = []
     private var parseError: ReceiptError?
+    private var deleteError: ReceiptError?
+    private var parseGate: CheckedContinuation<Void, Never>?
+    private var holdParse = false
 
     func failParse(_ error: ReceiptError) { parseError = error }
+    func failDelete(_ error: ReceiptError?) { deleteError = error }
+    func holdNextParse() { holdParse = true }
+    func releaseParse() { parseGate?.resume(); parseGate = nil }
 
     func parseReceiptText(_ text: String) async throws -> ReceiptParseResult {
         calls.append(.parse(text))
+        if holdParse {
+            holdParse = false
+            await withCheckedContinuation { parseGate = $0 }
+        }
         if let parseError { throw parseError }
         return try JSONDecoder().decode(ReceiptParseResult.self, from: Data(sampleParseJSON.utf8))
     }
@@ -339,6 +490,7 @@ actor MockReceiptsAPI: ReceiptsAPI {
 
     func deleteReceipt(id: String, expectedVersion: Int) async throws {
         calls.append(.delete(id, expectedVersion))
+        if let deleteError { throw deleteError }
     }
 }
 
@@ -373,7 +525,7 @@ final class ReceiptFlowTests: XCTestCase {
         flow.useText("BIEDRONKA\nSUMA PLN 7,98")
         await flow.send()
         XCTAssertEqual(flow.step, .review)
-        XCTAssertEqual(flow.form.candidateRef, "tx1")
+        XCTAssertEqual(flow.form.candidate?.entry, "tx1")
         await flow.confirm()
         XCTAssertEqual(flow.step, .done)
         let calls = await api.calls
@@ -389,6 +541,50 @@ final class ReceiptFlowTests: XCTestCase {
         XCTAssertEqual(flow.step, .edit)
         let calls = await api.calls
         XCTAssertEqual(calls.last, .delete(sampleReceiptID, 1))
+    }
+
+    func testAbandonWhileParsingDeletesTheLateDraft() async throws {
+        let api = MockReceiptsAPI()
+        await api.holdNextParse()
+        let flow = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: []))
+        flow.useText("A")
+        let sending = Task { await flow.send() }
+        while await api.calls.isEmpty { await Task.yield() }
+        await flow.abandon()                       // sheet closed mid-request
+        await api.releaseParse()
+        await sending.value
+        let calls = await api.calls
+        XCTAssertEqual(calls, [.parse("A"), .delete(sampleReceiptID, 1)])
+        XCTAssertNotEqual(flow.step, .review)
+    }
+
+    func testFailedDeleteIsRetried() async {
+        let api = MockReceiptsAPI()
+        let flow = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: []))
+        flow.useText("A")
+        await flow.send()
+        await api.failDelete(.api(.offline))
+        await flow.backToEdit()
+        XCTAssertEqual(flow.pendingDeletes.count, 1)
+        await api.failDelete(nil)
+        await flow.abandon()
+        XCTAssertTrue(flow.pendingDeletes.isEmpty)
+        let deletes = await api.calls.filter { if case .delete = $0 { true } else { false } }
+        XCTAssertEqual(deletes.count, 2)
+    }
+
+    func testOverlappingSendsIssueOneRequest() async {
+        let api = MockReceiptsAPI()
+        await api.holdNextParse()
+        let flow = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: []))
+        flow.useText("A")
+        let first = Task { await flow.send() }
+        while await api.calls.isEmpty { await Task.yield() }
+        await flow.send()                          // double tap: ignored while busy
+        await api.releaseParse()
+        await first.value
+        let parses = await api.calls.filter { if case .parse = $0 { true } else { false } }
+        XCTAssertEqual(parses.count, 1)
     }
 
     func testSendErrorStaysOnEdit() async {

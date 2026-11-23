@@ -7695,16 +7695,6 @@
         }
       }
     },
-    "Keep it under 500 lines and 32 KB. Remove anything that isn’t part of the receipt.": {
-      "localizations": {
-        "pl": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Maksymalnie 500 linii i 32 KB. Usuń wszystko, co nie jest częścią paragonu."
-          }
-        }
-      }
-    },
     "Language": {
       "localizations": {
         "ar": {
@@ -14625,6 +14615,16 @@
         }
       }
     },
+    "Set date": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ustaw datę"
+          }
+        }
+      }
+    },
     "Settings": {
       "localizations": {
         "ar": {
@@ -14899,6 +14899,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Sklep"
+          }
+        }
+      }
+    },
+    "Shop or NIP changed, so these matches no longer apply. Save without a link, or go back and read the text again.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zmieniono sklep lub NIP, więc te dopasowania są nieaktualne. Zapisz bez powiązania albo wróć i odczytaj tekst ponownie."
           }
         }
       }
@@ -16243,6 +16253,16 @@
         }
       }
     },
+    "Some item amounts don’t add up. Go back and fix the text.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kwoty niektórych pozycji się nie zgadzają. Wróć i popraw tekst."
+          }
+        }
+      }
+    },
     "Start over": {
       "localizations": {
         "pl": {
@@ -17331,6 +17351,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Tekst jest odczytywany na tym iPhonie. Na Twój serwer trafia tylko tekst, bez numerów kart. Zdjęcie nie jest zapisywane ani wysyłane."
+          }
+        }
+      }
+    },
+    "The receipt is too large for the server. Keep the text under 500 lines and 32 KB.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paragon jest za duży dla serwera. Tekst może mieć najwyżej 500 linii i 32 KB."
           }
         }
       }

@@ -21,7 +21,8 @@ protocol ReceiptsAPI: Sendable {
 /// Receipt failures, mapped from hestia's status + `BudgetError.error` code to
 /// copy the user can act on.
 enum ReceiptError: LocalizedError, Equatable {
-    /// 404 `budget_receipts_disabled`: the owner has not enabled the feature.
+    /// 404 `budget_receipts_disabled` / `budget_disabled`: the owner has not
+    /// enabled receipts (or the budget module).
     case disabled
     /// 404 otherwise: the draft expired (48 h) or was deleted.
     case notFound
@@ -70,7 +71,7 @@ enum ReceiptError: LocalizedError, Equatable {
         case .notFound: "Drafts expire after 48 hours. Scan the receipt again."
         case .forbidden: "Only an admin can add receipts, and the server must allow the app to send them."
         case .draftQuota: "Confirm or discard some drafts on the server, then try again."
-        case .tooLarge: "Keep it under 500 lines and 32 KB. Remove anything that isn’t part of the receipt."
+        case .tooLarge: "The receipt is too large for the server. Keep the text under 500 lines and 32 KB."
         case .versionConflict: "Scan the receipt again to start from the current version."
         case .alreadyLinked: "Pick a different transaction or save the receipt without one."
         case .staleCandidate: "Scan the receipt again to refresh the matching transactions."
@@ -97,7 +98,7 @@ enum ReceiptError: LocalizedError, Equatable {
         switch (status, code) {
         case (401, _): .api(.unauthorized)
         case (403, _): .forbidden
-        case (404, "budget_receipts_disabled"): .disabled
+        case (404, "budget_receipts_disabled"), (404, "budget_disabled"): .disabled
         case (404, _): .notFound
         case (413, "budget_receipt_quota_exceeded"): .draftQuota
         case (413, _): .tooLarge
