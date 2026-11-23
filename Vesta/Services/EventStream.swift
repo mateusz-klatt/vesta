@@ -30,7 +30,7 @@ enum EventStream {
                 }
                 log.debug("SSE connecting \(url.absoluteString, privacy: .public)")
                 do {
-                    let (bytes, response) = try await URLSession.shared.bytes(for: request)
+                    let (bytes, response) = try await HTTPSession.shared.bytes(for: request)
                     guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                         log.error("SSE bad status \((response as? HTTPURLResponse)?.statusCode ?? -1)")
                         continuation.finish()

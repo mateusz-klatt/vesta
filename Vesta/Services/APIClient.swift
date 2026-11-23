@@ -77,7 +77,7 @@ actor APIClient: HestiaAPI {
     private(set) var client: Client
     private let transport: any ClientTransport
 
-    init(transport: any ClientTransport = URLSessionTransport()) {
+    init(transport: any ClientTransport = URLSessionTransport(configuration: .init(session: HTTPSession.shared))) {
         self.transport = transport
         serverURL = AppConfig.serverURL
         client = APIClient.make(serverURL, transport)
