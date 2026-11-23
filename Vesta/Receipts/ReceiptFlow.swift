@@ -87,8 +87,18 @@ struct ReceiptForm: Equatable {
     /// Cash and mixed payments can't be linked (hestia rejects the link).
     var canLink: Bool { payment != .cash && payment != .mixed }
 
-    /// The shop or NIP was edited, so the shown candidates are stale.
-    var matchFieldsEdited: Bool { shopName != parsedShopName || nip != parsedNIP }
+    /// The shop or NIP was edited, so the shown candidates are stale. hestia
+    /// signs the shop name after NFC + whitespace normalisation, so a
+    /// whitespace-only edit keeps the match.
+    var matchFieldsEdited: Bool {
+        Self.matchKey(shopName) != Self.matchKey(parsedShopName) || nip != parsedNIP
+    }
+
+    static func matchKey(_ shop: String) -> String {
+        shop.precomposedStringWithCanonicalMapping
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+    }
 
     /// The total exactly as it will be sent, or nil if hestia would reject it.
     var normalizedTotal: String? { Self.money(total) }

@@ -417,6 +417,14 @@ final class ReceiptFormTests: XCTestCase {
         XCTAssertNil(form.request(receiptID: p.receiptId, version: 1, candidates: p.candidates)?.link)
     }
 
+    func testWhitespaceOnlyShopEditKeepsTheLink() throws {
+        let p = try parsed()
+        var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
+        form.shopName = "  BIEDRONKA \t"
+        XCTAssertFalse(form.matchFieldsEdited)
+        XCTAssertNotNil(form.request(receiptID: p.receiptId, version: 1, candidates: p.candidates)?.link)
+    }
+
     func testShopFieldIsRedactedOnTheWire() throws {
         let p = try parsed()
         var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
