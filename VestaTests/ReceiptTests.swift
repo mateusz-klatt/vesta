@@ -320,6 +320,155 @@ final class PANRedactorTests: XCTestCase {
         NR PARAGONU 00015824
         """)
     }
+
+    func testDottedReceiptLeadersAndPercentagesSurvive() {
+        XCTAssertEqual(PANRedactor.redact("Mąka ........ 2 SZT"), "Mąka ........ 2 SZT")
+        XCTAssertEqual(PANRedactor.redact("Cukier .... 500G"), "Cukier .... 500G")
+        XCTAssertEqual(PANRedactor.redact("1. x 2 SZT"), "1. x 2 SZT")
+        XCTAssertEqual(PANRedactor.redact("LICZBA POZYCJI ............ 12"), "LICZBA POZYCJI ............ 12")
+        XCTAssertEqual(PANRedactor.redact("PUNKTY LOJALNOŚCIOWE ........ 120"), "PUNKTY LOJALNOŚCIOWE ........ 120")
+        XCTAssertEqual(PANRedactor.redact("Pozycje 1 ... 25"), "Pozycje 1 ... 25")
+        XCTAssertEqual(PANRedactor.redact("**** 20% ****"), "**** 20% ****")
+        XCTAssertEqual(PANRedactor.redact("KARTA: ****12,34"), "KARTA: ****12,34")
+    }
+
+    func testMoneyColumnsInTerminalBlockSurvive() {
+        XCTAssertEqual(
+            PANRedactor.redact("PŁATNOŚĆ KARTĄ   145,99   145,99"),
+            "PŁATNOŚĆ KARTĄ   145,99   145,99"
+        )
+        XCTAssertEqual(
+            PANRedactor.redact("KARTA VISA\nKWOTA: 100,00   4,3215   432,15 PLN"),
+            "KARTA VISA\nKWOTA: 100,00   4,3215   432,15 PLN"
+        )
+    }
+
+    func testFiscalColumnBoundariesSeparateDatesWeightsAndPostalCodes() {
+        XCTAssertEqual(PANRedactor.redact("2026-11-23  45.94"), "2026-11-23  45.94")
+        XCTAssertEqual(PANRedactor.redact("23.11.2026  45.94"), "23.11.2026  45.94")
+        XCTAssertEqual(PANRedactor.redact("23.11.2026  004214"), "23.11.2026  004214")
+        XCTAssertEqual(PANRedactor.redact("Jabłka PLU 4015  1.250  4.99  6.24"), "Jabłka PLU 4015  1.250  4.99  6.24")
+        XCTAssertEqual(PANRedactor.redact("00-950  22 123 45 66"), "00-950  22 123 45 66")
+    }
+
+    func testMultiColumnItemsAndVATTableSurvive() {
+        assertExactRedaction("""
+        SKLEP TESTOWY
+        PARAGON FISKALNY
+        Jabłka luz PLU 4015   1.250 kg  4.99  6.24 C
+        Gruszki PLU 4024   0,850 kg  7,99  6,79 C
+        Kawa mielona   2 SZT   19.90   39.80 A
+        PTU     NETTO     PODATEK     BRUTTO
+        A 23%   32.36     7.44        39.80
+        C  5%   12.41     0.62        13.03
+        SUMA PLN                      52.83
+        23.11.2026   17:34:02   004214
+        """, equals: """
+        SKLEP TESTOWY
+        PARAGON FISKALNY
+        Jabłka luz PLU 4015   1.250 kg  4.99  6.24 C
+        Gruszki PLU 4024   0,850 kg  7,99  6,79 C
+        Kawa mielona   2 SZT   19.90   39.80 A
+        PTU     NETTO     PODATEK     BRUTTO
+        A 23%   32.36     7.44        39.80
+        C  5%   12.41     0.62        13.03
+        SUMA PLN                      52.83
+        23.11.2026   17:34:02   004214
+        """)
+    }
+
+    func testDCCAmountsAndRateSurviveCardRedaction() {
+        assertExactRedaction("""
+        eService — TERMINAL TESTOWY
+        KARTA VISA: ************1234
+        DCC  EUR 100,00   KURS 4,3215   PLN 432,15
+        KWOTA: 100,00   4,3215   432,15 PLN
+        MARŻA: 3,00%
+        DATA: 23.11.2026 18:04
+        """, equals: """
+        eService — TERMINAL TESTOWY
+        KARTA VISA: [REDACTED]
+        DCC  EUR 100,00   KURS 4,3215   PLN 432,15
+        KWOTA: 100,00   4,3215   432,15 PLN
+        MARŻA: 3,00%
+        DATA: 23.11.2026 18:04
+        """)
+        assertExactRedaction(
+            "KARTA VISA\nKURS DCC: 4,4396\n4111 1111 1111 1111",
+            equals: "KARTA VISA\nKURS DCC: 4,4396\n[REDACTED]"
+        )
+    }
+
+    func testReceiptPostalCodeAndPhoneSurvive() {
+        assertExactRedaction(
+            "SKLEP TESTOWY\n00-950\t22 123 45 66\nTEL. +48 000 000 000",
+            equals: "SKLEP TESTOWY\n00-950\t22 123 45 66\nTEL. +48 000 000 000"
+        )
+    }
+
+    func testWrappedMaskKeepsCardLabelAndRedactsBothBands() {
+        XCTAssertEqual(PANRedactor.redact("NR KARTY\n4111 11** **\n** 1111"), "NR KARTY\n[REDACTED]\n[REDACTED]")
+        XCTAssertEqual(PANRedactor.redact("KARTA: 4111 11**\n**** 1111"), "KARTA: [REDACTED]\n[REDACTED]")
+    }
+
+    func testWrappedPANWithTrailingOCRColumns() {
+        XCTAssertEqual(PANRedactor.redact("4111 1111\n1111 1111 PLN"), "[REDACTED]\n[REDACTED] PLN")
+        XCTAssertEqual(PANRedactor.redact("4111 1111\n1111 1111 VISA"), "[REDACTED]\n[REDACTED] VISA")
+    }
+
+    func testWrappedPANSuffixAfterText() {
+        XCTAssertEqual(
+            PANRedactor.redact("KARTA VISA\nNR: 4111 11\n11 1111\n1111"),
+            "KARTA VISA\nNR: [REDACTED]\n[REDACTED]\n[REDACTED]"
+        )
+        XCTAssertEqual(PANRedactor.redact("SPRZEDAŻ 4111 1111\n1111 1111"), "SPRZEDAŻ [REDACTED]\n[REDACTED]")
+    }
+
+    func testLowercaseOCRLookAlikes() {
+        XCTAssertEqual(PANRedactor.redact("MASTERCARD: 55555s5555554444"), "MASTERCARD: [REDACTED]")
+        XCTAssertEqual(PANRedactor.redact("5555 5s55 5555 4444"), "[REDACTED]")
+        XCTAssertEqual(PANRedactor.redact("VISA: 4000 00O0 0000 000z"), "VISA: [REDACTED]")
+        XCTAssertEqual(PANRedactor.redact("37b2 b22463 10005"), "[REDACTED]")
+        XCTAssertEqual(PANRedactor.redact("g011 1111 1111 1117"), "[REDACTED]")
+    }
+
+    func testTerminalIdentifierAndFourthLineReference() {
+        XCTAssertEqual(
+            PANRedactor.redact("KARTA VISA\nZBLIŻENIOWO\nSPRZEDAŻ\nNR TERMINALA: 12345678\nNR: 4222,22222,2222"),
+            "KARTA VISA\nZBLIŻENIOWO\nSPRZEDAŻ\nNR TERMINALA: [REDACTED]\nNR: [REDACTED]"
+        )
+        XCTAssertEqual(
+            PANRedactor.redact("KARTA VISA\nSPRZEDAŻ ZBLIŻENIOWA\nKWOTA: 45,99 PLN\nDATA: 23.11.2026 18:04\nNR: 53511234"),
+            "KARTA VISA\nSPRZEDAŻ ZBLIŻENIOWA\nKWOTA: 45,99 PLN\nDATA: 23.11.2026 18:04\nNR: [REDACTED]"
+        )
+    }
+
+    func testDottedMaskedTailsAndOCRPrefixes() {
+        XCTAssertEqual(PANRedactor.redact("KARTA: ****12.34"), "KARTA: [REDACTED]")
+        XCTAssertEqual(PANRedactor.redact("NR KARTY\n****12.34"), "NR KARTY\n[REDACTED]")
+        XCTAssertEqual(PANRedactor.redact("NR KARTY ****12,34"), "NR KARTY [REDACTED]")
+        XCTAssertEqual(PANRedactor.redact("NR KARTY: 41111l***1111"), "NR KARTY: [REDACTED]")
+        XCTAssertEqual(PANRedactor.redact("NR KARTY: 4111 ll** **** 1111"), "NR KARTY: [REDACTED]")
+    }
+
+    func testGluedIssuerWithOCRDigitAndFleetCardPrefix() {
+        XCTAssertEqual(PANRedactor.redact("MASTERCARDS555555555554444"), "MASTERCARD[REDACTED]")
+        XCTAssertEqual(PANRedactor.redact("017000000000000005"), "[REDACTED]")
+    }
+
+    func testCombiningMarksOnDigitsAndAdjacentLetters() {
+        assertExactRedaction("NR KARTY: 4111 111\u{0307}1 1111 1111", equals: "NR KARTY: [REDACTED]")
+        assertExactRedaction("NR KARTY: 4111111111111111Z\u{0307}ABKA", equals: "NR KARTY: [REDACTED]Z\u{0307}ABKA")
+    }
+
+    private func assertExactRedaction(
+        _ input: String, equals expected: String, file: StaticString = #filePath, line: UInt = #line
+    ) {
+        let actual = PANRedactor.redact(input)
+        if !actual.utf8.elementsEqual(expected.utf8) {
+            XCTFail("Expected \(String(reflecting: expected)); got \(String(reflecting: actual))", file: file, line: line)
+        }
+    }
 }
 
 // MARK: - Line ordering
