@@ -6,8 +6,7 @@ import SwiftUI
 /// Only the redacted text is sent; the photo never leaves the phone.
 struct ReceiptScanView: View {
     @Environment(\.dismiss) private var dismiss
-    /// Owned by the presenter, whose sheet `onDismiss` calls ``ReceiptFlow/abandon()``
-    /// so a swipe-down or Cancel both clean up the open draft.
+    /// Owned by the presenter, which calls ``ReceiptFlow/abandon()`` when the sheet closes.
     let flow: ReceiptFlow
 
     var body: some View {
@@ -20,6 +19,7 @@ struct ReceiptScanView: View {
                 case .done: ReceiptDoneStep { dismiss() }
                 }
             }
+            .disabled(flow.isBusy)
             .scrollContentBackground(.hidden)
             .background(Theme.background)
             .navigationTitle("Add receipt")
@@ -28,6 +28,7 @@ struct ReceiptScanView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     if flow.step != .done {
                         Button("Cancel") { dismiss() }
+                            .disabled(flow.isBusy)
                     }
                 }
             }
@@ -37,7 +38,6 @@ struct ReceiptScanView: View {
         }
         // Cleanup runs on any dismissal; this only guards review edits from a stray swipe.
         .interactiveDismissDisabled(flow.step == .review)
-
     }
 }
 
@@ -83,10 +83,11 @@ private struct ReceiptCaptureStep: View {
             guard let item else { return }
             photo = nil
             Task {
-                // Load, OCR, drop: the bytes are local to this task.
-                guard let data = try? await item.loadTransferable(type: Data.self),
-                      let image = UIImage(data: data)?.cgImage else { return }
-                await flow.recognize([image])
+                await flow.recognize {
+                    guard let data = try? await item.loadTransferable(type: Data.self),
+                          let image = UIImage(data: data)?.cgImage else { return [] }
+                    return [image]
+                }
             }
         }
     }
@@ -115,8 +116,8 @@ private struct ReceiptEditStep: View {
             ReceiptErrorSection(error: flow.error)
             Section {
                 Button("Read receipt") { Task { await flow.send() } }
-                    .disabled(flow.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || flow.isBusy)
-                Button("Start over", role: .destructive) { flow.step = .capture; flow.text = "" }
+                    .disabled(flow.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("Start over", role: .destructive) { flow.startOver() }
             }
         }
     }
@@ -210,7 +211,7 @@ private struct ReceiptReviewStep: View {
 
             Section {
                 Button("Save receipt") { Task { await flow.confirm() } }
-                    .disabled(!flow.form.isValid || flow.isBusy)
+                    .disabled(!flow.form.isValid)
                 Button("Back to text") { Task { await flow.backToEdit() } }
             }
         }

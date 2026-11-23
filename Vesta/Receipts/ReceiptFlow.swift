@@ -214,7 +214,7 @@ actor ReceiptDraftJanitor {
 
     private typealias Item = (id: String, version: Int, server: String)
     private var queue: [Item] = []
-    private var draining = false
+    private var activeDrain: Task<Void, Never>?
 
     var pendingCount: Int { queue.count }
 
@@ -224,27 +224,35 @@ actor ReceiptDraftJanitor {
 
     /// Delete everything queued for `server`; failures stay queued for the next
     /// drain, and drafts from another server wait until Vesta points there
-    /// again (or expire on their own after 48 h). A drain already running
-    /// picks up anything enqueued meanwhile.
+    /// again (or expire on their own after 48 h). Wait for any running drain
+    /// before checking the queue so callers can parse after cleanup finishes.
     func drain(using api: any ReceiptsAPI, server: String) async {
-        guard !draining else { return }
-        draining = true
-        defer { draining = false }
+        while let activeDrain { await activeDrain.value }
+        guard queue.contains(where: { $0.server == server }) else { return }
+        let task = Task {
+            await deleteQueuedDrafts(using: api, server: server)
+            activeDrain = nil
+        }
+        activeDrain = task
+        await task.value
+    }
+
+    private func deleteQueuedDrafts(using api: any ReceiptsAPI, server: String) async {
+        // Finish any new batches before making failed deletes eligible for retry.
+        var failed: [Item] = []
+        defer { queue.append(contentsOf: failed) }
         while queue.contains(where: { $0.server == server }) {
             let batch = queue.filter { $0.server == server }
             queue.removeAll { $0.server == server }
-            var failed: [Item] = []
             for item in batch {
                 do {
                     try await api.deleteReceipt(id: item.id, expectedVersion: item.version)
-                } catch ReceiptError.notFound {
-                    // Already gone (expired / deleted elsewhere).
+                } catch ReceiptError.notFound, ReceiptError.versionConflict {
+                    // Gone or changed elsewhere. This version can't be deleted.
                 } catch {
                     failed.append(item)
                 }
             }
-            queue.append(contentsOf: failed)
-            if !failed.isEmpty { return }       // offline etc.: try again next time
         }
     }
 }
@@ -262,7 +270,7 @@ actor ReceiptDraftJanitor {
 final class ReceiptFlow {
     enum Step: Equatable { case capture, edit, review, done }
 
-    var step: Step = .capture
+    private(set) var step: Step = .capture
     var text = ""
     var form = ReceiptForm()
     var error: ReceiptError?
@@ -277,6 +285,7 @@ final class ReceiptFlow {
     private let janitor: ReceiptDraftJanitor
     private let server: @MainActor () -> String
     private var abandoned = false
+    private var captureGeneration = 0
 
     /// `server` names the hestia origin ``api`` currently talks to (it follows
     /// ``AppConfig/serverURL``); queued deletes are scoped to it.
@@ -295,25 +304,41 @@ final class ReceiptFlow {
     /// OCR every page (a long receipt can be several scans), in order, then
     /// redact card data before the text is even shown.
     func recognize(_ pages: [CGImage]) async {
-        guard !pages.isEmpty, !isBusy else { return }
+        await recognize(loading: { pages })
+    }
+
+    /// Photo loading and recognition share one busy interval and capture generation.
+    func recognize(loading loadPages: @MainActor () async -> [CGImage]) async {
+        guard step == .capture, !isBusy, !abandoned else { return }
+        let generation = captureGeneration
         isBusy = true
         defer { isBusy = false }
+        let pages = await loadPages()
+        guard !pages.isEmpty, isCurrentCapture(generation) else { return }
         error = nil
         do {
             var lines: [String] = []
             for page in pages {
-                lines += ReceiptLineOrdering.lines(from: try await recognizer.recognize(page))
+                let fragments = try await recognizer.recognize(page)
+                guard isCurrentCapture(generation) else { return }
+                lines += ReceiptLineOrdering.lines(from: fragments)
             }
             useText(lines.joined(separator: "\n"))
         } catch {
+            guard isCurrentCapture(generation) else { return }
             self.error = .api(.unexpected(error.localizedDescription))
         }
+    }
+
+    private func isCurrentCapture(_ generation: Int) -> Bool {
+        generation == captureGeneration && step == .capture && !abandoned
     }
 
     /// Text from Live Text / the clipboard, or OCR output. An absurdly large
     /// paste is refused before redaction (which is linear, but no reason to
     /// spend it on something hestia will reject anyway).
     func useText(_ raw: String) {
+        captureGeneration += 1
         guard raw.utf8.count <= ReceiptText.maxBytes * 2 else {
             error = .tooLarge
             return
@@ -321,6 +346,13 @@ final class ReceiptFlow {
         text = PANRedactor.redact(raw)
         error = nil
         step = .edit
+    }
+
+    func startOver() {
+        guard step == .edit, !isBusy, !abandoned else { return }
+        captureGeneration += 1
+        text = ""
+        step = .capture
     }
 
     func send() async {
@@ -358,9 +390,14 @@ final class ReceiptFlow {
         do {
             confirmed = try await api.confirmReceipt(request)
             self.parsed = nil
+            guard !abandoned else { return } // Save succeeded after the sheet closed.
             step = .done
         } catch {
-            self.error = ReceiptError.wrap(error)
+            if abandoned {
+                await deleteCurrentDraft()
+            } else {
+                self.error = ReceiptError.wrap(error)
+            }
         }
     }
 
@@ -373,16 +410,17 @@ final class ReceiptFlow {
         step = .edit
     }
 
-    /// The sheet is closing. Any in-flight parse deletes its own draft when it
-    /// lands; the current draft (and earlier failed deletes) go now.
+    /// The sheet is closing. In-flight operations own their draft cleanup.
+    /// Otherwise discard the current draft and retry earlier failed deletes.
     func abandon() async {
         abandoned = true
+        guard !isBusy else { return }
         await deleteCurrentDraft()
     }
 
     /// Delete the open draft plus any earlier failed deletes. Best effort: a
     /// draft hestia can't delete now expires after 48 h anyway.
-    func deleteCurrentDraft() async {
+    private func deleteCurrentDraft() async {
         if let parsed {
             self.parsed = nil
             await janitor.enqueue(id: parsed.receiptId, version: parsed.version, server: parsedOn)
