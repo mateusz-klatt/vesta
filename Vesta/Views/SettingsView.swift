@@ -98,7 +98,10 @@ struct SettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
             }
-            .onAppear { urlText = app.backendURLString }
+            .onAppear {
+                urlText = app.backendURLString
+                app.receiptPairing.refreshStatus()
+            }
             .sheet(isPresented: $showPairing) { ReceiptPairingView().appLanguage(app.appLanguage) }
         }
     }

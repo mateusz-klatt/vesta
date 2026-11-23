@@ -8,11 +8,22 @@ let fakeDeviceToken = ReceiptDeviceToken(token: "fake-device-token", tokenID: "f
 @MainActor
 final class MemoryDeviceTokenStore: DeviceTokenStoring {
     private var token: StoredReceiptDeviceToken?
+    private var shouldFailSave = false
+    private(set) var pending: [StoredReceiptDeviceToken] = []
 
     init(_ token: StoredReceiptDeviceToken? = nil) { self.token = token }
     func load() -> StoredReceiptDeviceToken? { token }
-    func save(_ token: StoredReceiptDeviceToken) { self.token = token }
+    func failNextSave() { shouldFailSave = true }
+    func save(_ token: StoredReceiptDeviceToken) throws {
+        if shouldFailSave {
+            shouldFailSave = false
+            throw DevicePairingError.storage
+        }
+        self.token = token
+    }
     func clear() { token = nil }
+    func loadPendingRevocations() -> [StoredReceiptDeviceToken] { pending }
+    func savePendingRevocations(_ tokens: [StoredReceiptDeviceToken]) { pending = tokens }
 }
 
 private actor MockDevicePairingAPI: DevicePairingAPI {
@@ -20,15 +31,22 @@ private actor MockDevicePairingAPI: DevicePairingAPI {
         case redeem(ReceiptPairingCode, String, URL)
         case revoke(ReceiptDeviceToken, URL)
     }
+    enum RevokeBehavior: Sendable {
+        case success, offline, expired, revoked, notFound, disabled, unauthorized
+    }
 
     private(set) var calls: [Call] = []
-    private let failRevoke: Bool
+    private var revokeBehavior: RevokeBehavior
     private var holdRedeem: Bool
     private var redeemGate: CheckedContinuation<Void, Never>?
 
     init(failRevoke: Bool = false, holdRedeem: Bool = false) {
-        self.failRevoke = failRevoke
+        revokeBehavior = failRevoke ? .offline : .success
         self.holdRedeem = holdRedeem
+    }
+
+    func setRevokeBehavior(_ behavior: RevokeBehavior) {
+        revokeBehavior = behavior
     }
 
     func redeem(code: ReceiptPairingCode, deviceName: String, server: URL) async throws -> ReceiptDeviceToken {
@@ -47,7 +65,15 @@ private actor MockDevicePairingAPI: DevicePairingAPI {
 
     func revoke(_ token: ReceiptDeviceToken, server: URL) async throws {
         calls.append(.revoke(token, server))
-        if failRevoke { throw URLError(.notConnectedToInternet) }
+        switch revokeBehavior {
+        case .success: break
+        case .offline: throw URLError(.notConnectedToInternet)
+        case .expired: throw ReceiptError.from(status: 401, code: "device_token_expired")
+        case .revoked: throw ReceiptError.from(status: 401, code: "device_token_revoked")
+        case .notFound: throw ReceiptError.from(status: 404, code: nil)
+        case .disabled: throw ReceiptError.from(status: 404, code: "budget_receipts_disabled")
+        case .unauthorized: throw ReceiptError.from(status: 401, code: nil)
+        }
     }
 }
 
@@ -174,7 +200,10 @@ final class DevicePairingTests: XCTestCase {
 
     func testKeychainRoundTripReplacesAndRemovesCredential() throws {
         let store: any DeviceTokenStoring = KeychainDeviceTokenStore(account: "test-\(UUID())")
-        defer { try? store.clear() }
+        defer {
+            try? store.clear()
+            try? store.savePendingRevocations([])
+        }
         XCTAssertNil(try store.load())
 
         let original = StoredReceiptDeviceToken(server: fakeServer, credential: fakeDeviceToken)
@@ -222,6 +251,7 @@ final class DevicePairingTests: XCTestCase {
             let calls = await api.calls
             XCTAssertEqual(calls, [.revoke(fakeDeviceToken, fakeServer)])
             XCTAssertNil(store.load())
+            XCTAssertEqual(store.pending.count, failRevoke ? 1 : 0)
             XCTAssertEqual(pairing.status, .notPaired)
         }
     }
@@ -235,6 +265,7 @@ final class DevicePairingTests: XCTestCase {
         try await pairing.unpair()
 
         XCTAssertNil(store.load())
+        XCTAssertEqual(store.pending.count, 1)
         XCTAssertNil(pairing.credential(for: fakeServer))
         XCTAssertEqual(pairing.status, .notPaired)
         XCTAssertEqual(pairing.revocationNotice?.key, "Couldn't reach hestia. Remove this iPhone in hestia's device list.")
@@ -253,6 +284,7 @@ final class DevicePairingTests: XCTestCase {
         XCTAssertEqual(calls, [.revoke(fakeDeviceToken, fakeServer)])
         XCTAssertEqual(homeCalls, [.logout])
         XCTAssertNil(store.load())
+        XCTAssertEqual(store.pending.count, 1)
         XCTAssertEqual(app.phase, .needsAuth)
         XCTAssertNotNil(app.receiptPairing.revocationNotice)
     }
@@ -279,15 +311,206 @@ final class DevicePairingTests: XCTestCase {
         XCTAssertEqual(pairing.status, .notPaired)
     }
 
-    func testLateUnauthorizedResponseDoesNotClearReplacementCredential() {
+    func testKeychainPendingRevocationIsSeparateFromCredential() throws {
+        let store = KeychainDeviceTokenStore(account: "test-\(UUID())")
+        defer {
+            try? store.clear()
+            try? store.savePendingRevocations([])
+        }
+        let active = StoredReceiptDeviceToken(server: fakeServer, credential: fakeDeviceToken)
+        let pending = StoredReceiptDeviceToken(
+            server: URL(string: "https://old.example")!,
+            credential: .init(token: "old-token", tokenID: "old-id", expiresAt: .string("old-expiry"))
+        )
+        try store.save(active)
+        try store.addPendingRevocation(pending)
+
+        XCTAssertEqual(try store.load(), active)
+        XCTAssertEqual(try store.loadPendingRevocations(), [pending])
+        try store.clear()
+        XCTAssertNil(try store.load())
+        XCTAssertEqual(try store.loadPendingRevocations(), [pending])
+        try store.removePendingRevocation(pending)
+        XCTAssertTrue(try store.loadPendingRevocations().isEmpty)
+    }
+
+    func testRefreshRetriesAndClearsPendingRevocationOnTerminalResults() async throws {
+        let behaviors: [(MockDevicePairingAPI.RevokeBehavior, String)] = [
+            (.success, "success"),
+            (.expired, "expired"),
+            (.revoked, "revoked"),
+            (.notFound, "not found"),
+            (.disabled, "receipts disabled"),
+        ]
+        for (behavior, name) in behaviors {
+            let api = MockDevicePairingAPI(failRevoke: true)
+            let store = MemoryDeviceTokenStore(.init(server: fakeServer, credential: fakeDeviceToken))
+            let pairing = ReceiptPairing(api: api, store: store, serverURL: { fakeServer })
+            try await pairing.unpair()
+            XCTAssertEqual(store.pending.count, 1, name)
+
+            await api.setRevokeBehavior(behavior)
+            pairing.refreshStatus()
+            await waitUntil { store.pending.isEmpty }
+
+            XCTAssertTrue(store.pending.isEmpty, name)
+            XCTAssertNil(pairing.revocationNotice, name)
+            XCTAssertEqual(pairing.status, .notPaired, name)
+            let calls = await api.calls
+            XCTAssertEqual(calls, [.revoke(fakeDeviceToken, fakeServer), .revoke(fakeDeviceToken, fakeServer)], name)
+        }
+    }
+
+    func testRefreshKeepsPendingRevocationAfterAnotherFailure() async throws {
+        for behavior in [MockDevicePairingAPI.RevokeBehavior.offline, .unauthorized] {
+            let api = MockDevicePairingAPI(failRevoke: true)
+            let store = MemoryDeviceTokenStore(.init(server: fakeServer, credential: fakeDeviceToken))
+            let pairing = ReceiptPairing(api: api, store: store, serverURL: { fakeServer })
+            try await pairing.unpair()
+
+            await api.setRevokeBehavior(behavior)
+            pairing.refreshStatus()
+            await waitForRevokeCount(2, api: api)
+
+            XCTAssertEqual(store.pending, [.init(server: fakeServer, credential: fakeDeviceToken)])
+            XCTAssertNil(pairing.credential(for: fakeServer))
+            XCTAssertNotNil(pairing.revocationNotice)
+        }
+    }
+
+    func testPendingRevocationRetriesOnlyAgainstOriginalServer() async throws {
+        let otherServer = URL(string: "https://other.example")!
+        var currentServer = fakeServer
+        let api = MockDevicePairingAPI(failRevoke: true)
+        let store = MemoryDeviceTokenStore(.init(server: fakeServer, credential: fakeDeviceToken))
+        let pairing = ReceiptPairing(api: api, store: store, serverURL: { currentServer })
+        try await pairing.unpair()
+
+        currentServer = otherServer
+        await api.setRevokeBehavior(.success)
+        pairing.refreshStatus()
+        await waitUntil { store.pending.isEmpty }
+
+        let calls = await api.calls
+        XCTAssertEqual(calls, [.revoke(fakeDeviceToken, fakeServer), .revoke(fakeDeviceToken, fakeServer)])
+        XCTAssertNil(pairing.credential(for: otherServer))
+    }
+
+    func testPendingRevocationsAreBounded() throws {
+        let store = MemoryDeviceTokenStore()
+        for index in 0..<6 {
+            try store.addPendingRevocation(.init(
+                server: fakeServer,
+                credential: .init(token: "token-\(index)", tokenID: "id-\(index)", expiresAt: .string("expiry"))
+            ))
+        }
+
+        XCTAssertEqual(store.pending.count, 5)
+        XCTAssertEqual(store.pending.map(\.credential.tokenID), ["id-1", "id-2", "id-3", "id-4", "id-5"])
+    }
+
+    func testPendingRevocationDoesNotBlockNewPairing() async throws {
+        let old = StoredReceiptDeviceToken(
+            server: fakeServer,
+            credential: .init(token: "old-token", tokenID: "old-id", expiresAt: .string("old-expiry"))
+        )
+        let store = MemoryDeviceTokenStore()
+        try store.addPendingRevocation(old)
+        let api = MockDevicePairingAPI(failRevoke: true)
+        let pairing = ReceiptPairing(api: api, store: store, serverURL: { fakeServer })
+        XCTAssertFalse(pairing.isBusy)
+
+        let code = try XCTUnwrap(ReceiptPairingCode("ABCD2345"))
+        try await pairing.pair(code: code, deviceName: "iPhone")
+        await waitForRevokeCount(1, api: api)
+
+        XCTAssertEqual(pairing.status, .paired)
+        XCTAssertEqual(store.load()?.credential, fakeDeviceToken)
+        XCTAssertEqual(store.pending, [old])
+        XCTAssertNotNil(pairing.revocationNotice)
+    }
+
+    func testLateRedeemRevokeFailureLeavesPendingRevocation() async throws {
+        let api = MockDevicePairingAPI(failRevoke: true, holdRedeem: true)
+        let store = MemoryDeviceTokenStore()
+        let pairing = ReceiptPairing(api: api, store: store, serverURL: { fakeServer })
+        let app = AppState(api: MockHestiaAPI(), receiptPairing: pairing)
+        let code = try XCTUnwrap(ReceiptPairingCode("ABCD2345"))
+        let redeem = Task { try await pairing.pair(code: code, deviceName: "iPhone") }
+        while await api.calls.isEmpty { await Task.yield() }
+
+        await app.signOut()
+        await api.releaseRedeem()
+        do {
+            try await redeem.value
+            XCTFail("Expected the pairing to be canceled")
+        } catch is CancellationError {}
+
+        XCTAssertNil(store.load())
+        XCTAssertEqual(store.pending, [.init(server: fakeServer, credential: fakeDeviceToken)])
+        XCTAssertEqual(pairing.status, .notPaired)
+        XCTAssertNotNil(pairing.revocationNotice)
+    }
+
+    func testStorageFailureRevokeFailureLeavesPendingRevocation() async throws {
+        let api = MockDevicePairingAPI(failRevoke: true)
+        let store = MemoryDeviceTokenStore()
+        store.failNextSave()
+        let pairing = ReceiptPairing(api: api, store: store, serverURL: { fakeServer })
+        let code = try XCTUnwrap(ReceiptPairingCode("ABCD2345"))
+
+        do {
+            try await pairing.pair(code: code, deviceName: "iPhone")
+            XCTFail("Expected credential storage to fail")
+        } catch DevicePairingError.storage {}
+
+        XCTAssertNil(store.load())
+        XCTAssertEqual(store.pending, [.init(server: fakeServer, credential: fakeDeviceToken)])
+        XCTAssertEqual(pairing.status, .notPaired)
+        XCTAssertNotNil(pairing.revocationNotice)
+    }
+
+    func testLateUnauthorizedResponseDoesNotClearReplacementCredential() throws {
         let original = StoredReceiptDeviceToken(server: fakeServer, credential: fakeDeviceToken)
         let store = MemoryDeviceTokenStore(original)
         let pairing = ReceiptPairing(store: store, serverURL: { fakeServer })
         let replacement = StoredReceiptDeviceToken(server: fakeServer, credential:
             .init(token: "fake-replacement", tokenID: "fake-replacement-id", expiresAt: .number(123.5)))
-        store.save(replacement)
+        try store.save(replacement)
         pairing.invalidate(original)
         XCTAssertEqual(pairing.credential(for: fakeServer), replacement)
         XCTAssertEqual(pairing.status, .paired)
     }
+}
+
+
+@MainActor
+private func waitUntil(
+    _ condition: @escaping @MainActor () -> Bool,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) async {
+    for _ in 0..<200 {
+        if condition() { return }
+        await Task.yield()
+    }
+    XCTFail("Timed out waiting for pending revocation state", file: file, line: line)
+}
+
+@MainActor
+private func waitForRevokeCount(
+    _ expected: Int,
+    api: MockDevicePairingAPI,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) async {
+    for _ in 0..<200 {
+        let calls = await api.calls
+        let count = calls.filter {
+            if case .revoke = $0 { true } else { false }
+        }.count
+        if count >= expected { return }
+        await Task.yield()
+    }
+    XCTFail("Timed out waiting for revoke request", file: file, line: line)
 }

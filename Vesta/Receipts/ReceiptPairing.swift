@@ -6,10 +6,14 @@ import Observation
 final class ReceiptPairing {
     enum Status { case notPaired, paired, pairAgain }
 
+    private static let failedRevocationNotice: LocalizedStringResource =
+        "Couldn't reach hestia. Remove this iPhone in hestia's device list."
+
     private(set) var status: Status = .notPaired
     private(set) var revocationNotice: LocalizedStringResource?
     private var isPairing = false
     private var isRevoking = false
+    private var isRetryingPendingRevocations = false
     var isBusy: Bool { isPairing || isRevoking }
 
     private let api: any DevicePairingAPI
@@ -27,6 +31,7 @@ final class ReceiptPairing {
     }
 
     func refreshStatus() {
+        schedulePendingRevocationRetry()
         guard !isBusy, status != .pairAgain else { return }
         status = credential(for: serverURL()) == nil ? .notPaired : .paired
     }
@@ -52,14 +57,14 @@ final class ReceiptPairing {
             throw DevicePairingError.redeemFailed
         }
         guard !pairingCancelled, !Task.isCancelled, server == serverURL() else {
-            await revoke(token, server: server)
+            try await revoke(token, server: server)
             throw CancellationError()
         }
         do {
             try store.save(.init(server: server, credential: token))
             status = .paired
         } catch {
-            await revoke(token, server: server)
+            try await revoke(token, server: server)
             throw DevicePairingError.storage
         }
     }
@@ -70,7 +75,7 @@ final class ReceiptPairing {
         isRevoking = true
         defer { isRevoking = false }
         if let token = try? store.load() {
-            await revoke(token.credential, server: token.server)
+            try await revoke(token.credential, server: token.server)
         }
         do {
             try store.clear()
@@ -80,12 +85,55 @@ final class ReceiptPairing {
         }
     }
 
-    private func revoke(_ token: ReceiptDeviceToken, server: URL) async {
+    private func revoke(_ token: ReceiptDeviceToken, server: URL) async throws {
         do {
             try await api.revoke(token, server: server)
-            revocationNotice = nil
         } catch {
-            revocationNotice = "Couldn't reach hestia. Remove this iPhone in hestia's device list."
+            if Self.revocationCompleted(error) {
+                updateRevocationNotice()
+                return
+            }
+            try store.addPendingRevocation(.init(server: server, credential: token))
+            revocationNotice = Self.failedRevocationNotice
+            return
+        }
+        updateRevocationNotice()
+    }
+
+    private func schedulePendingRevocationRetry() {
+        guard !isRetryingPendingRevocations,
+              let pending = try? store.loadPendingRevocations(), !pending.isEmpty else { return }
+        revocationNotice = Self.failedRevocationNotice
+        isRetryingPendingRevocations = true
+        Task { [weak self] in
+            await self?.retryPendingRevocations(pending)
+        }
+    }
+
+    private func retryPendingRevocations(_ pending: [StoredReceiptDeviceToken]) async {
+        defer { isRetryingPendingRevocations = false }
+        for token in pending {
+            do {
+                try await api.revoke(token.credential, server: token.server)
+                try? store.removePendingRevocation(token)
+            } catch {
+                if Self.revocationCompleted(error) {
+                    try? store.removePendingRevocation(token)
+                }
+            }
+        }
+        updateRevocationNotice()
+    }
+
+    private func updateRevocationNotice() {
+        guard let pending = try? store.loadPendingRevocations() else { return }
+        revocationNotice = pending.isEmpty ? nil : Self.failedRevocationNotice
+    }
+
+    private static func revocationCompleted(_ error: any Error) -> Bool {
+        switch ReceiptError.wrap(error) {
+        case .pairAgain, .notFound, .disabled: true
+        default: false
         }
     }
 
