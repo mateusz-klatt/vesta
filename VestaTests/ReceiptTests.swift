@@ -68,7 +68,7 @@ final class PANRedactorTests: XCTestCase {
 
     func testCardBlockWindowEnds() {
         let text = "CARD\na\nb\nc\nd\nZBN 12345678"
-        // Label line + 3 following lines are the block; line 5 is outside.
+        // The block covers the label and its three following lines.
         XCTAssertTrue(PANRedactor.redact(text).hasSuffix("ZBN 12345678"))
     }
 
@@ -140,6 +140,185 @@ final class PANRedactorTests: XCTestCase {
         XCTAssertTrue(PANRedactor.validNIP("7791011327"))
         XCTAssertFalse(PANRedactor.validNIP("1234567890"))
         XCTAssertFalse(PANRedactor.validNIP("779101132"))
+    }
+
+    // Exact-output regressions from the second PAN review.
+
+    func testOCRSInsideCompactMastercard() {
+        XCTAssertEqual(PANRedactor.redact("MASTERCARD: 55555S5555554444"), "MASTERCARD: [REDACTED]")
+    }
+
+    func testOCROAndZInGroupedVisa() {
+        XCTAssertEqual(PANRedactor.redact("VISA: 4000 00O0 0000 000Z"), "VISA: [REDACTED]")
+    }
+
+    func testOCRSWithoutCardLabel() {
+        XCTAssertEqual(PANRedactor.redact("5555 5S55 5555 4444"), "[REDACTED]")
+    }
+
+    func testOCRSBeforeFinalMastercardGroups() {
+        XCTAssertEqual(PANRedactor.redact("MASTERCARD: 5555 555S 5555 4444"), "MASTERCARD: [REDACTED]")
+    }
+
+    func testOCRBAndGWithoutCardLabels() {
+        XCTAssertEqual(PANRedactor.redact("37B2 B22463 10005"), "[REDACTED]")
+        XCTAssertEqual(PANRedactor.redact("G011 1111 1111 1117"), "[REDACTED]")
+    }
+
+    func testAlreadyFixedWrappedAndAllLookAlikeGroups() {
+        XCTAssertEqual(PANRedactor.redact("4111 1111\n1111 1111"), "[REDACTED]\n[REDACTED]")
+        XCTAssertEqual(PANRedactor.redact("NR KARTY: 4111\n1111 1111 1111"), "NR KARTY: [REDACTED]\n[REDACTED]")
+        XCTAssertEqual(PANRedactor.redact("NR KARTY:\n4111 11\n11 1111\n1111"), "NR KARTY:\n[REDACTED]\n[REDACTED]\n[REDACTED]")
+        XCTAssertEqual(PANRedactor.redact("4111 llll 1111 1111"), "[REDACTED]")
+        XCTAssertEqual(PANRedactor.redact("VISA: 4111 llll 1111 1111"), "VISA: [REDACTED]")
+    }
+
+    func testMaskedPANWithTailOnNextOCRLine() {
+        XCTAssertEqual(PANRedactor.redact("NR KARTY:\n**** **** ****\n1234"), "NR KARTY:\n[REDACTED]\n[REDACTED]")
+    }
+
+    func testEnDashSeparator() {
+        XCTAssertEqual(PANRedactor.redact("NR KARTY: 4111–1111–1111–1111"), "NR KARTY: [REDACTED]")
+    }
+
+    func testSlashSeparator() {
+        XCTAssertEqual(PANRedactor.redact("NR KARTY: 4111/1111/1111/1111"), "NR KARTY: [REDACTED]")
+    }
+
+    func testThreeSpacesAsSeparator() {
+        XCTAssertEqual(PANRedactor.redact("NR KARTY: 4111   1111   1111   1111"), "NR KARTY: [REDACTED]")
+    }
+
+    func testTabSeparator() {
+        XCTAssertEqual(PANRedactor.redact("NR KARTY: 4111\t1111\t1111\t1111"), "NR KARTY: [REDACTED]")
+    }
+
+    func testNonbreakingSpaceSeparator() {
+        XCTAssertEqual(PANRedactor.redact("NR KARTY: 4111\u{00A0}1111\u{00A0}1111\u{00A0}1111"), "NR KARTY: [REDACTED]")
+    }
+
+    func testThinSpaceEmDashAndMinusSeparators() {
+        XCTAssertEqual(PANRedactor.redact("4111\u{2009}1111—1111−1111"), "[REDACTED]")
+        XCTAssertEqual(PANRedactor.redact("4111—11**\u{2009}****−1111"), "[REDACTED]")
+    }
+
+    func testInflectedPaymentLabelBeforeDottedPAN() {
+        XCTAssertEqual(PANRedactor.redact("PŁATNOŚĆ KARTĄ\n4111.1111.1111.1111"), "PŁATNOŚĆ KARTĄ\n[REDACTED]")
+    }
+
+    func testInflectedPaymentLabelWithAmountShapedPAN() {
+        XCTAssertEqual(PANRedactor.redact("PŁATNOŚĆ KARTĄ: 422222222.2222"), "PŁATNOŚĆ KARTĄ: [REDACTED]")
+    }
+
+    func testPolishInflectionsAndTerminalBrandsStartCardWindow() {
+        for label in ["KARCIE", "KARTĘ", "PLATNOSC KARTA", "VPAY", "JCB", "DINERS", "UNIONPAY", "POLCARD", "ESERVICE"] {
+            XCTAssertEqual(PANRedactor.redact("\(label)\nT: 12345678"), "\(label)\nT: [REDACTED]")
+        }
+    }
+
+    func testTerminalIdentifierRefreshesCardWindow() {
+        XCTAssertEqual(
+            PANRedactor.redact("KARTA VISA\nZBLIŻENIOWO\nSPRZEDAŻ\nTID: 12345678\nNR: 422222222.2222"),
+            "KARTA VISA\nZBLIŻENIOWO\nSPRZEDAŻ\nTID: [REDACTED]\nNR: [REDACTED]"
+        )
+    }
+
+    func testDottedDayFirstDateInsidePAN() {
+        XCTAssertEqual(PANRedactor.redact("NR KARTY: 4111 11.11.1111 1111"), "NR KARTY: [REDACTED]")
+    }
+
+    func testGluedWordAfterPANPreservesWord() {
+        XCTAssertEqual(PANRedactor.redact("NR KARTY: 4111111111111111ONLINE"), "NR KARTY: [REDACTED]ONLINE")
+        XCTAssertEqual(PANRedactor.redact("NR KARTY: 411111111111111lONLINE"), "NR KARTY: [REDACTED]ONLINE")
+    }
+
+    func testGluedOCRGlyphAfterPAN() {
+        XCTAssertEqual(PANRedactor.redact("NR KARTY: 4111111111111111l"), "NR KARTY: [REDACTED]")
+    }
+
+    func testGluedPrefixInCompactPAN() {
+        XCTAssertEqual(PANRedactor.redact("014111111111111111"), "[REDACTED]")
+    }
+
+    func testGluedPrefixInFirstGroupOfPAN() {
+        XCTAssertEqual(PANRedactor.redact("014111 1111 1111 1111"), "[REDACTED]")
+    }
+
+    func testMaskedPANWithGroupedBIN() {
+        XCTAssertEqual(PANRedactor.redact("NR KARTY: 4111 11** **** 1111"), "NR KARTY: [REDACTED]")
+    }
+
+    func testMaskedPANWithDoubleSpacedGroups() {
+        XCTAssertEqual(PANRedactor.redact("NR KARTY: XXXX  XXXX  XXXX  1234"), "NR KARTY: [REDACTED]")
+    }
+
+    func testMaskedPANWithThreeAsterisks() {
+        XCTAssertEqual(PANRedactor.redact("NR KARTY: 411111***1111"), "NR KARTY: [REDACTED]")
+    }
+
+    func testMaskedPANWithAsciiDots() {
+        XCTAssertEqual(PANRedactor.redact("NR KARTY: 411111......1111"), "NR KARTY: [REDACTED]")
+    }
+
+    func testMaskedPANWithMiddleDots() {
+        XCTAssertEqual(PANRedactor.redact("NR KARTY: ···· ···· ···· 1234"), "NR KARTY: [REDACTED]")
+    }
+
+    func testMaskedPANWithOCRTail() {
+        XCTAssertEqual(PANRedactor.redact("NR KARTY: **** 123O"), "NR KARTY: [REDACTED]")
+    }
+
+    func testFullWidthPAN() {
+        XCTAssertEqual(PANRedactor.redact("NR KARTY: ４１１１ １１１１ １１１１ １１１１"), "NR KARTY: [REDACTED]")
+    }
+
+    func testFullWidthDigitGluedToAsciiPAN() {
+        XCTAssertEqual(PANRedactor.redact("4111111111111111１"), "[REDACTED]")
+    }
+
+    func testSupplementaryDecimalDigitPreservesOffsets() {
+        XCTAssertEqual(
+            PANRedactor.redact("🧾 \u{1D7DC}111 1111 1111 1111 🧾 NIP ０００１２３４５６２"),
+            "🧾 [REDACTED] 🧾 NIP ０００１２３４５６２"
+        )
+    }
+
+    func testKeepsFiscalsAndPolishUnitsNearDigits() {
+        XCTAssertEqual(PANRedactor.redact("""
+        PARAGON FISKALNY
+        EAN 2900000000070
+        NR SYS 4111111111111112
+        Mąka 500G 2 SZT x 4,99 9,98 A
+        Witamina B12 1 x 22,90 22,90 B
+        SUMA PLN 32,88 ZŁ
+        23.11.2026\t17:08:03
+        """), """
+        PARAGON FISKALNY
+        EAN 2900000000070
+        NR SYS 4111111111111112
+        Mąka 500G 2 SZT x 4,99 9,98 A
+        Witamina B12 1 x 22,90 22,90 B
+        SUMA PLN 32,88 ZŁ
+        23.11.2026\t17:08:03
+        """)
+    }
+
+    func testKeepsFiscalFieldsAndLoyaltyAcrossTerminalBoundary() {
+        XCTAssertEqual(PANRedactor.redact("""
+        eService VISA
+        NIP nabywcy: 000-123-45-62
+        KWOTA PLN 1\u{202F}250,30
+        DATA 23/11/2026 17:08
+        Karta lojalnościowa: 2900000002079
+        NR PARAGONU 00015824
+        """), """
+        eService VISA
+        NIP nabywcy: 000-123-45-62
+        KWOTA PLN 1\u{202F}250,30
+        DATA 23/11/2026 17:08
+        Karta lojalnościowa: 2900000002079
+        NR PARAGONU 00015824
+        """)
     }
 }
 

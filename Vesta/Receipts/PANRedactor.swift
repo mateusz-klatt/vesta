@@ -4,18 +4,22 @@ import Foundation
 /// sent to hestia. The server redacts again; this is defence in depth, with the
 /// rule that a card number never leaves the phone.
 ///
-/// Per line:
-/// 0. **Protected spans** — amounts (`45,99`), dates (`2026-11-23`,
-///    `23.11.2026`), times (`18:04`) and a labelled NIP — are hidden from the
-///    masked-PAN and terminal fallback rules below.
-/// 1. **Luhn**: any window of 12–19 digits across digit groups (1–2 spaces or a
-///    dash between groups, OCR look-alikes `O`→0 and `I`/`l`→1) that passes the
-///    Luhn check, including PANs Vision split across adjacent numeric lines.
-/// 2. **Masked PANs** anywhere: `****1234`, `5351********1234`,
-///    `XXXX XXXX XXXX 1234`, `**** 12 34`.
+/// Decimal Unicode digits are folded on a scan copy. Replacements preserve the
+/// original text and use UTF-16 offsets, including for supplementary digits.
+/// 0. **Protected spans** — money, dates, times and checksum-valid labelled NIPs
+///    stay hidden from masked-PAN detection. Dates, times, NIPs and short
+///    fiscal references also stay hidden from the terminal digit fallback.
+/// 1. **Luhn** checks 12–19 digits across horizontal spaces, dash variants,
+///    slashes, dots and adjacent OCR lines. It requires real digits and
+///    understands O/o, I/l, S, B, Z and G. It also checks inside glued digit
+///    groups, with stricter prefix evidence for short, trimmed candidates.
+/// 2. **Masked PANs** include grouped prefixes and tails, short masks with a
+///    visible prefix, dot/middle-dot masks and tails split onto a new line.
 /// 3. **Terminal block**: on a line with a card label (`NR KARTY`, `KARTA`,
-///    `CARD`, `VISA`, `AID`, `ARQC`, …) and the next ``labelWindow`` lines, any
-///    run of ≥ ``blockMinDigits`` digits and any hex token (AID / ARQC).
+///    `PŁATNOŚĆ KARTĄ`, `VISA`, `AID`, terminal brands, …) and the next three
+///    lines, digit runs of at least eight and terminal hex tokens are masked.
+///    A terminal identifier label (`TID`) restarts the same window.
+///    The fallback uses the same separators and also accepts decimal commas.
 ///    Explicit terminal fields also catch short values outside the block.
 enum PANRedactor {
     static let placeholder = "[REDACTED]"
@@ -23,18 +27,33 @@ enum PANRedactor {
     static let labelWindow = 3
     static let blockMinDigits = 8
 
+    private static let digitGlyph = #"[0-9OoIlSBZG]"#
+    private static let separator = #"(?:[\p{Zs}\t]+|[-–—−/])"#
+    private static let luhnSeparator = "(?:\(separator)|\\.)"
+    private static let blockSeparator = "(?:\(luhnSeparator)|,)"
+
+    // Accepted limitations: without terminal context, a checksum-invalid OCR
+    // read cannot safely be distinguished from receipt IDs. A bare last four
+    // also looks like an ordinary price or reference. Arbitrary manual
+    // obfuscation may destroy both the supported glyphs and the card context.
     static func redact(_ text: String) -> String {
         let lines = text.components(separatedBy: "\n")
+        let shadows = lines.map(DigitShadow.init)
         var wrappedHits: [Int: [NSRange]] = [:]
         var result: [String] = []
         result.reserveCapacity(lines.count)
         var windowLeft = 0
         for index in lines.indices {
-            let line = lines[index]
+            let line = shadows[index].text
             let labelled = hasCardLabel(line)
             if labelled && !isLoyaltyCard(line) { windowLeft = labelWindow + 1 }
-            addWrappedPANHits(in: lines, startingAt: index, afterLabel: labelled, to: &wrappedHits)
-            result.append(redactLine(line, inBlock: windowLeft > 0, wrappedHits: wrappedHits.removeValue(forKey: index) ?? []))
+            addWrappedPANHits(in: shadows, startingAt: index, afterLabel: labelled, to: &wrappedHits)
+            let hits = lineHits(line, inBlock: windowLeft > 0) + (wrappedHits.removeValue(forKey: index) ?? [])
+            var original = lines[index]
+            for hit in merged(hits).reversed() {
+                original = (original as NSString).replacingCharacters(in: shadows[index].originalRange(hit), with: placeholder)
+            }
+            result.append(original)
             if windowLeft > 0 { windowLeft -= 1 }
         }
         return result.joined(separator: "\n")
@@ -42,12 +61,12 @@ enum PANRedactor {
 
     // MARK: - Line pipeline
 
-    private static func redactLine(_ line: String, inBlock: Bool, wrappedHits: [NSRange]) -> String {
+    private static func lineHits(_ line: String, inBlock: Bool) -> [NSRange] {
         let scan = masked(line, hiding: protectedRanges(in: line))
         // Luhn runs on the ORIGINAL line: a real PAN can contain date- or
         // amount-shaped fragments (`4111-11-11 1111 1111`), and a Luhn-valid
         // 12–19 digit window is strong enough evidence to win over protection.
-        var hits = luhnRanges(in: line) + wrappedHits + matches(maskedPAN, in: scan)
+        var hits = luhnRanges(in: line) + maskedPANRanges(in: scan)
         hits += terminalFieldRanges(in: line)
         if inBlock {
             // Amounts are not protected inside a card block: a PAN split by a
@@ -58,11 +77,41 @@ enum PANRedactor {
                 (scan as NSString).substring(with: range).contains(where: \.isLetter)
             }
         }
-        var result = line
-        for range in merged(hits).reversed() {
-            result = (result as NSString).replacingCharacters(in: range, with: placeholder)
+        return hits
+    }
+
+    private struct DigitShadow {
+        let text: String
+        private let offsets: [Int]
+
+        init(_ original: String) {
+            guard original.unicodeScalars.contains(where: { !$0.isASCII && $0.properties.numericType == .decimal }) else {
+                text = original
+                offsets = []
+                return
+            }
+            var shadow = ""
+            var boundaries = [0]
+            var offset = 0
+            for scalar in original.unicodeScalars {
+                let width = scalar.value > 0xFFFF ? 2 : 1
+                offset += width
+                if !scalar.isASCII, scalar.properties.numericType == .decimal, let value = scalar.properties.numericValue {
+                    shadow.unicodeScalars.append(Unicode.Scalar(48 + Int(value))!)
+                } else {
+                    shadow.unicodeScalars.append(scalar)
+                    if width == 2 { boundaries.append(offset - 1) }
+                }
+                boundaries.append(offset)
+            }
+            text = shadow
+            offsets = boundaries.count == offset + 1 ? [] : boundaries
         }
-        return result
+
+        func originalRange(_ range: NSRange) -> NSRange {
+            guard !offsets.isEmpty else { return range }
+            return NSRange(location: offsets[range.location], length: offsets[NSMaxRange(range)] - offsets[range.location])
+        }
     }
 
     // MARK: - 0. Protected spans
@@ -102,42 +151,46 @@ enum PANRedactor {
 
     // MARK: - 1. Luhn windows over digit groups
 
-    /// Digit groups (OCR look-alikes allowed inside a group) joined by 1–2
-    /// spaces or a dash. Only digits bound a run, so a PAN glued to a label
-    /// (`VISA4111…`) is still found.
+    // A run may start inside a word when the first character is a real digit
+    // (for example VISA4111…). Look-alike-only groups must be separate tokens.
     private static let groupRun = try! NSRegularExpression(
-        pattern: #"(?<!\d)[0-9][0-9OoIl]*(?:(?:  ?|-)[0-9OoIl]+)*(?!\d)"#
+        pattern: "(?:(?<![\\p{L}\\d])\(digitGlyph)+|(?<!\\d)[0-9]\(digitGlyph)*)(?:\(luhnSeparator)\(digitGlyph)+)*"
     )
-    private static let group = try! NSRegularExpression(pattern: #"[0-9OoIl]+"#)
-
+    private static let group = try! NSRegularExpression(pattern: "\(digitGlyph)+")
     private static let numericBand = try! NSRegularExpression(
-        pattern: #"\A[ \t]*([0-9OoIl]+(?: {1,2}[0-9OoIl]+)*)[ \t\r]*\z"#
+        pattern: "\\A\\h*(\(digitGlyph)+(?:\(luhnSeparator)\(digitGlyph)+)*)\\h*\\r?\\z"
+    )
+    private static let maskBand = try! NSRegularExpression(
+        pattern: "\\A\\h*(?:\(maskGlyph)\(separator)?){4,}\\h*\\r?\\z"
     )
 
-    /// Vision can put the end of a PAN on subsequent numeric-only lines.
-    /// Reuse Luhn across those boundaries and map each hit back to its line.
+    /// Map checksum and masked-card hits on joined OCR bands back to each
+    /// physical line. Keep indentation and line breaks in the result.
     private static func addWrappedPANHits(
-        in lines: [String], startingAt index: Int, afterLabel: Bool, to hits: inout [Int: [NSRange]]
+        in lines: [DigitShadow], startingAt index: Int, afterLabel: Bool, to hits: inout [Int: [NSRange]]
     ) {
-        guard index + 1 < lines.count, let next = captureRanges(numericBand, in: lines[index + 1]).first else { return }
-        let line = lines[index]
-        guard afterLabel || !captureRanges(numericBand, in: line).isEmpty || !captureRanges(fiscalReference, in: line).isEmpty,
+        guard index + 1 < lines.count,
+              let next = captureRanges(numericBand, in: lines[index + 1].text).first else { return }
+        let line = lines[index].text
+        let maskOnly = maskBand.firstMatch(in: line, range: NSRange(location: 0, length: line.utf16.count)) != nil
+        guard afterLabel || maskOnly || !captureRanges(numericBand, in: line).isEmpty
+                || !captureRanges(fiscalReference, in: line).isEmpty,
               let end = line.lastIndex(where: { !$0.isWhitespace }) else { return }
 
         var joined = String(line[...end])
         let firstLineLength = joined.utf16.count
-        var bands: [(source: NSRange, joined: NSRange)] = [
-            (NSRange(location: 0, length: firstLineLength), NSRange(location: 0, length: firstLineLength))
-        ]
+        let firstRange = NSRange(location: 0, length: firstLineLength)
+        var bands = [(source: firstRange, joined: firstRange)]
         for offset in 1...min(labelWindow, lines.count - index - 1) {
-            let band = lines[index + offset]
+            let band = lines[index + offset].text
             guard let source = offset == 1 ? next : captureRanges(numericBand, in: band).first else { break }
             let joinedRange = NSRange(location: joined.utf16.count + 1, length: source.length)
             joined += " " + (band as NSString).substring(with: source)
             bands.append((source, joinedRange))
         }
 
-        for match in luhnRanges(in: joined) where match.location < firstLineLength && NSMaxRange(match) > firstLineLength + 1 {
+        let candidates = luhnRanges(in: joined) + maskedPANRanges(in: masked(joined, hiding: protectedRanges(in: joined)))
+        for match in candidates where match.location < firstLineLength && NSMaxRange(match) > firstLineLength + 1 {
             for (offset, band) in bands.enumerated() {
                 let overlap = NSIntersectionRange(match, band.joined)
                 guard overlap.length > 0 else { continue }
@@ -149,60 +202,107 @@ enum PANRedactor {
         }
     }
 
-    private static func luhnRanges(in line: String) -> [NSRange] {
-        let ns = line as NSString
-        var found: [NSRange] = []
-        for run in groupRun.matches(in: line, range: NSRange(location: 0, length: ns.length)) {
-            let groups: [(range: NSRange, digits: [UInt8])] = group.matches(in: line, range: run.range).compactMap { match in
-                guard let digits = ocrDigits(ns.substring(with: match.range)) else { return nil }
-                return (match.range, digits)
-            }
-            // A single group longer than a PAN (digits glued together) can still
-            // hide one: slide 12–19 digit windows inside it.
-            for group in groups where group.digits.count > panLength.upperBound {
-                let digits = group.digits
-                for start in digits.indices {
-                    for length in panLength where start + length <= digits.count {
-                        guard luhnValid(digits[start..<(start + length)]) else { continue }
-                        found.append(NSRange(location: group.range.location + start, length: length))
-                    }
-                }
-            }
-            // Every window of whole groups with 12–19 digits; valid ones are all
-            // kept and merged later, so overlapping candidates can't leave a
-            // PAN's tail behind. A window stops growing past 19 digits, so the
-            // work is linear in the number of groups.
-            var window: [UInt8] = []
-            window.reserveCapacity(panLength.upperBound + 8)
-            for start in groups.indices {
-                window.removeAll(keepingCapacity: true)
-                for end in start..<groups.count {
-                    window += groups[end].digits
-                    if window.count > panLength.upperBound { break }
-                    guard panLength.contains(window.count), luhnValid(window[...]) else { continue }
-                    let first = groups[start].range, last = groups[end].range
-                    found.append(NSRange(location: first.location, length: NSMaxRange(last) - first.location))
-                }
-            }
-        }
-        return found
+    private struct ScanDigit {
+        let value: Int
+        let offset: Int
+        let isReal: Bool
+        let group: NSRange
+        let allowsTrim: Bool
     }
 
-    /// Map OCR look-alikes to digits, even when Vision substitutes the entire
-    /// group. Ignore a lone letter such as the Polish receipt unit "l".
-    /// The enclosing run always starts with a real digit.
-    private static func ocrDigits(_ token: String) -> [UInt8]? {
-        var digits: [UInt8] = []
-        var sawDigit = false
-        for unit in token.utf8 {
-            switch unit {
-            case UInt8(ascii: "0")...UInt8(ascii: "9"): digits.append(unit - UInt8(ascii: "0")); sawDigit = true
-            case UInt8(ascii: "O"), UInt8(ascii: "o"): digits.append(0)
-            case UInt8(ascii: "I"), UInt8(ascii: "l"): digits.append(1)
-            default: return nil
+    private static func luhnRanges(in line: String) -> [NSRange] {
+        let ns = line as NSString
+        let eans = captureRanges(eanField, in: line)
+        var hits: [NSRange] = []
+        for run in groupRun.matches(in: line, range: NSRange(location: 0, length: ns.length)) {
+            guard run.range.length >= panLength.lowerBound else { continue }
+            var digits: [ScanDigit] = []
+            for group in group.matches(in: line, range: run.range) {
+                let token = Array(ns.substring(with: group.range).utf8)
+                let end = NSMaxRange(group.range)
+                var visibleLength = token.count
+                // Do not absorb the start of a glued word when expanding a
+                // hit. Still check OCR glyphs there, since a PAN may end in
+                // an OCR substitution immediately before the word.
+                if end < ns.length, CharacterSet.letters.contains(Unicode.Scalar(ns.character(at: end)) ?? " ") {
+                    visibleLength = token.lastIndex(where: isDigit).map { $0 + 1 } ?? 0
+                }
+                // Retain the previous treatment of single O/I/l tokens,
+                // including the common litre unit, as non-digit separators.
+                if token.count == 1, let byte = token.first, "OoIl".utf8.contains(byte) { continue }
+                guard visibleLength > 0, token.count > 1 || token.first.map(isDigit) == true else {
+                    appendLuhnHits(digits, to: &hits)
+                    digits.removeAll(keepingCapacity: true)
+                    continue
+                }
+                let range = NSRange(location: group.range.location, length: visibleLength)
+                let allowsTrim = token.count > 4 && !(eans.contains(range) && validEAN13(token))
+                for (index, byte) in token.enumerated() {
+                    digits.append(ScanDigit(
+                        value: ocrDigit(byte), offset: range.location + index, isReal: isDigit(byte),
+                        group: range, allowsTrim: allowsTrim
+                    ))
+                }
+            }
+            appendLuhnHits(digits, to: &hits)
+        }
+        return hits
+    }
+
+    private static func appendLuhnHits(_ digits: [ScanDigit], to hits: inout [NSRange]) {
+        guard digits.count >= panLength.lowerBound else { return }
+        for start in 0...(digits.count - panLength.lowerBound) {
+            let first = digits[start]
+            var sum = 0
+            var flippedSum = 0
+            var hasRealDigit = false
+            for end in start..<min(start + panLength.upperBound, digits.count) {
+                let last = digits[end]
+                let doubled = last.value * 2 - (last.value >= 5 ? 9 : 0)
+                // Appending a digit flips the weight of every earlier digit.
+                (sum, flippedSum) = (flippedSum + last.value, sum + doubled)
+                hasRealDigit = hasRealDigit || last.isReal
+                let length = end - start + 1
+                guard length >= panLength.lowerBound, hasRealDigit, sum % 10 == 0 else { continue }
+                let startsGroup = first.offset == first.group.location
+                let endsGroup = last.offset + 1 >= NSMaxRange(last.group)
+                // Keep whole-group matches. Only trim unusually long groups,
+                // so an interior checksum match cannot eat parts of a date
+                // or four-digit group. For short glued runs, also require the
+                // leading digit of a common card network.
+                guard startsGroup || first.allowsTrim, endsGroup || last.allowsTrim else { continue }
+                guard (startsGroup && endsGroup) || first.group.length > panLength.upperBound
+                        || last.group.length > panLength.upperBound || (2...6).contains(first.value) else { continue }
+                let endOffset = max(last.offset + 1, NSMaxRange(last.group))
+                hits.append(NSRange(location: first.group.location, length: endOffset - first.group.location))
             }
         }
-        return sawDigit || digits.count > 1 ? digits : nil
+    }
+
+    private static func isDigit(_ byte: UInt8) -> Bool {
+        (UInt8(ascii: "0")...UInt8(ascii: "9")).contains(byte)
+    }
+
+    // A full Luhn match still wins. A proper subset of an explicitly labelled,
+    // checksum-valid EAN-13 is too weak to identify it as a PAN by itself.
+    private static let eanField = try! NSRegularExpression(pattern: #"(?i)\bEAN(?:-13)?\h*:?\h*([0-9]{13})(?!\d)"#)
+
+    private static func validEAN13(_ token: [UInt8]) -> Bool {
+        token.enumerated().reduce(0) { total, digit in
+            total + ocrDigit(digit.element) * (digit.offset.isMultiple(of: 2) ? 1 : 3)
+        }.isMultiple(of: 10)
+    }
+
+    private static func ocrDigit(_ byte: UInt8) -> Int {
+        switch byte {
+        case UInt8(ascii: "O"), UInt8(ascii: "o"): return 0
+        case UInt8(ascii: "I"), UInt8(ascii: "l"): return 1
+        case UInt8(ascii: "S"): return 5
+        case UInt8(ascii: "B"): return 8
+        case UInt8(ascii: "Z"): return 2
+        case UInt8(ascii: "G"): return 6
+        default: return Int(byte - UInt8(ascii: "0"))
+        }
     }
 
     static func luhnValid(_ digits: String) -> Bool {
@@ -235,14 +335,22 @@ enum PANRedactor {
 
     // MARK: - 2. Masked PANs
 
+    private static let maskGlyph = #"[.*xX•#·]"#
     private static let maskedPAN = try! NSRegularExpression(
-        pattern: #"(?<!\d)(?:\d{1,6}[ \-]?)?(?:[*xX•#][ \-]?){4,}\d(?:[ \-]?\d){1,3}(?!\d|[,.]\d)"#
+        pattern: "(?<!\\d)(?:(?:[0-9]\(separator)?){1,6}(?:\(maskGlyph)\(separator)?){2,}"
+            + "|(?:\(maskGlyph)\(separator)?){4,})\(digitGlyph)(?:\(separator)?\(digitGlyph)){1,3}"
+            + "(?!\\d|[,.]\\d)"
     )
+
+    private static func maskedPANRanges(in line: String) -> [NSRange] {
+        let ns = line as NSString
+        return matches(maskedPAN, in: line).filter { ns.substring(with: $0).utf8.contains(where: isDigit) }
+    }
 
     // MARK: - 3. Terminal block
 
     private static let cardLabel = try! NSRegularExpression(
-        pattern: #"(?i)\b(?:NR\s*KARTY|KARTA|KARTY|CARD|VISA|MASTERCARD|MAESTRO|AMEX|PAN|AID|ARQC|TVR|ATC)\b"#
+        pattern: #"(?i)\b(?:NR\s*KARTY|KART[AYĄĘ]|KARCIE|(?:PŁATNOŚĆ|PLATNOSC)\h+KART[AEYĄĘ]?|CARD|VISA|MASTERCARD|MAESTRO|AMEX|VPAY|JCB|DINERS|UNIONPAY|POLCARD|ESERVICE|PAN|AID|ARQC|TVR|ATC|TID)\b"#
     )
 
     private static let loyaltyCard = try! NSRegularExpression(
@@ -253,7 +361,7 @@ enum PANRedactor {
     /// printout. The exemption is only for the digit fallback, and only when
     /// the entire run is shorter than a PAN.
     private static let fiscalReference = try! NSRegularExpression(
-        pattern: #"(?i)\bNR[ \t]+(?:PARAGONU|TRANSAKCJI)\b[ \t:.]*([0-9]{8,11})(?!\d|(?: {1,2}|[-.,])\d)"#
+        pattern: "(?i)\\bNR\\h+(?:PARAGONU|TRANSAKCJI)\\b[\\h:.]*([0-9]{8,11})(?!\\d|\(blockSeparator)\\d)"
     )
 
     /// Short or alphanumeric values that the generic terminal fallback misses.
@@ -262,7 +370,7 @@ enum PANRedactor {
         pattern: #"""
         (?ix)\b(?:
             (?:AID|ARQC|TVR|TSI|ATC)\b (?:\h*:\h*|\h+) ([A-F0-9]{2,32})
-          | (?:NR\h+TERMINALA|KOD\h+(?:AUTORYZACJI|BLIK))\b
+          | (?:NR\h+TERMINALA|TID|KOD\h+(?:AUTORYZACJI|BLIK))\b
               (?:\h*:\h*|\h+) ([A-Z0-9]{4,16})
           | (?:WAŻNA\h+DO|EXP)\b (?:\h*:\h*|\h+) ((?:0[1-9]|1[0-2])[-/.][0-9]{2})
           | NR\h*KARTY\b (?:\h*:\h*|\h+)
@@ -290,17 +398,16 @@ enum PANRedactor {
         return !luhnValid(ns.substring(with: loyalty.range(at: 1)))
     }
 
-    /// Digit runs (1–2 spaces, a dash, a dot or a comma between digits) not
-    /// glued to a letter; a colon in front is fine (`NR KARTY:53511234`).
     private static let blockRun = try! NSRegularExpression(
-        pattern: #"(?<![\p{L}\d])\d(?:(?:  ?|[-.,])?\d)*(?![\p{L}\d])"#
+        pattern: "(?<![\\p{L}\\d])\(digitGlyph)+(?:\(blockSeparator)\(digitGlyph)+)*(?![\\p{L}\\d])"
     )
     private static let hexToken = try! NSRegularExpression(pattern: #"(?i)(?<![\p{L}\d])[a-f0-9]{10,32}(?![\p{L}\d])"#)
 
     private static func blockDigitRanges(in line: String) -> [NSRange] {
         let ns = line as NSString
         return matches(blockRun, in: line).filter {
-            ns.substring(with: $0).filter(\.isASCIIDigit).count >= blockMinDigits
+            let bytes = ns.substring(with: $0).utf8
+            return bytes.contains(where: isDigit) && bytes.filter { isDigit($0) || "OoIlSBZG".utf8.contains($0) }.count >= blockMinDigits
         }
     }
 
