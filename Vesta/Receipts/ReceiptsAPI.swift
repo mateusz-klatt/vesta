@@ -6,12 +6,12 @@ typealias ReceiptDetail = Components.Schemas.BudgetReceiptDetail
 typealias ReceiptCandidate = Components.Schemas.BudgetReceiptCandidate
 typealias ReceiptLine = Components.Schemas.BudgetReceiptLine
 typealias ReceiptConfirmRequest = Components.Schemas.BudgetReceiptConfirmRequest
+typealias ReceiptSourceKind = Components.Schemas.BudgetReceiptParseTextRequest.SourceKindPayload
 
-/// hestia receipts v1a (`/api/budget/receipts/*`): Vesta sends only on-device
-/// OCR text, never the photo. Kept apart from ``HestiaAPI`` so the home-control
-/// surface (and its mocks) don't grow with the budget feature.
+/// Vesta submits receipt text from on-device OCR or paste. Kept apart from
+/// ``HestiaAPI`` so the home-control surface stays independent of receipts.
 protocol ReceiptsAPI: Sendable {
-    func parseReceiptText(_ text: String) async throws -> ReceiptParseResult
+    func parseReceiptText(_ text: String, source: ReceiptSourceKind) async throws -> ReceiptParseResult
     func confirmReceipt(_ request: ReceiptConfirmRequest) async throws -> ReceiptDetail
     /// Discard a draft the user abandoned (otherwise it counts against the
     /// 20-draft quota until hestia sweeps it after 48 h).
@@ -26,9 +26,14 @@ enum ReceiptError: LocalizedError, Equatable {
     case disabled
     /// 404 otherwise: the draft expired (48 h) or was deleted.
     case notFound
-    /// 403: not an admin owner, or the server still accepts receipts only from
-    /// the browser (hestia's bearer path for native clients is not deployed).
+    /// 403: the server denied access to receipts.
     case forbidden
+    /// The device token is missing, expired or revoked.
+    case pairAgain
+    /// 400 `budget_auth_ambiguous`: hestia saw multiple credentials.
+    case ambiguousAuth
+    /// 429: hestia's receipt rate limit.
+    case rateLimited
     /// 413 `budget_receipt_quota_exceeded`: 20 open drafts.
     case draftQuota
     /// 413 otherwise (parse-text 48 KiB / confirm 128 KiB body), or caught on
@@ -54,6 +59,9 @@ enum ReceiptError: LocalizedError, Equatable {
         case .disabled: "Receipts are turned off"
         case .notFound: "Draft no longer exists"
         case .forbidden: "Not allowed"
+        case .pairAgain: "Pair again"
+        case .ambiguousAuth: "Multiple credentials"
+        case .rateLimited: "Receipt limit reached"
         case .draftQuota: "Too many open drafts"
         case .tooLarge: "Receipt text is too long"
         case .versionConflict: "Receipt changed elsewhere"
@@ -71,6 +79,9 @@ enum ReceiptError: LocalizedError, Equatable {
         case .disabled: "The server owner has not enabled receipts yet."
         case .notFound: "Drafts expire after 48 hours. Scan the receipt again."
         case .forbidden: "Only an admin can add receipts, and the server must allow the app to send them."
+        case .pairAgain: "Pair this iPhone with hestia to continue."
+        case .ambiguousAuth: "The server received more than one credential. Check your connection and try again."
+        case .rateLimited: "Too many receipts, try again in a minute"
         case .draftQuota: "Confirm or discard some drafts on the server, then try again."
         case .tooLarge: "The receipt is too large for the server. Shorten the text and read it again."
         case .versionConflict: "Scan the receipt again to start from the current version."
@@ -97,6 +108,7 @@ enum ReceiptError: LocalizedError, Equatable {
     /// with an empty body).
     static func from(status: Int, code: String?) -> ReceiptError {
         switch (status, code) {
+        case (401, "device_token_expired"), (401, "device_token_revoked"): .pairAgain
         case (401, _): .api(.unauthorized)
         case (403, _): .forbidden
         case (404, "budget_receipts_disabled"), (404, "budget_disabled"): .disabled
@@ -108,8 +120,10 @@ enum ReceiptError: LocalizedError, Equatable {
         case (409, "budget_receipt_stale_source"): .staleCandidate
         case (409, let code?): .rejected(code)
         case (400, "budget_receipt_total_mismatch"): .totalMismatch
+        case (400, "budget_auth_ambiguous"): .ambiguousAuth
         case (400, let code?): .rejected(code)
         case (400, nil): .rejected("invalid_request")
+        case (429, _): .rateLimited
         case (503, _): .unavailable
         default: .api(.http(status))
         }
@@ -117,13 +131,29 @@ enum ReceiptError: LocalizedError, Equatable {
 
     static func wrap(_ error: any Error) -> ReceiptError {
         if let receipt = error as? ReceiptError { return receipt }
-        // hestia's auth middleware can answer 401/403 with an empty body, which
-        // the generated client fails to decode before we see the status.
-        if let client = error as? ClientError, let status = client.response?.status.code,
-           !(200..<300).contains(status) {
-            return from(status: status, code: nil)
+        if let client = error as? ClientError {
+            if let receipt = client.underlyingError as? ReceiptError { return receipt }
+            if let status = client.response?.status.code, !(200..<300).contains(status) {
+                return from(status: status, code: nil)
+            }
         }
         return .api(APIError.wrap(error))
+    }
+}
+
+/// v2 errors carry a nested code. The pinned OpenAPI spec uses a flat string.
+struct BudgetErrorEnvelope: Decodable {
+    let code: String
+
+    init(from decoder: any Decoder) throws {
+        enum Key: CodingKey { case error }
+        struct Detail: Decodable { let code: String }
+        let container = try decoder.container(keyedBy: Key.self)
+        if let detail = try? container.decode(Detail.self, forKey: .error) {
+            code = detail.code
+        } else {
+            code = try container.decode(String.self, forKey: .error)
+        }
     }
 }
 

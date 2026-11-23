@@ -70,24 +70,31 @@ enum APIError: LocalizedError, Equatable {
 
 /// Typed hestia client built on the generated `Client` (from `Vesta/openapi.json`).
 /// Auth is a bearer token: ``login(user:password:)`` requests `bearer: true`,
-/// stores the token in the Keychain, and ``BearerAuthMiddleware`` attaches it to
-/// every subsequent request. Rebuilt when the user points Vesta at a new backend.
+/// stores the token in the Keychain, and ``BearerAuthMiddleware`` uses it for
+/// session operations. Receipt operations use a separate device credential.
 actor APIClient: HestiaAPI {
     private var serverURL: URL
     private(set) var client: Client
     private let transport: any ClientTransport
+    private let auth: BearerAuthMiddleware
 
-    init(transport: any ClientTransport = URLSessionTransport(configuration: .init(session: HTTPSession.shared))) {
+    // The streaming transport installs its own task delegate. Use the session's
+    // redirect delegate for generated REST requests.
+    init(transport: any ClientTransport = URLSessionTransport(
+            configuration: .init(session: HTTPSession.shared, httpBodyProcessingMode: .buffered)),
+         receiptPairing: ReceiptPairing? = nil,
+         sessionToken: @escaping @Sendable () -> String? = { TokenStore.load() }) {
         self.transport = transport
+        auth = BearerAuthMiddleware(token: sessionToken, receiptPairing: receiptPairing)
         serverURL = AppConfig.serverURL
-        client = APIClient.make(serverURL, transport)
+        client = APIClient.make(serverURL, transport, auth)
     }
 
-    private static func make(_ url: URL, _ transport: any ClientTransport) -> Client {
+    private static func make(_ url: URL, _ transport: any ClientTransport, _ auth: BearerAuthMiddleware) -> Client {
         Client(
             serverURL: url,
             transport: transport,
-            middlewares: [BearerAuthMiddleware(token: { TokenStore.load() }), ExplicitNullsMiddleware()]
+            middlewares: [auth, ExplicitNullsMiddleware()]
         )
     }
 
@@ -95,7 +102,7 @@ actor APIClient: HestiaAPI {
         let current = AppConfig.serverURL
         if current != serverURL {
             serverURL = current
-            client = APIClient.make(current, transport)
+            client = APIClient.make(current, transport, auth)
         }
     }
 

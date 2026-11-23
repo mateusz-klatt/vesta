@@ -5,7 +5,9 @@ import SwiftUI
 /// Text) → check the recognised text → review what hestia parsed → confirm.
 /// Only the redacted text is sent; the photo never leaves the phone.
 struct ReceiptScanView: View {
+    @Environment(AppState.self) private var app
     @Environment(\.dismiss) private var dismiss
+    @State private var showPairing = false
     /// Owned by the presenter, which calls ``ReceiptFlow/abandon()`` when the sheet closes.
     let flow: ReceiptFlow
 
@@ -31,6 +33,12 @@ struct ReceiptScanView: View {
                             .disabled(flow.isBusy)
                     }
                 }
+                if flow.step != .done && (flow.error == .pairAgain || app.receiptPairing.status == .pairAgain) {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Pair again") { showPairing = true }
+                            .disabled(flow.isBusy)
+                    }
+                }
             }
             .overlay {
                 if flow.isBusy { ProgressView().controlSize(.large) }
@@ -38,6 +46,11 @@ struct ReceiptScanView: View {
         }
         // Cleanup runs on any dismissal; this only guards review edits from a stray swipe.
         .interactiveDismissDisabled(flow.step == .review)
+        .sheet(isPresented: $showPairing, onDismiss: {
+            if app.receiptPairing.status == .paired && flow.error == .pairAgain { flow.error = nil }
+        }) {
+            ReceiptPairingView().appLanguage(app.appLanguage)
+        }
     }
 }
 

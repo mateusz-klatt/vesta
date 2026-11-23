@@ -101,8 +101,8 @@ private struct PausedConfirmAPI: ReceiptsAPI {
     let mock = MockReceiptsAPI()
     let gate = OperationGate()
 
-    func parseReceiptText(_ text: String) async throws -> ReceiptParseResult {
-        try await mock.parseReceiptText(text)
+    func parseReceiptText(_ text: String, source: ReceiptSourceKind) async throws -> ReceiptParseResult {
+        try await mock.parseReceiptText(text, source: source)
     }
 
     func confirmReceipt(_ request: ReceiptConfirmRequest) async throws -> ReceiptDetail {
