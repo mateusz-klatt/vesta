@@ -26,7 +26,7 @@
         "cs": {
           "stringUnit": {
             "state": "translated",
-            "value": "Vesta používá fotoaparát ke skenování účtenky. Text se čte na tvém iPhonu; fotka se neukládá ani nenahrává."
+            "value": "Vesta používá fotoaparát ke skenování účtenky. Text se čte na vašem iPhonu; fotka se neukládá ani nenahrává."
           }
         },
         "da": {
@@ -38,13 +38,13 @@
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Vesta verwendet die Kamera zum Scannen eines Kassenbons. Der Text wird auf deinem iPhone gelesen; das Foto wird weder gespeichert noch hochgeladen."
+            "value": "Vesta verwendet die Kamera zum Scannen eines Belegs. Der Text wird auf deinem iPhone gelesen; das Foto wird weder gespeichert noch hochgeladen."
           }
         },
         "el": {
           "stringUnit": {
             "state": "translated",
-            "value": "Η Vesta χρησιμοποιεί την κάμερα για σάρωση απόδειξης. Το κείμενο διαβάζεται στο iPhone σου· η φωτογραφία δεν αποθηκεύεται ούτε μεταφορτώνεται."
+            "value": "Το Vesta χρησιμοποιεί την κάμερα για σάρωση απόδειξης. Το κείμενο διαβάζεται στο iPhone σας· η φωτογραφία δεν αποθηκεύεται ούτε μεταφορτώνεται."
           }
         },
         "en": {
@@ -56,13 +56,13 @@
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Vesta usa la cámara para escanear un recibo. El texto se lee en tu iPhone; la foto no se guarda ni se sube."
+            "value": "Vesta usa la cámara para escanear un ticket. El texto se lee en tu iPhone; la foto no se guarda ni se sube."
           }
         },
         "fa": {
           "stringUnit": {
             "state": "translated",
-            "value": "Vesta از دوربین برای اسکن رسید استفاده می‌کند. متن روی iPhone تو خوانده می‌شود؛ عکس ذخیره یا بارگذاری نمی‌شود."
+            "value": "Vesta از دوربین برای اسکن رسید استفاده می‌کند. متن روی iPhone شما خوانده می‌شود؛ عکس ذخیره یا بارگذاری نمی‌شود."
           }
         },
         "fi": {
@@ -80,7 +80,7 @@
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Vesta utilise l’appareil photo pour scanner un reçu. Le texte est lu sur ton iPhone ; la photo n’est ni enregistrée ni téléversée."
+            "value": "Vesta utilise l’appareil photo pour scanner un ticket. Le texte est lu sur votre iPhone ; la photo n’est ni enregistrée ni téléversée."
           }
         },
         "ga": {
@@ -110,25 +110,25 @@
         "hu": {
           "stringUnit": {
             "state": "translated",
-            "value": "A Vesta a kamerát blokk beolvasására használja. A szöveg az iPhoneodon kerül beolvasásra; a fotó nem kerül mentésre vagy feltöltésre."
+            "value": "A Vesta a kamerát nyugta beolvasására használja. A szöveg az iPhoneodon kerül beolvasásra; a fotó nem kerül mentésre vagy feltöltésre."
           }
         },
         "hy": {
           "stringUnit": {
             "state": "translated",
-            "value": "Vesta-ն օգտագործում է տեսախցիկը անդորրագիր սկանավորելու համար։ Տեքստը կարդացվում է քո iPhone-ում; լուսանկարը չի պահպանվում և չի վերբեռնվում։"
+            "value": "Vesta-ն օգտագործում է տեսախցիկը անդորրագիր սկանավորելու համար։ Տեքստը կարդացվում է ձեր iPhone-ում; լուսանկարը չի պահպանվում և չի վերբեռնվում։"
           }
         },
         "id": {
           "stringUnit": {
             "state": "translated",
-            "value": "Vesta menggunakan kamera untuk memindai struk. Teks dibaca di iPhone kamu; foto tidak disimpan atau diunggah."
+            "value": "Vesta menggunakan kamera untuk memindai struk. Teks dibaca di iPhone Anda; foto tidak disimpan atau diunggah."
           }
         },
         "is": {
           "stringUnit": {
             "state": "translated",
-            "value": "Vesta notar myndavélina til að skanna kvittun. Textinn er lesinn á iPhone-inum þínum; myndin er hvorki vistuð né hlaðið upp."
+            "value": "Vesta notar myndavélina til að skanna kvittun. Textinn er lesinn á iPhone-inum þínum; myndin er ekki vistuð og henni er ekki hlaðið upp."
           }
         },
         "it": {
@@ -146,7 +146,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "Vesta가 영수증을 스캔하기 위해 침라를 사용합니다. 텍스트는 iPhone에서 읽히며 사진은 저장되거나 업로드되지 않습니다."
+            "value": "Vesta가 영수증을 스캔하기 위해 카메라를 사용합니다. 텍스트는 iPhone에서 읽히며 사진은 저장되거나 업로드되지 않습니다."
           }
         },
         "lt": {
@@ -158,7 +158,7 @@
         "lv": {
           "stringUnit": {
             "state": "translated",
-            "value": "Vesta izmanto kameru, lai skenētu kvīti. Teksts tiek nolasīts jūsu iPhone; fotoattēls netiek ne saglabāts, ne augšupielādēts."
+            "value": "Vesta izmanto kameru, lai skenētu čeku. Teksts tiek nolasīts jūsu iPhone; fotoattēls netiek ne saglabāts, ne augšupielādēts."
           }
         },
         "ms": {
@@ -212,7 +212,7 @@
         "sk": {
           "stringUnit": {
             "state": "translated",
-            "value": "Vesta používa fotoaparát na skenovanie účtenky. Text sa číta v tvojom iPhone; fotka sa neukladá ani nenahráva."
+            "value": "Vesta používa fotoaparát na skenovanie účtenky. Text sa číta vo vašom iPhone; fotka sa neukladá ani nenahráva."
           }
         },
         "sq": {
@@ -266,7 +266,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Vesta 使用相机扫描小票。文本在你的 iPhone 上读取；照片不会存储或上传。"
+            "value": "Vesta 使用相机扫描收据。文本在你的 iPhone 上读取；照片不会存储或上传。"
           }
         },
         "zh-Hant": {

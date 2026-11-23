@@ -2366,7 +2366,7 @@
         "sv": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tillbake till texten"
+            "value": "Tillbaka till texten"
           }
         },
         "sw": {
@@ -2532,7 +2532,7 @@
         "is": {
           "stringUnit": {
             "state": "translated",
-            "value": "Bankaviðskipti"
+            "value": "Bankafærsla"
           }
         },
         "it": {
@@ -2574,7 +2574,7 @@
         "my": {
           "stringUnit": {
             "state": "translated",
-            "value": "ဘဏ်လုပ်ငန်း"
+            "value": "ဘဏ်ငွေပေးငွေယူ"
           }
         },
         "nb": {
@@ -2800,7 +2800,7 @@
         "is": {
           "stringUnit": {
             "state": "translated",
-            "value": "Bankaviðskiptunum hefur verið breytt"
+            "value": "Bankafærslunni hefur verið breytt"
           }
         },
         "it": {
@@ -2842,7 +2842,7 @@
         "my": {
           "stringUnit": {
             "state": "translated",
-            "value": "ဘဏ်လုပ်ငန်း ပြောင်းလဲသွားသည်"
+            "value": "ဘဏ်ငွေပေးငွေယူ ပြောင်းလဲသွားသည်"
           }
         },
         "nb": {
@@ -5634,7 +5634,7 @@
         "ar": {
           "stringUnit": {
             "state": "translated",
-            "value": "أكّد بعض المسودات على الخادم أو تجاهلها، ثم حاول مجددًا."
+            "value": "أكّد بعض المسودات على الخادم أو احذفها، ثم حاول مجددًا."
           }
         },
         "bn": {
@@ -5730,7 +5730,7 @@
         "hu": {
           "stringUnit": {
             "state": "translated",
-            "value": "Hagyjon jóvá vagy vessen el néhány piszkozatot a szerveren, majd próbálja újra."
+            "value": "Hagyj jóvá vagy vess el néhány piszkozatot a szerveren, majd próbáld újra."
           }
         },
         "hy": {
@@ -5760,7 +5760,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "サーバー上の下書きをいくつか確認または破棄してから、もう一度お試しください。"
+            "value": "サーバー上の下書きをいくつか確定または破棄してから、もう一度お試しください。"
           }
         },
         "ko": {
@@ -8142,7 +8142,7 @@
         "hu": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ne kapcsolja"
+            "value": "Ne kapcsold össze"
           }
         },
         "hy": {
@@ -8184,7 +8184,7 @@
         "lt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Nesiekti"
+            "value": "Nesusieti"
           }
         },
         "lv": {
@@ -8946,7 +8946,7 @@
         "hu": {
           "stringUnit": {
             "state": "translated",
-            "value": "A piszkozatok 48 óra elteltével lejárnak. Szkennelje be újra a nyugtát."
+            "value": "A piszkozatok 48 óra elteltével lejárnak. Szkenneld be újra a nyugtát."
           }
         },
         "hy": {
@@ -11072,7 +11072,7 @@
         "he": {
           "stringUnit": {
             "state": "translated",
-            "value": "תקן כל דבר שנקרא בטעות, ולאחר מכן שלח את הטקסט לשרת שלך כדי שיקרא את הקבלה."
+            "value": "תקן כל דבר שנקרא באופן שגוי, ולאחר מכן שלח את הטקסט לשרת שלך כדי שיקרא את הקבלה."
           }
         },
         "hi": {
@@ -11090,7 +11090,7 @@
         "hu": {
           "stringUnit": {
             "state": "translated",
-            "value": "Javítsa ki a tévesen felismert részeket, majd küldje el a szöveget a szerverére a nyugta beolvasásához."
+            "value": "Javítsd ki a tévesen felismert részeket, majd küldd el a szöveget a szerveredre a nyugta beolvasásához."
           }
         },
         "hy": {
@@ -11108,7 +11108,7 @@
         "is": {
           "stringUnit": {
             "state": "translated",
-            "value": "Lagaðu allt sem las rangt og sendu síðan textann á þjóninn þinn til að lesa kvittunina."
+            "value": "Lagaðu allt sem var rangt lesið og sendu síðan textann á þjóninn þinn til að lesa kvittunina."
           }
         },
         "it": {
@@ -11334,7 +11334,7 @@
         "ga": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ceartaigh téacs na admhála chun go mbeidh suim na n-earraí cothrom leis an iomlán, ansin léigh arís é."
+            "value": "Ceartaigh téacs na hadmhála chun go mbeidh suim na n-earraí cothrom leis an iomlán, ansin léigh arís é."
           }
         },
         "he": {
@@ -11358,7 +11358,7 @@
         "hu": {
           "stringUnit": {
             "state": "translated",
-            "value": "Javítsa ki a nyugta szövegét úgy, hogy a tételek összege egyezzen a végösszeggel, majd olvassa be újra."
+            "value": "Javítsd ki a nyugta szövegét úgy, hogy a tételek összege egyezzen a végösszeggel, majd olvasd be újra."
           }
         },
         "hy": {
@@ -12388,7 +12388,7 @@
         "fi": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tuotteiden ja loppusumman välillä on %@ ero. Palaa takaisin ja korjaa teksti."
+            "value": "Tuotteiden summan ja loppusumman erotus on %@. Palaa takaisin ja korjaa teksti."
           }
         },
         "fil": {
@@ -12430,7 +12430,7 @@
         "hu": {
           "stringUnit": {
             "state": "translated",
-            "value": "A tételek és a végösszeg között %@ az eltérés. Menjen vissza, és javítsa ki a szöveget."
+            "value": "A tételek és a végösszeg között %@ az eltérés. Menj vissza, és javítsd ki a szöveget."
           }
         },
         "hy": {
@@ -12556,7 +12556,7 @@
         "sw": {
           "stringUnit": {
             "state": "translated",
-            "value": "Vipengee na jumla kuu zinatofautiana kwa %@. Rudi nyuma na usahihisha maandishi."
+            "value": "Vipengee na jumla kuu zinatofautiana kwa %@. Rudi nyuma na usahihishe maandishi."
           }
         },
         "th": {
@@ -14080,13 +14080,13 @@
         "lt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mišri"
+            "value": "Mišrus"
           }
         },
         "lv": {
           "stringUnit": {
             "state": "translated",
-            "value": "Jaukta"
+            "value": "Jaukts"
           }
         },
         "ms": {
@@ -14128,7 +14128,7 @@
         "ro": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mixt"
+            "value": "Mixtă"
           }
         },
         "ru": {
@@ -15664,7 +15664,7 @@
         "is": {
           "stringUnit": {
             "state": "translated",
-            "value": "Engin samsvarandi viðskipti eru enn til. Þú getur vistað kvittunina án þeirra."
+            "value": "Engin samsvarandi færsla er enn til. Þú getur vistað kvittunina án hennar."
           }
         },
         "it": {
@@ -15706,7 +15706,7 @@
         "my": {
           "stringUnit": {
             "state": "translated",
-            "value": "ကိုက်ညီသော ဘဏ်လုပ်ငန်း မရှိသေးပါ။ ထိုလုပ်ငန်းမပါဘဲ ပြေစာကိုသိမ်းဆည်းနိုင်သည်။"
+            "value": "ကိုက်ညီသော ငွေပေးငွေယူ မရှိသေးပါ။ ငွေပေးငွေယူမပါဘဲ ပြေစာကိုသိမ်းဆည်းနိုင်သည်။"
           }
         },
         "nb": {
@@ -18326,7 +18326,7 @@
         "hu": {
           "stringUnit": {
             "state": "translated",
-            "value": "Válasszon másik tranzakciót, vagy mentse a nyugtát anélkül."
+            "value": "Válassz másik tranzakciót, vagy mentsd a nyugtát anélkül."
           }
         },
         "hy": {
@@ -18344,7 +18344,7 @@
         "is": {
           "stringUnit": {
             "state": "translated",
-            "value": "Veldu önnur viðskipti eða vistaðu kvittunina án þeirra."
+            "value": "Veldu aðra færslu eða vistaðu kvittunina án hennar."
           }
         },
         "it": {
@@ -18386,7 +18386,7 @@
         "my": {
           "stringUnit": {
             "state": "translated",
-            "value": "အခြားလုပ်ငန်းတစ်ခုကို ရွေးချယ်ပါ သို့မဟုတ် ထိုလုပ်ငန်းမပါဘဲ ပြေစာကိုသိမ်းဆည်းပါ။"
+            "value": "အခြားငွေပေးငွေယူတစ်ခုကို ရွေးချယ်ပါ သို့မဟုတ် ငွေပေးငွေယူမပါဘဲ ပြေစာကိုသိမ်းဆည်းပါ။"
           }
         },
         "nb": {
@@ -20714,7 +20714,7 @@
         "ga": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tá téacs na admhála rófhada"
+            "value": "Tá téacs na hadmhála rófhada"
           }
         },
         "he": {
@@ -21656,7 +21656,7 @@
         "sr-Latn": {
           "stringUnit": {
             "state": "translated",
-            "value": "Povrat"
+            "value": "Povraćaj novca"
           }
         },
         "sv": {
@@ -22882,7 +22882,7 @@
         "hu": {
           "stringUnit": {
             "state": "translated",
-            "value": "Szkennelje be újra a nyugtát a megfelelő tranzakciók frissítéséhez."
+            "value": "Szkenneld be újra a nyugtát a megfelelő tranzakciók frissítéséhez."
           }
         },
         "hy": {
@@ -22900,7 +22900,7 @@
         "is": {
           "stringUnit": {
             "state": "translated",
-            "value": "Skannaðu kvittunina aftur til að endurnýja samsvarandi viðskipti."
+            "value": "Skannaðu kvittunina aftur til að endurnýja samsvarandi færslur."
           }
         },
         "it": {
@@ -22942,7 +22942,7 @@
         "my": {
           "stringUnit": {
             "state": "translated",
-            "value": "ကိုက်ညီသော ဘဏ်လုပ်ငန်းများကိုစ်ပြန်ရယူရန် ပြေစာကို ထပ်စကင်န်ဖတ်ပါ။"
+            "value": "ကိုက်ညီသော ငွေပေးငွေယူများကို ပြန်လည်ရယူရန် ပြေစာကို ထပ်စကင်န်ဖတ်ပါ။"
           }
         },
         "nb": {
@@ -23072,7 +23072,7 @@
         "cs": {
           "stringUnit": {
             "state": "translated",
-            "value": "Chceš-li začít od aktuální verze, naskenuj účtenku znovu."
+            "value": "Chcete-li začít od aktuální verze, naskenujte účtenku znovu."
           }
         },
         "da": {
@@ -23084,25 +23084,25 @@
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Scanne den Kassenbon erneut, um mit der aktuellen Version zu beginnen."
+            "value": "Scanne den Beleg erneut, um mit der aktuellen Version zu beginnen."
           }
         },
         "el": {
           "stringUnit": {
             "state": "translated",
-            "value": "Σάρωσε ξανά την απόδειξη για να ξεκινήσεις από την τρέχουσα έκδοση."
+            "value": "Σαρώστε ξανά την απόδειξη για να ξεκινήσετε από την τρέχουσα έκδοση."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Escanea el recibo otra vez para empezar desde la versión actual."
+            "value": "Escanea el ticket otra vez para empezar desde la versión actual."
           }
         },
         "fa": {
           "stringUnit": {
             "state": "translated",
-            "value": "برای شروع از نسخهٔ فعلی، رسید را دوباره اسکن کن."
+            "value": "برای شروع از نسخهٔ فعلی، رسید را دوباره اسکن کنید."
           }
         },
         "fi": {
@@ -23120,7 +23120,7 @@
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Scanne le reçu à nouveau pour repartir de la version actuelle."
+            "value": "Scannez le ticket à nouveau pour repartir de la version actuelle."
           }
         },
         "ga": {
@@ -23150,7 +23150,7 @@
         "hu": {
           "stringUnit": {
             "state": "translated",
-            "value": "Az aktuális verzióról való induláshoz olvasd be újra a blokkot."
+            "value": "Az aktuális verzióról való induláshoz olvasd be újra a nyugtát."
           }
         },
         "hy": {
@@ -23198,7 +23198,7 @@
         "lv": {
           "stringUnit": {
             "state": "translated",
-            "value": "Lai sāktu no pašreizējās versijas, vēlreiz skenējiet kvīti."
+            "value": "Lai sāktu no pašreizējās versijas, vēlreiz skenējiet čeku."
           }
         },
         "ms": {
@@ -23252,7 +23252,7 @@
         "sk": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ak chceš začať od aktuálnej verzie, znova naskenuj účtenku."
+            "value": "Ak chcete začať od aktuálnej verzie, znova naskenujte účtenku."
           }
         },
         "sq": {
@@ -23288,7 +23288,7 @@
         "tr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Geçerli sürümden başlamak için fişi yeniden tara."
+            "value": "Geçerli sürümden başlamak için fişi yeniden tarayın."
           }
         },
         "uk": {
@@ -23306,7 +23306,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "重新扫描小票，从当前版本开始。"
+            "value": "重新扫描收据，从当前版本开始。"
           }
         },
         "zh-Hant": {
@@ -26020,7 +26020,7 @@
         "cs": {
           "stringUnit": {
             "state": "translated",
-            "value": "Změnil se obchod nebo NIP, takže nalezené shody už neplatí. Ulož bez propojení, nebo se vrať a text znovu načti."
+            "value": "Změnil se obchod nebo NIP, takže nalezené shody už neplatí. Uložte bez propojení, nebo se vraťte a text znovu načtěte."
           }
         },
         "da": {
@@ -26038,7 +26038,7 @@
         "el": {
           "stringUnit": {
             "state": "translated",
-            "value": "Το κατάστημα ή το NIP άλλαξε, επομένως αυτές οι αντιστοιχίσεις δεν ισχύουν πλέον. Αποθήκευσε χωρίς σύνδεση ή γύρνα πίσω και διάβασε ξανά το κείμενο."
+            "value": "Το κατάστημα ή το NIP άλλαξε, επομένως αυτές οι αντιστοιχίσεις δεν ισχύουν πλέον. Αποθηκεύστε χωρίς σύνδεση ή επιστρέψτε και διαβάστε ξανά το κείμενο."
           }
         },
         "es": {
@@ -26050,7 +26050,7 @@
         "fa": {
           "stringUnit": {
             "state": "translated",
-            "value": "فروشگاه یا NIP تغییر کرده است، بنابراین این تطبیق‌ها دیگر معتبر نیستند. بدون پیوند ذخیره کن یا برگرد و متن را دوباره بخوان."
+            "value": "فروشگاه یا NIP تغییر کرده است، بنابراین این تطبیق‌ها دیگر معتبر نیستند. بدون پیوند ذخیره کنید یا برگردید و متن را دوباره بخوانید."
           }
         },
         "fi": {
@@ -26068,7 +26068,7 @@
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Le magasin ou le NIP a changé : ces correspondances ne sont donc plus valables. Enregistre sans lien ou reviens en arrière pour relire le texte."
+            "value": "Le magasin ou le NIP a changé : ces correspondances ne sont donc plus valables. Enregistrez sans lien ou revenez en arrière pour relire le texte."
           }
         },
         "ga": {
@@ -26200,7 +26200,7 @@
         "sk": {
           "stringUnit": {
             "state": "translated",
-            "value": "Obchod alebo NIP sa zmenil, takže tieto zhody už neplatia. Ulož bez prepojenia alebo sa vráť a znovu načítaj text."
+            "value": "Obchod alebo NIP sa zmenil, takže tieto zhody už neplatia. Uložte bez prepojenia alebo sa vráťte a znovu načítajte text."
           }
         },
         "sq": {
@@ -26224,7 +26224,7 @@
         "sw": {
           "stringUnit": {
             "state": "translated",
-            "value": "Duka au NIP vimebadilika, hivyo vipengee vilivyooana havitumiki tena. Hifadhi bila kiungo, au rudi nyuma na usome maandishi tena."
+            "value": "Duka au NIP vimebadilika, hivyo miamala hii inayolingana haitumiki tena. Hifadhi bila kiungo, au rudi nyuma na usome maandishi tena."
           }
         },
         "th": {
@@ -26236,7 +26236,7 @@
         "tr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mağaza veya NIP değiştiği için bu eşleşmeler artık geçerli değil. Bağlantı olmadan kaydet veya geri dönüp metni yeniden oku."
+            "value": "Mağaza veya NIP değiştiği için bu eşleşmeler artık geçerli değil. Bağlantı olmadan kaydedin veya geri dönüp metni yeniden okuyun."
           }
         },
         "uk": {
@@ -27628,7 +27628,7 @@
         "cs": {
           "stringUnit": {
             "state": "translated",
-            "value": "Částky některých položek nesedí. Vrať se a oprav text."
+            "value": "Částky některých položek nesedí. Vraťte se a opravte text."
           }
         },
         "da": {
@@ -27646,7 +27646,7 @@
         "el": {
           "stringUnit": {
             "state": "translated",
-            "value": "Τα ποσά ορισμένων ειδών δεν βγαίνουν. Γύρνα πίσω και διόρθωσε το κείμενο."
+            "value": "Τα ποσά ορισμένων ειδών δεν βγαίνουν. Επιστρέψτε και διορθώστε το κείμενο."
           }
         },
         "es": {
@@ -27658,7 +27658,7 @@
         "fa": {
           "stringUnit": {
             "state": "translated",
-            "value": "مبلغ برخی اقلام درست جمع نمی‌شود. برگرد و متن را اصلاح کن."
+            "value": "مبلغ برخی اقلام درست جمع نمی‌شود. برگردید و متن را اصلاح کنید."
           }
         },
         "fi": {
@@ -27676,7 +27676,7 @@
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Les montants de certains articles ne concordent pas. Reviens en arrière et corrige le texte."
+            "value": "Les montants de certains articles ne concordent pas. Revenez en arrière et corrigez le texte."
           }
         },
         "ga": {
@@ -27808,7 +27808,7 @@
         "sk": {
           "stringUnit": {
             "state": "translated",
-            "value": "Sumy niektorých položiek nesedia. Vráť sa a oprav text."
+            "value": "Sumy niektorých položiek nesedia. Vráťte sa a opravte text."
           }
         },
         "sq": {
@@ -27844,7 +27844,7 @@
         "tr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Bazı ürünlerin tutarları toplamla uyuşmuyor. Geri dön ve metni düzelt."
+            "value": "Bazı ürünlerin tutarları toplamla uyuşmuyor. Geri dönün ve metni düzeltin."
           }
         },
         "uk": {
@@ -29236,7 +29236,7 @@
         "cs": {
           "stringUnit": {
             "state": "translated",
-            "value": "Text se čte přímo v tomto iPhonu. Na tvůj server se odesílá pouze text bez čísel karet. Fotka se neukládá ani nenahrává."
+            "value": "Text se čte přímo v tomto iPhonu. Na váš server se odesílá pouze text bez čísel karet. Fotka se neukládá ani nenahrává."
           }
         },
         "da": {
@@ -29254,7 +29254,7 @@
         "el": {
           "stringUnit": {
             "state": "translated",
-            "value": "Το κείμενο διαβάζεται σε αυτό το iPhone. Στον διακομιστή σου αποστέλλεται μόνο το κείμενο, χωρίς τους αριθμούς καρτών. Η φωτογραφία δεν αποθηκεύεται ούτε μεταφορτώνεται."
+            "value": "Το κείμενο διαβάζεται σε αυτό το iPhone. Στον διακομιστή σας αποστέλλεται μόνο το κείμενο, χωρίς τους αριθμούς καρτών. Η φωτογραφία δεν αποθηκεύεται ούτε μεταφορτώνεται."
           }
         },
         "es": {
@@ -29266,7 +29266,7 @@
         "fa": {
           "stringUnit": {
             "state": "translated",
-            "value": "متن روی همین iPhone خوانده می‌شود. فقط متن، بدون شماره کارت‌ها، به سرور تو ارسال می‌شود. عکس ذخیره یا بارگذاری نمی‌شود."
+            "value": "متن روی همین iPhone خوانده می‌شود. فقط متن، بدون شماره کارت‌ها، به سرور شما ارسال می‌شود. عکس ذخیره یا بارگذاری نمی‌شود."
           }
         },
         "fi": {
@@ -29284,7 +29284,7 @@
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Le texte est lu sur cet iPhone. Seul le texte est envoyé à ton serveur, sans les numéros de carte. La photo n’est ni enregistrée ni téléversée."
+            "value": "Le texte est lu sur cet iPhone. Seul le texte est envoyé à votre serveur, sans les numéros de carte. La photo n’est ni enregistrée ni téléversée."
           }
         },
         "ga": {
@@ -29320,19 +29320,19 @@
         "hy": {
           "stringUnit": {
             "state": "translated",
-            "value": "Տեքստը կարդացվում է այս iPhone-ում։ Քո սերվեր է ուղարկվում միայն տեքստը՝ առանց քարտերի համարների։ Լուսանկարը չի պահպանվում և չի վերբեռնվում։"
+            "value": "Տեքստը կարդացվում է այս iPhone-ում։ Ձեր սերվեր է ուղարկվում միայն տեքստը՝ առանց քարտերի համարների։ Լուսանկարը չի պահպանվում և չի վերբեռնվում։"
           }
         },
         "id": {
           "stringUnit": {
             "state": "translated",
-            "value": "Teks dibaca di iPhone ini. Hanya teks yang dikirim ke server kamu, dengan nomor kartu dihapus. Foto tidak disimpan atau diunggah."
+            "value": "Teks dibaca di iPhone ini. Hanya teks yang dikirim ke server Anda, dengan nomor kartu dihapus. Foto tidak disimpan atau diunggah."
           }
         },
         "is": {
           "stringUnit": {
             "state": "translated",
-            "value": "Textinn er lesinn á þessum iPhone. Aðeins textinn er sendur á þjóninn þinn, með kortanúmerum fjarlægðum. Myndin er hvorki vistuð né hlaðið upp."
+            "value": "Textinn er lesinn á þessum iPhone. Aðeins textinn er sendur á þjóninn þinn, með kortanúmerum fjarlægðum. Myndin er ekki vistuð og henni er ekki hlaðið upp."
           }
         },
         "it": {
@@ -29416,7 +29416,7 @@
         "sk": {
           "stringUnit": {
             "state": "translated",
-            "value": "Text sa číta v tomto iPhone. Na tvoj server sa odošle len text bez čísel kariet. Fotka sa neukladá ani nenahráva."
+            "value": "Text sa číta v tomto iPhone. Na váš server sa odošle len text bez čísel kariet. Fotka sa neukladá ani nenahráva."
           }
         },
         "sq": {
@@ -29504,7 +29504,7 @@
         "cs": {
           "stringUnit": {
             "state": "translated",
-            "value": "Účtenka je pro server příliš velká. Zkrať text a načti ho znovu."
+            "value": "Účtenka je pro server příliš velká. Zkraťte text a načtěte ho znovu."
           }
         },
         "da": {
@@ -29516,25 +29516,25 @@
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Der Kassenbon ist zu groß für den Server. Kürze den Text und lies ihn erneut."
+            "value": "Der Beleg ist zu groß für den Server. Kürze den Text und lies ihn erneut."
           }
         },
         "el": {
           "stringUnit": {
             "state": "translated",
-            "value": "Η απόδειξη είναι πολύ μεγάλη για τον διακομιστή. Περίκοψε το κείμενο και διάβασέ το ξανά."
+            "value": "Η απόδειξη είναι πολύ μεγάλη για τον διακομιστή. Συντομεύστε το κείμενο και διαβάστε το ξανά."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "El recibo es demasiado grande para el servidor. Acorta el texto y léelo de nuevo."
+            "value": "El ticket es demasiado grande para el servidor. Acorta el texto y léelo de nuevo."
           }
         },
         "fa": {
           "stringUnit": {
             "state": "translated",
-            "value": "رسید برای سرور بیش از حد بزرگ است. متن را کوتاه کن و دوباره بخوان."
+            "value": "رسید برای سرور بیش از حد بزرگ است. متن را کوتاه کنید و دوباره بخوانید."
           }
         },
         "fi": {
@@ -29552,7 +29552,7 @@
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Le reçu est trop volumineux pour le serveur. Raccourcis le texte et relis-le."
+            "value": "Le ticket est trop volumineux pour le serveur. Raccourcissez le texte et relisez-le."
           }
         },
         "ga": {
@@ -29582,7 +29582,7 @@
         "hu": {
           "stringUnit": {
             "state": "translated",
-            "value": "A blokk túl nagy a szerver számára. Rövidítsd a szöveget, és olvasd be újra."
+            "value": "A nyugta túl nagy a szerver számára. Rövidítsd a szöveget, és olvasd be újra."
           }
         },
         "hy": {
@@ -29630,7 +29630,7 @@
         "lv": {
           "stringUnit": {
             "state": "translated",
-            "value": "Kvīts ir pārāk liels serverim. Saīsiniet tekstu un nolasiet to vēlreiz."
+            "value": "Čeks ir pārāk liels serverim. Saīsiniet tekstu un nolasiet to vēlreiz."
           }
         },
         "ms": {
@@ -29684,7 +29684,7 @@
         "sk": {
           "stringUnit": {
             "state": "translated",
-            "value": "Účtenka je pre server príliš veľká. Skráť text a znovu ho načítaj."
+            "value": "Účtenka je pre server príliš veľká. Skráťte text a znovu ho načítajte."
           }
         },
         "sq": {
@@ -29720,7 +29720,7 @@
         "tr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Fiş sunucu için çok büyük. Metni kısalt ve yeniden oku."
+            "value": "Fiş sunucu için çok büyük. Metni kısaltın ve yeniden okuyun."
           }
         },
         "uk": {
@@ -29738,7 +29738,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "小票过大，服务器无法处理。请缩短文本后重新识别。"
+            "value": "收据过大，服务器无法处理。请缩短文本后重新识别。"
           }
         },
         "zh-Hant": {
@@ -29784,7 +29784,7 @@
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Der Server konnte diesen Kassenbon nicht akzeptieren."
+            "value": "Der Server konnte diesen Beleg nicht akzeptieren."
           }
         },
         "el": {
@@ -29796,7 +29796,7 @@
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "El servidor no pudo aceptar este recibo."
+            "value": "El servidor no pudo aceptar este ticket."
           }
         },
         "fa": {
@@ -29820,7 +29820,7 @@
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Le serveur n’a pas pu accepter ce reçu."
+            "value": "Le serveur n’a pas pu accepter ce ticket."
           }
         },
         "ga": {
@@ -29850,7 +29850,7 @@
         "hu": {
           "stringUnit": {
             "state": "translated",
-            "value": "A szerver nem tudta elfogadni ezt a blokkot."
+            "value": "A szerver nem tudta elfogadni ezt a nyugtát."
           }
         },
         "hy": {
@@ -29898,7 +29898,7 @@
         "lv": {
           "stringUnit": {
             "state": "translated",
-            "value": "Serveris nevarēja pieņemt šo kvīti."
+            "value": "Serveris nevarēja pieņemt šo čeku."
           }
         },
         "ms": {
@@ -30006,7 +30006,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "服务器无法接受这张小票。"
+            "value": "服务器无法接受这张收据。"
           }
         },
         "zh-Hant": {
@@ -30052,7 +30052,7 @@
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Der Besitzer des Servers hat Kassenbons noch nicht aktiviert."
+            "value": "Der Besitzer des Servers hat Belege noch nicht aktiviert."
           }
         },
         "el": {
@@ -30064,7 +30064,7 @@
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "El propietario del servidor aún no ha activado los recibos."
+            "value": "El propietario del servidor aún no ha activado los tickets."
           }
         },
         "fa": {
@@ -30088,7 +30088,7 @@
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Le propriétaire du serveur n’a pas encore activé les reçus."
+            "value": "Le propriétaire du serveur n’a pas encore activé les tickets."
           }
         },
         "ga": {
@@ -30118,7 +30118,7 @@
         "hu": {
           "stringUnit": {
             "state": "translated",
-            "value": "A szerver tulajdonosa még nem engedélyezte a blokkokat."
+            "value": "A szerver tulajdonosa még nem engedélyezte a nyugtákat."
           }
         },
         "hy": {
@@ -30166,7 +30166,7 @@
         "lv": {
           "stringUnit": {
             "state": "translated",
-            "value": "Servera īpašnieks vēl nav iespējojis kvītis."
+            "value": "Servera īpašnieks vēl nav iespējojis čekus."
           }
         },
         "ms": {
@@ -30274,7 +30274,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "服务器所有者尚未启用小票功能。"
+            "value": "服务器所有者尚未启用收据功能。"
           }
         },
         "zh-Hant": {
@@ -31648,7 +31648,7 @@
         "cs": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tento iPhone zatím neumí číst polské znaky — zkontroluj ą, ę, ł, ż v názvech produktů."
+            "value": "Tento iPhone zatím neumí číst polské znaky — zkontrolujte ą, ę, ł, ż v názvech produktů."
           }
         },
         "da": {
@@ -31666,7 +31666,7 @@
         "el": {
           "stringUnit": {
             "state": "translated",
-            "value": "Αυτό το iPhone δεν μπορεί ακόμη να διαβάσει πολωνικούς χαρακτήρες — έλεγξε τα ą, ę, ł, ż στα ονόματα προϊόντων."
+            "value": "Αυτό το iPhone δεν μπορεί ακόμη να διαβάσει πολωνικούς χαρακτήρες — ελέγξτε τα ą, ę, ł, ż στα ονόματα προϊόντων."
           }
         },
         "es": {
@@ -31678,7 +31678,7 @@
         "fa": {
           "stringUnit": {
             "state": "translated",
-            "value": "این iPhone هنوز نمی‌تواند نویسه‌های لهستانی را بخواند — ą, ę, ł, ż را در نام محصولات بررسی کن."
+            "value": "این iPhone هنوز نمی‌تواند نویسه‌های لهستانی را بخواند — ą, ę, ł, ż را در نام محصولات بررسی کنید."
           }
         },
         "fi": {
@@ -31696,7 +31696,7 @@
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Cet iPhone ne sait pas encore lire les caractères polonais — vérifie ą, ę, ł, ż dans les noms des produits."
+            "value": "Cet iPhone ne sait pas encore lire les caractères polonais — vérifiez ą, ę, ł, ż dans les noms des produits."
           }
         },
         "ga": {
@@ -31828,7 +31828,7 @@
         "sk": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tento iPhone zatiaľ nevie čítať poľské znaky — skontroluj ą, ę, ł, ż v názvoch produktov."
+            "value": "Tento iPhone zatiaľ nevie čítať poľské znaky — skontrolujte ą, ę, ł, ż v názvoch produktov."
           }
         },
         "sq": {
@@ -31864,7 +31864,7 @@
         "tr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Bu iPhone henüz Lehçe karakterleri okuyamıyor — ürün adlarındaki ą, ę, ł, ż karakterlerini kontrol et."
+            "value": "Bu iPhone henüz Lehçe karakterleri okuyamıyor — ürün adlarındaki ą, ę, ł, ż karakterlerini kontrol edin."
           }
         },
         "uk": {
@@ -32178,7 +32178,7 @@
         "bs": {
           "stringUnit": {
             "state": "translated",
-            "value": "Previše otvorenih skica"
+            "value": "Previše otvorenih nacrta"
           }
         },
         "cs": {
@@ -32262,7 +32262,7 @@
         "hu": {
           "stringUnit": {
             "state": "translated",
-            "value": "Túl sok nyitott vázlat"
+            "value": "Túl sok nyitott piszkozat"
           }
         },
         "hy": {
@@ -32376,7 +32376,7 @@
         "sr-Latn": {
           "stringUnit": {
             "state": "translated",
-            "value": "Previše otvorenih skica"
+            "value": "Previše otvorenih nacrta"
           }
         },
         "sv": {
@@ -33000,7 +33000,7 @@
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Die Transaktion hat bereits einen Kassenbon"
+            "value": "Die Transaktion hat bereits einen Beleg"
           }
         },
         "el": {
@@ -33012,7 +33012,7 @@
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "La transacción ya tiene un recibo"
+            "value": "La transacción ya tiene un ticket"
           }
         },
         "fa": {
@@ -33036,7 +33036,7 @@
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "La transaction a déjà un reçu"
+            "value": "La transaction a déjà un ticket"
           }
         },
         "ga": {
@@ -33066,7 +33066,7 @@
         "hu": {
           "stringUnit": {
             "state": "translated",
-            "value": "A tranzakcióhoz már tartozik blokk"
+            "value": "A tranzakcióhoz már tartozik nyugta"
           }
         },
         "hy": {
@@ -33114,7 +33114,7 @@
         "lv": {
           "stringUnit": {
             "state": "translated",
-            "value": "Darījumam jau ir kvīts"
+            "value": "Darījumam jau ir čeks"
           }
         },
         "ms": {
@@ -33126,7 +33126,7 @@
         "my": {
           "stringUnit": {
             "state": "translated",
-            "value": "ဤငွေလဲလှယ်မှုတွင် ပြေစာရှိပြီးသားဖြစ်သည်"
+            "value": "ဤငွေပေးငွေယူတွင် ပြေစာရှိပြီးသားဖြစ်သည်"
           }
         },
         "nb": {
@@ -33162,7 +33162,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "У этой транзакции уже есть чек"
+            "value": "У этой операции уже есть чек"
           }
         },
         "sk": {
@@ -33210,7 +33210,7 @@
         "uk": {
           "stringUnit": {
             "state": "translated",
-            "value": "До цієї транзакції вже додано чек"
+            "value": "До цієї операції вже додано чек"
           }
         },
         "vi": {
@@ -33222,7 +33222,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "该交易已有小票"
+            "value": "该交易已有收据"
           }
         },
         "zh-Hant": {
