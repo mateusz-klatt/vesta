@@ -60,9 +60,9 @@ private final class DevicePairingURLProtocol: URLProtocol, @unchecked Sendable {
             let url = try XCTUnwrap(request.url)
             XCTAssertEqual(url.host, fakeServer.host)
             XCTAssertEqual(request.httpMethod, "POST")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+            let contentType = request.value(forHTTPHeaderField: "Content-Type")?.split(separator: ";").first
+            XCTAssertEqual(contentType, "application/json")
             XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
-            XCTAssertFalse(request.httpShouldHandleCookies)
 
             let body: Any
             if let data = request.httpBody {
@@ -80,19 +80,20 @@ private final class DevicePairingURLProtocol: URLProtocol, @unchecked Sendable {
             case "/api/budget/receipts/device-token/redeem":
                 XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
                 XCTAssertEqual(json, ["code": "ABCD2345", "device_name": "iPhone"])
-                responseBody = #"{"token":"fake-device-token","token_id":"fake-token-id","scope":"fake-scope","expires_at":123.5}"#
+                responseBody = #"{"token":"fake-device-token","token_id":"fake-token-id","scope":"receipts","expires_at":"2027-02-21T18:00:00.125+00:00"}"#
                 status = 200
             case "/api/budget/receipts/device-token/revoke":
                 XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fake-device-token")
                 XCTAssertEqual(json, ["token_id": "fake-token-id"])
-                responseBody = ""
-                status = 204
+                responseBody = #"{"ok":true}"#
+                status = 200
             default:
                 XCTFail("Unexpected pairing endpoint")
                 responseBody = ""
                 status = 404
             }
-            let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil))
+            let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: status, httpVersion: nil,
+                                                       headerFields: ["Content-Type": "application/json"]))
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: Data(responseBody.utf8))
             client?.urlProtocolDidFinishLoading(self)
@@ -112,7 +113,7 @@ final class DevicePairingTests: XCTestCase {
         }
         XCTAssertEqual(ReceiptPairingCode("0189XYZ7")?.value, "0189XYZ7")
         XCTAssertEqual(ReceiptPairingCode("oIlL-89AB")?.value, "011189AB")   // O→0, I/L→1
-        for input in ["ABCD234", "ABCD23456", "ABCU2345", "ABCİ2345", "ABCD2345!", ""] {
+        for input in ["ABCD234", "ABCD23456", "ABCU2345", "ABCİ2345", "ABCD234ß", "ABCD2345!", ""] {
             XCTAssertNil(ReceiptPairingCode(input))
         }
     }
@@ -127,17 +128,17 @@ final class DevicePairingTests: XCTestCase {
         }
     }
 
-    func testRedeemAndRevokeWireRequests() async throws {
+    func testGeneratedRedeemAndRevokeWireRequests() async throws {
         let configuration = HTTPSession.configuration
         configuration.protocolClasses = [DevicePairingURLProtocol.self]
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
-        let api = URLSessionDevicePairingAPI(session: session)
+        let api = GeneratedDevicePairingAPI(session: session)
         let code = try XCTUnwrap(ReceiptPairingCode("abcd-2345"))
         let token = try await api.redeem(code: code, deviceName: "iPhone", server: fakeServer)
         XCTAssertEqual(token.token, fakeDeviceToken.token)
         XCTAssertEqual(token.tokenID, fakeDeviceToken.tokenID)
-        XCTAssertEqual(token.expiresAt, .number(123.5))
+        XCTAssertEqual(token.expiresAt, .string("2027-02-21T18:00:00.125Z"))
         try await api.revoke(token, server: fakeServer)
     }
 

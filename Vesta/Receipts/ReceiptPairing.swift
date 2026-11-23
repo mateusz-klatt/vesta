@@ -16,7 +16,7 @@ final class ReceiptPairing {
     private let serverURL: @MainActor () -> URL
     private var pairingCancelled = false
 
-    init(api: any DevicePairingAPI = URLSessionDevicePairingAPI(),
+    init(api: any DevicePairingAPI = GeneratedDevicePairingAPI(),
          store: any DeviceTokenStoring = KeychainDeviceTokenStore(),
          serverURL: @escaping @MainActor () -> URL = { AppConfig.serverURL }) {
         self.api = api

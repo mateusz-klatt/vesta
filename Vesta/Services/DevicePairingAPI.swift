@@ -1,4 +1,6 @@
 import Foundation
+import OpenAPIRuntime
+import OpenAPIURLSession
 
 struct ReceiptPairingCode: Equatable, Sendable {
     let value: String
@@ -8,12 +10,12 @@ struct ReceiptPairingCode: Equatable, Sendable {
     /// dashes dropped, O → 0, I/L → 1; U is rejected.
     init?(_ input: String) {
         let alphabet = Set("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
-        let code = String(input.compactMap { character -> Character? in
+        let code = String(input.uppercased().compactMap { character -> Character? in
             if character.isWhitespace || character == "-" { return nil }
             switch character {
-            case "O", "o": return "0"
-            case "I", "i", "L", "l": return "1"
-            default: return Character(character.uppercased())
+            case "O": return "0"
+            case "I", "L": return "1"
+            default: return character
             }
         })
         guard code.count == 8, code.allSatisfy(alphabet.contains) else { return nil }
@@ -27,7 +29,7 @@ struct ReceiptPairingCode: Equatable, Sendable {
     }
 }
 
-/// The server enforces expiry. Preserve its wire value without assuming a date format.
+/// Keep reading both expiry representations written by earlier Vesta builds.
 enum DeviceTokenExpiry: Codable, Equatable, Sendable {
     case number(Double)
     case string(String)
@@ -75,54 +77,57 @@ enum DevicePairingError: Error {
     }
 }
 
-/// Temporary HTTP client until these endpoints appear in the OpenAPI contract.
-struct URLSessionDevicePairingAPI: DevicePairingAPI {
-    var session: URLSession = HTTPSession.shared
+struct GeneratedDevicePairingAPI: DevicePairingAPI {
+    private static let session: URLSession = {
+        let configuration = HTTPSession.configuration
+        configuration.timeoutIntervalForRequest = 15
+        return URLSession(configuration: configuration, delegate: PairingRedirectDelegate(), delegateQueue: nil)
+    }()
+
+    private let transport: URLSessionTransport
+
+    init(session: URLSession = Self.session) {
+        transport = URLSessionTransport(configuration: .init(session: session, httpBodyProcessingMode: .buffered))
+    }
 
     func redeem(code: ReceiptPairingCode, deviceName: String, server: URL) async throws -> ReceiptDeviceToken {
-        struct Request: Encodable {
-            let code: String
-            let device_name: String
-        }
-        struct Response: Decodable {
-            let token: String
-            let token_id: String
-            let scope: String
-            let expires_at: DeviceTokenExpiry
-        }
-
-        let (data, status) = try await post("redeem", server: server, body: Request(code: code.value, device_name: deviceName))
-        if status != 200 {
-            let code = (try? JSONDecoder().decode(BudgetErrorEnvelope.self, from: data))?.code
-            let error = ReceiptError.from(status: status, code: code)
+        let client = makeClient(server: server)
+        do {
+            let result = try await client.redeemBudgetReceiptDevice(
+                .init(body: .json(.init(code: code.value, deviceName: deviceName)))
+            ).ok.body.json
+            guard !result.token.isEmpty, !result.tokenId.isEmpty else { throw DevicePairingError.redeemFailed }
+            let expiry = result.expiresAt.ISO8601Format(.init(includingFractionalSeconds: true))
+            return ReceiptDeviceToken(token: result.token, tokenID: result.tokenId,
+                                      expiresAt: .string(expiry))
+        } catch {
+            let error = ReceiptError.wrap(error)
             if error == .disabled || error == .ambiguousAuth { throw DevicePairingError.receipts(error) }
-        }
-        guard status == 200, let response = try? JSONDecoder().decode(Response.self, from: data),
-              !response.token.isEmpty, !response.token_id.isEmpty else {
             throw DevicePairingError.redeemFailed
         }
-        return ReceiptDeviceToken(token: response.token, tokenID: response.token_id, expiresAt: response.expires_at)
     }
 
     func revoke(_ token: ReceiptDeviceToken, server: URL) async throws {
-        struct Request: Encodable {
-            let token_id: String
-        }
-        let (_, status) = try await post("revoke", server: server, body: Request(token_id: token.tokenID), bearer: token.token)
-        guard (200..<300).contains(status) else { throw APIError.http(status) }
+        let client = makeClient(server: server, revoking: token)
+        _ = try await client.revokeBudgetReceiptDevice(.init(body: .json(.init(tokenId: token.tokenID)))).ok
     }
 
-    private func post(_ action: String, server: URL, body: some Encodable, bearer: String? = nil) async throws -> (Data, Int) {
-        let url = server.appending(path: "/api/budget/receipts/device-token/\(action)")
-        var request = URLRequest(url: url, timeoutInterval: 15)
-        request.httpMethod = "POST"
-        request.httpShouldHandleCookies = false
-        request.setValue(AppConfig.ContentType.json, forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(body)
-        if let bearer { request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization") }
-        let (data, response) = try await session.data(for: request, delegate: PairingRedirectDelegate())
-        guard let response = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
-        return (data, response.statusCode)
+    private func makeClient(server: URL, revoking token: ReceiptDeviceToken? = nil) -> Client {
+        Client(serverURL: server, configuration: .init(dateTranscoder: PairingDateTranscoder()), transport: transport,
+               middlewares: [BearerAuthMiddleware(token: { nil }, revoking: token)])
+    }
+}
+
+/// Hestia's ISO 8601 timestamp may include fractional seconds.
+private struct PairingDateTranscoder: DateTranscoder {
+    private let fractional = ISO8601DateTranscoder.iso8601WithFractionalSeconds
+    private let wholeSeconds = ISO8601DateTranscoder.iso8601
+
+    func encode(_ date: Date) throws -> String { try fractional.encode(date) }
+
+    func decode(_ value: String) throws -> Date {
+        if let date = try? fractional.decode(value) { return date }
+        return try wholeSeconds.decode(value)
     }
 }
 

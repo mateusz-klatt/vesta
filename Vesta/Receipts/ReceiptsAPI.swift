@@ -6,12 +6,12 @@ typealias ReceiptDetail = Components.Schemas.BudgetReceiptDetail
 typealias ReceiptCandidate = Components.Schemas.BudgetReceiptCandidate
 typealias ReceiptLine = Components.Schemas.BudgetReceiptLine
 typealias ReceiptConfirmRequest = Components.Schemas.BudgetReceiptConfirmRequest
+typealias ReceiptSourceKind = Components.Schemas.BudgetReceiptParseTextRequest.SourceKindPayload
 
-/// hestia receipts v1a (`/api/budget/receipts/*`): Vesta sends only on-device
-/// OCR text, never the photo. Kept apart from ``HestiaAPI`` so the home-control
-/// surface (and its mocks) don't grow with the budget feature.
+/// Vesta submits receipt text from on-device OCR or paste. Kept apart from
+/// ``HestiaAPI`` so the home-control surface stays independent of receipts.
 protocol ReceiptsAPI: Sendable {
-    func parseReceiptText(_ text: String) async throws -> ReceiptParseResult
+    func parseReceiptText(_ text: String, source: ReceiptSourceKind) async throws -> ReceiptParseResult
     func confirmReceipt(_ request: ReceiptConfirmRequest) async throws -> ReceiptDetail
     /// Discard a draft the user abandoned (otherwise it counts against the
     /// 20-draft quota until hestia sweeps it after 48 h).

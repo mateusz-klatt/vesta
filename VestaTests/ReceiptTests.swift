@@ -632,7 +632,7 @@ final class ReceiptsClientTests: XCTestCase {
             XCTAssertEqual(request.path, "/api/budget/receipts/parse-text")
             return (200, body(sampleParseJSON))
         })
-        let result = try await api.parseReceiptText("BIEDRONKA")
+        let result = try await api.parseReceiptText("BIEDRONKA", source: .paste)
         XCTAssertEqual(result.receiptId, sampleReceiptID)
         XCTAssertEqual(result.draft.lines.count, 2)
         XCTAssertEqual(result.draft.totalAmount, "7.98")
@@ -641,17 +641,17 @@ final class ReceiptsClientTests: XCTestCase {
 
     func testParseDisabledMapped() async {
         let api = pairedClient(transport: StubTransport { _ in (404, body(#"{"error":{"code":"budget_receipts_disabled"}}"#)) })
-        await assertReceiptError(try await api.parseReceiptText("x"), .disabled)
+        await assertReceiptError(try await api.parseReceiptText("x", source: .paste), .disabled)
     }
 
     func testParseForbiddenWithEmptyBody() async {
         let api = pairedClient(transport: StubTransport { _ in (403, nil) })
-        await assertReceiptError(try await api.parseReceiptText("x"), .forbidden)
+        await assertReceiptError(try await api.parseReceiptText("x", source: .paste), .forbidden)
     }
 
     func testParseQuotaMapped() async {
         let api = pairedClient(transport: StubTransport { _ in (413, body(#"{"ok":false,"error":"budget_receipt_quota_exceeded"}"#)) })
-        await assertReceiptError(try await api.parseReceiptText("x"), .draftQuota)
+        await assertReceiptError(try await api.parseReceiptText("x", source: .paste), .draftQuota)
     }
 
     func testConfirmWireBodyHasEveryKeyIncludingNulls() async throws {
@@ -692,7 +692,7 @@ final class ReceiptsClientTests: XCTestCase {
         let api = APIClient(transport: transport, receiptPairing: ReceiptPairing(store: store),
                             sessionToken: { "fake-session-token" })
 
-        await assertReceiptError(try await api.parseReceiptText("x"), .ambiguousAuth)
+        await assertReceiptError(try await api.parseReceiptText("x", source: .paste), .ambiguousAuth)
         assertBearer(transport, path: "/api/budget/receipts/parse-text", bearer: "fake-device-token")
 
         let parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: body(sampleParseJSON))
@@ -715,11 +715,55 @@ final class ReceiptsClientTests: XCTestCase {
         XCTAssertNil(transport.last?.request.headerFields[.cookie], file: file, line: line)
     }
 
+    func testAllDeviceAuthorizedOperationIDsUseTheDeviceToken() async throws {
+        let operations = [
+            ("parseBudgetReceiptText", "parse-text"), ("confirmBudgetReceipt", "confirm"),
+            ("deleteBudgetReceipt", "delete"), ("listBudgetReceipts", "list"),
+            ("searchBudgetReceipts", "search"), ("getBudgetReceiptDetail", "detail"),
+            ("getBudgetReceiptImage", "image"), ("revokeBudgetReceiptDevice", "device-token/revoke"),
+        ]
+        let server = AppConfig.serverURL
+        let store = MemoryDeviceTokenStore(.init(server: server, credential: fakeDeviceToken))
+        let middleware = BearerAuthMiddleware(token: { "fake-session-token" }, receiptPairing: ReceiptPairing(store: store))
+
+        for (operation, suffix) in operations {
+            let path = "/api/budget/receipts/\(suffix)"
+            let transport = CapturingTransport(status: 200, body: "{}")
+            let request = HTTPRequest(method: .post, scheme: server.scheme, authority: server.host, path: path)
+            _ = try await middleware.intercept(request, body: nil, baseURL: server, operationID: operation) { request, body, url in
+                try await transport.send(request, body: body, baseURL: url, operationID: operation)
+            }
+            assertBearer(transport, path: path, bearer: fakeDeviceToken.token)
+        }
+    }
+
+    func testRedeemAndOtherBudgetRoutesNeverGetTheLoginBearer() async throws {
+        let server = AppConfig.serverURL
+        let store = MemoryDeviceTokenStore(.init(server: server, credential: fakeDeviceToken))
+        let middleware = BearerAuthMiddleware(token: { "fake-session-token" }, receiptPairing: ReceiptPairing(store: store))
+        let routes = [
+            ("redeemBudgetReceiptDevice", "/api/budget/receipts/device-token/redeem"),
+            ("futureBudgetOperation", "/api/budget/future"),
+        ]
+        for (operation, path) in routes {
+            let transport = CapturingTransport(status: 200, body: "{}")
+            var request = HTTPRequest(method: .post, scheme: server.scheme, authority: server.host, path: path)
+            request.headerFields[.authorization] = "Bearer fake-session-token"
+            request.headerFields[.cookie] = "fake-cookie"
+            _ = try await middleware.intercept(request, body: nil, baseURL: server, operationID: operation) { request, body, url in
+                try await transport.send(request, body: body, baseURL: url, operationID: operation)
+            }
+            let sent = try XCTUnwrap(transport.last?.request)
+            XCTAssertNil(sent.headerFields[.authorization])
+            XCTAssertNil(sent.headerFields[.cookie])
+        }
+    }
+
     func testUnpairedReceiptsNeverFallBackToTheSessionToken() async {
         let transport = CapturingTransport(status: 403, body: "")
         let api = APIClient(transport: transport, receiptPairing: ReceiptPairing(store: MemoryDeviceTokenStore()),
                             sessionToken: { "fake-session-token" })
-        await assertReceiptError(try await api.parseReceiptText("x"), .pairAgain)
+        await assertReceiptError(try await api.parseReceiptText("x", source: .paste), .pairAgain)
         XCTAssertNil(transport.last)
     }
 
@@ -728,7 +772,7 @@ final class ReceiptsClientTests: XCTestCase {
         let pairing = ReceiptPairing(store: store)
         let api = APIClient(transport: CapturingTransport(status: 401, body: #"{"error":{"code":"device_token_expired"}}"#),
                             receiptPairing: pairing)
-        await assertReceiptError(try await api.parseReceiptText("x"), .pairAgain)
+        await assertReceiptError(try await api.parseReceiptText("x", source: .paste), .pairAgain)
         XCTAssertNil(store.load())
         XCTAssertEqual(pairing.status, .pairAgain)
     }
@@ -747,7 +791,7 @@ final class ReceiptsClientTests: XCTestCase {
         let store = MemoryDeviceTokenStore(.init(server: AppConfig.serverURL, credential: fakeDeviceToken))
         let pairing = ReceiptPairing(store: store)
         let api = APIClient(transport: StubTransport { _ in (429, nil) }, receiptPairing: pairing)
-        await assertReceiptError(try await api.parseReceiptText("x"), .rateLimited)
+        await assertReceiptError(try await api.parseReceiptText("x", source: .paste), .rateLimited)
         XCTAssertEqual(pairing.status, .paired)
         XCTAssertNotNil(store.load())
     }
@@ -923,7 +967,7 @@ final class ReceiptFormTests: XCTestCase {
 // MARK: - Flow
 
 actor MockReceiptsAPI: ReceiptsAPI {
-    enum Call: Equatable { case parse(String), confirm(String?), delete(String, Int) }
+    enum Call: Equatable { case parse(String, ReceiptSourceKind = .paste), confirm(String?), delete(String, Int) }
     private(set) var calls: [Call] = []
     private var parseError: ReceiptError?
     private var deleteError: ReceiptError?
@@ -939,8 +983,8 @@ actor MockReceiptsAPI: ReceiptsAPI {
     func holdNextDelete() { holdDelete = true }
     func releaseDelete() { deleteGate?.resume(); deleteGate = nil }
 
-    func parseReceiptText(_ text: String) async throws -> ReceiptParseResult {
-        calls.append(.parse(text))
+    func parseReceiptText(_ text: String, source: ReceiptSourceKind) async throws -> ReceiptParseResult {
+        calls.append(.parse(text, source))
         if holdParse {
             holdParse = false
             await withCheckedContinuation { parseGate = $0 }
@@ -987,6 +1031,31 @@ final class ReceiptFlowTests: XCTestCase {
         await flow.recognize([image()])
         XCTAssertEqual(flow.step, .edit)
         XCTAssertEqual(flow.text, "SKLEP\n[REDACTED]")
+    }
+
+    func testParseWireSourceKindTracksEditedOCRAndPaste() async throws {
+        let transport = CapturingTransport(status: 200, body: sampleParseJSON)
+        let store = MemoryDeviceTokenStore(.init(server: AppConfig.serverURL, credential: fakeDeviceToken))
+        let api = APIClient(transport: transport, receiptPairing: ReceiptPairing(store: store))
+        let recognizer = StubRecognizer(fragments: [
+            TextFragment(text: "OCR text", box: CGRect(x: 0.1, y: 0.2, width: 0.5, height: 0.02)),
+        ])
+        let flow = ReceiptFlow(api: api, recognizer: recognizer, janitor: ReceiptDraftJanitor())
+        await flow.recognize([image()])
+        flow.text = "Edited OCR text"
+        await flow.send()
+        let ocr = try XCTUnwrap(transport.last)
+        XCTAssertEqual(try JSONDecoder().decode([String: String].self, from: ocr.body),
+                       ["text": "Edited OCR text", "source_kind": "local_ocr"])
+        XCTAssertEqual(flow.step, .review)
+
+        let pasteFlow = ReceiptFlow(api: api, janitor: ReceiptDraftJanitor())
+        pasteFlow.useText("Pasted text")
+        await pasteFlow.send()
+        let paste = try XCTUnwrap(transport.last)
+        XCTAssertEqual(try JSONDecoder().decode([String: String].self, from: paste.body),
+                       ["text": "Pasted text", "source_kind": "paste"])
+        XCTAssertEqual(pasteFlow.step, .review)
     }
 
     func testSendThenConfirmHappyPath() async {

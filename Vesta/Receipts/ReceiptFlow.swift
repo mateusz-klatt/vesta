@@ -286,6 +286,7 @@ final class ReceiptFlow {
     private let server: @MainActor () -> String
     private var abandoned = false
     private var captureGeneration = 0
+    private var source: ReceiptSourceKind = .paste
 
     /// `server` names the hestia origin ``api`` currently talks to (it follows
     /// ``AppConfig/serverURL``); queued deletes are scoped to it.
@@ -323,7 +324,7 @@ final class ReceiptFlow {
                 guard isCurrentCapture(generation) else { return }
                 lines += ReceiptLineOrdering.lines(from: fragments)
             }
-            useText(lines.joined(separator: "\n"))
+            useText(lines.joined(separator: "\n"), source: .localOcr)
         } catch {
             guard isCurrentCapture(generation) else { return }
             self.error = .api(.unexpected(error.localizedDescription))
@@ -337,13 +338,14 @@ final class ReceiptFlow {
     /// Text from Live Text / the clipboard, or OCR output. An absurdly large
     /// paste is refused before redaction (which is linear, but no reason to
     /// spend it on something hestia will reject anyway).
-    func useText(_ raw: String) {
+    func useText(_ raw: String, source: ReceiptSourceKind = .paste) {
         captureGeneration += 1
         guard raw.utf8.count <= ReceiptText.maxBytes * 2 else {
             error = .tooLarge
             return
         }
         text = PANRedactor.redact(raw)
+        self.source = source
         error = nil
         step = .edit
     }
@@ -352,6 +354,7 @@ final class ReceiptFlow {
         guard step == .edit, !isBusy, !abandoned else { return }
         captureGeneration += 1
         text = ""
+        source = .paste
         step = .capture
     }
 
@@ -362,10 +365,11 @@ final class ReceiptFlow {
         error = nil
         do {
             let prepared = try ReceiptText.prepare(text)
+            let source = source
             let origin = server()
             await deleteCurrentDraft()      // re-reading replaces any earlier draft
             guard !abandoned else { return } // closed while cleanup ran: send nothing
-            let result = try await api.parseReceiptText(prepared)
+            let result = try await api.parseReceiptText(prepared, source: source)
             if abandoned {                  // the sheet closed while we waited
                 await janitor.enqueue(id: result.receiptId, version: result.version, server: origin)
                 await janitor.drain(using: api, server: server())
