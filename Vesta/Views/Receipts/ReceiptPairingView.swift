@@ -84,7 +84,7 @@ struct ReceiptPairingView: View {
         message = nil
         Task {
             do {
-                try await app.receiptPairing.pair(code: parsed, deviceName: UIDevice.current.model)
+                try await app.receiptPairing.pair(code: parsed, deviceName: ReceiptPairing.deviceName)
                 if app.receiptPairing.status == .paired { dismiss() }
             } catch is CancellationError {
                 dismiss()

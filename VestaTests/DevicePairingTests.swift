@@ -3,6 +3,7 @@ import XCTest
 @testable import Vesta
 
 private let fakeServer = URL(string: "https://hestia.example")!
+private let noEvents: @Sendable () -> AsyncStream<EventStream.Event> = { AsyncStream { $0.finish() } }
 let fakeDeviceToken = ReceiptDeviceToken(token: "fake-device-token", tokenID: "fake-token-id", expiresAt: .string("fake-expiry"))
 
 @MainActor
@@ -29,6 +30,7 @@ final class MemoryDeviceTokenStore: DeviceTokenStoring {
 private actor MockDevicePairingAPI: DevicePairingAPI {
     enum Call: Equatable {
         case redeem(ReceiptPairingCode, String, URL)
+        case login(String, String, String, URL)
         case revoke(ReceiptDeviceToken, URL)
     }
     enum RevokeBehavior: Sendable {
@@ -38,6 +40,7 @@ private actor MockDevicePairingAPI: DevicePairingAPI {
     private(set) var calls: [Call] = []
     private var revokeBehavior: RevokeBehavior
     private var holdRedeem: Bool
+    private var loginError: DevicePairingError?
     private var redeemGate: CheckedContinuation<Void, Never>?
 
     init(failRevoke: Bool = false, holdRedeem: Bool = false) {
@@ -47,6 +50,16 @@ private actor MockDevicePairingAPI: DevicePairingAPI {
 
     func setRevokeBehavior(_ behavior: RevokeBehavior) {
         revokeBehavior = behavior
+    }
+
+    func failLogin(with error: DevicePairingError) {
+        loginError = error
+    }
+
+    func login(username: String, password: String, deviceName: String, server: URL) async throws -> ReceiptDeviceToken {
+        calls.append(.login(username, password, deviceName, server))
+        if let loginError { throw loginError }
+        return fakeDeviceToken
     }
 
     func redeem(code: ReceiptPairingCode, deviceName: String, server: URL) async throws -> ReceiptDeviceToken {
@@ -79,6 +92,7 @@ private actor MockDevicePairingAPI: DevicePairingAPI {
 
 private final class DevicePairingURLProtocol: URLProtocol, @unchecked Sendable {
     static let rateLimitedCode = "23456789"
+    static let rejectedPassword = "fake-wrong-password"
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -114,6 +128,16 @@ private final class DevicePairingURLProtocol: URLProtocol, @unchecked Sendable {
                     headers["Retry-After"] = "60"
                 } else {
                     XCTAssertEqual(json, ["code": "ABCD2345", "device_name": "iPhone"])
+                    responseBody = #"{"token":"fake-device-token","token_id":"fake-token-id","scope":"receipts","expires_at":"2027-02-21T18:00:00.125+00:00"}"#
+                    status = 200
+                }
+            case "/api/budget/receipts/device-token/login":
+                XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+                if json["password"] == Self.rejectedPassword {
+                    responseBody = #"{"ok":false,"error":"device_token_rejected"}"#
+                    status = 401
+                } else {
+                    XCTAssertEqual(json, ["username": "owner", "password": "fake-password", "device_name": "iPhone 1A2B"])
                     responseBody = #"{"token":"fake-device-token","token_id":"fake-token-id","scope":"receipts","expires_at":"2027-02-21T18:00:00.125+00:00"}"#
                     status = 200
                 }
@@ -175,6 +199,119 @@ final class DevicePairingTests: XCTestCase {
         XCTAssertEqual(token.tokenID, fakeDeviceToken.tokenID)
         XCTAssertEqual(token.expiresAt, .string("2027-02-21T18:00:00.125Z"))
         try await api.revoke(token, server: fakeServer)
+    }
+
+    func testGeneratedLoginSendsCredentialsWithoutCookieOrAuthorization() async throws {
+        let configuration = HTTPSession.configuration
+        configuration.protocolClasses = [DevicePairingURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let api = GeneratedDevicePairingAPI(session: session)
+        let token = try await api.login(username: "owner", password: "fake-password",
+                                        deviceName: "iPhone 1A2B", server: fakeServer)
+        XCTAssertEqual(token.token, fakeDeviceToken.token)
+        XCTAssertEqual(token.tokenID, fakeDeviceToken.tokenID)
+        do {
+            _ = try await api.login(username: "owner", password: DevicePairingURLProtocol.rejectedPassword,
+                                    deviceName: "iPhone 1A2B", server: fakeServer)
+            XCTFail("Expected rejected credentials")
+        } catch let error as DevicePairingError {
+            guard case .redeemFailed = error else { return XCTFail("Expected a generic pairing failure") }
+        }
+    }
+
+    func testAdminLoginPairsReceiptsWithTheSameCredentials() async throws {
+        let api = MockDevicePairingAPI()
+        let store = MemoryDeviceTokenStore()
+        let pairing = ReceiptPairing(api: api, store: store, serverURL: { fakeServer })
+        let hestia = MockHestiaAPI()
+        await hestia.setWhoami(role: "admin")
+        let app = AppState(api: hestia, receiptPairing: pairing, events: noEvents)
+
+        await app.login(user: "owner", password: "fake-password")
+
+        let calls = await api.calls
+        XCTAssertEqual(calls, [.login("owner", "fake-password", ReceiptPairing.deviceName, fakeServer)])
+        XCTAssertEqual(pairing.status, .paired)
+        XCTAssertEqual(store.load()?.credential, fakeDeviceToken)
+    }
+
+    func testLoginSkipsAutoPairingForNonAdminsAndPairedDevices() async throws {
+        for (role, stored) in [("operator", nil), ("viewer", nil),
+                               ("admin", StoredReceiptDeviceToken(server: fakeServer, credential: fakeDeviceToken))] {
+            let api = MockDevicePairingAPI()
+            let pairing = ReceiptPairing(api: api, store: MemoryDeviceTokenStore(stored), serverURL: { fakeServer })
+            let hestia = MockHestiaAPI()
+            await hestia.setWhoami(role: role)
+            let app = AppState(api: hestia, receiptPairing: pairing, events: noEvents)
+
+            await app.login(user: "owner", password: "fake-password")
+
+            let calls = await api.calls
+            XCTAssertEqual(calls, [], role)
+        }
+    }
+
+    func testFailedAutoPairingLeavesTheCodeFlow() async throws {
+        for error in [DevicePairingError.redeemFailed, .rateLimited, .receipts(.disabled)] {
+            let api = MockDevicePairingAPI()
+            await api.failLogin(with: error)
+            let store = MemoryDeviceTokenStore()
+            let pairing = ReceiptPairing(api: api, store: store, serverURL: { fakeServer })
+            let hestia = MockHestiaAPI()
+            await hestia.setWhoami(role: "admin")
+            let app = AppState(api: hestia, receiptPairing: pairing, events: noEvents)
+
+            await app.login(user: "owner", password: "fake-password")
+
+            XCTAssertEqual(pairing.status, .notPaired)
+            XCTAssertNil(store.load())
+            let code = try XCTUnwrap(ReceiptPairingCode("ABCD2345"))
+            try await pairing.pair(code: code, deviceName: "iPhone")
+            XCTAssertEqual(pairing.status, .paired)
+        }
+    }
+
+    func testAutoPairingOnlyUsesHTTPSAndTheLoginServer() async throws {
+        let api = MockDevicePairingAPI()
+        let pairing = ReceiptPairing(api: api, store: MemoryDeviceTokenStore(), serverURL: { fakeServer })
+        try await pairing.pair(username: "owner", password: "fake-password", deviceName: "iPhone",
+                               server: URL(string: "https://other.example")!)
+        let http = URL(string: "http://192.168.1.10:8080")!
+        let lan = ReceiptPairing(api: api, store: MemoryDeviceTokenStore(), serverURL: { http })
+        try await lan.pair(username: "owner", password: "fake-password", deviceName: "iPhone", server: http)
+        let calls = await api.calls
+        XCTAssertEqual(calls, [])
+        XCTAssertEqual(pairing.status, .notPaired)
+        XCTAssertEqual(lan.status, .notPaired)
+    }
+
+    func testSignOutDuringLoginStopsAutoPairing() async throws {
+        let api = MockDevicePairingAPI()
+        let pairing = ReceiptPairing(api: api, store: MemoryDeviceTokenStore(), serverURL: { fakeServer })
+        let hestia = MockHestiaAPI()
+        await hestia.setWhoami(role: "admin")
+        await hestia.setHoldLogin()
+        let app = AppState(api: hestia, receiptPairing: pairing, events: noEvents)
+
+        let login = Task { await app.login(user: "owner", password: "fake-password") }
+        while await hestia.calls.isEmpty { await Task.yield() }
+        await app.signOut()
+        await hestia.releaseLogin()
+        await login.value
+
+        let calls = await api.calls
+        XCTAssertEqual(calls, [])
+        XCTAssertEqual(pairing.status, .notPaired)
+        XCTAssertEqual(app.phase, .needsAuth)
+    }
+
+    func testDeviceNameIsStableAndFitsHestiasLimit() {
+        let name = ReceiptPairing.deviceName
+        XCTAssertEqual(name, ReceiptPairing.deviceName)
+        XCTAssertFalse(name.isEmpty)
+        XCTAssertLessThanOrEqual(name.count, 64)
+        XCTAssertTrue(name.unicodeScalars.allSatisfy { $0.isASCII && !CharacterSet.controlCharacters.contains($0) })
     }
 
     func testRateLimitedRedeemAsksTheUserToWait() async throws {

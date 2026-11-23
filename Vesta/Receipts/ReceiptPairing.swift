@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 
 @MainActor
 @Observable
@@ -42,15 +43,44 @@ final class ReceiptPairing {
         return token
     }
 
+    /// hestia rotates the token of an unrevoked device with the same name, so
+    /// the name stays stable for this install and differs between two iPhones.
+    static var deviceName: String {
+        "\(UIDevice.current.model) \(KeychainDeviceTokenStore().deviceNameSuffix().prefix(12))"
+    }
+
+    /// The backend pairing requests go to right now.
+    var server: URL { serverURL() }
+
     func pair(code: ReceiptPairingCode, deviceName: String) async throws {
+        try await issue { api, server in
+            try await api.redeem(code: code, deviceName: deviceName, server: server)
+        }
+    }
+
+    /// Pairs right after an admin login. The password is used for this one
+    /// request and never stored. It only goes over HTTPS, and only to the
+    /// server the login used; otherwise this does nothing.
+    func pair(username: String, password: String, deviceName: String, server expected: URL) async throws {
+        guard expected.scheme == "https" else { return }
+        try await issue(expecting: expected) { api, server in
+            try await api.login(username: username, password: password, deviceName: deviceName, server: server)
+        }
+    }
+
+    private func issue(
+        expecting expected: URL? = nil,
+        _ request: (any DevicePairingAPI, URL) async throws -> ReceiptDeviceToken
+    ) async throws {
         guard !isBusy, status != .paired else { return }
+        let server = serverURL()
+        if let expected, expected != server { return }
         isPairing = true
         pairingCancelled = false
         defer { isPairing = false }
-        let server = serverURL()
         let token: ReceiptDeviceToken
         do {
-            token = try await api.redeem(code: code, deviceName: deviceName, server: server)
+            token = try await request(api, server)
         } catch let error as DevicePairingError {
             throw error
         } catch {

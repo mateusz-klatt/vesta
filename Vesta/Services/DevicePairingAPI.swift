@@ -60,6 +60,7 @@ struct ReceiptDeviceToken: Codable, Equatable, Sendable {
 
 protocol DevicePairingAPI: Sendable {
     func redeem(code: ReceiptPairingCode, deviceName: String, server: URL) async throws -> ReceiptDeviceToken
+    func login(username: String, password: String, deviceName: String, server: URL) async throws -> ReceiptDeviceToken
     func revoke(_ token: ReceiptDeviceToken, server: URL) async throws
 }
 
@@ -94,10 +95,28 @@ struct GeneratedDevicePairingAPI: DevicePairingAPI {
 
     func redeem(code: ReceiptPairingCode, deviceName: String, server: URL) async throws -> ReceiptDeviceToken {
         let client = makeClient(server: server)
-        do {
-            let result = try await client.redeemBudgetReceiptDevice(
+        return try await issue {
+            try await client.redeemBudgetReceiptDevice(
                 .init(body: .json(.init(code: code.value, deviceName: deviceName)))
             ).ok.body.json
+        }
+    }
+
+    /// The password travels in this one request only; nothing here keeps it.
+    func login(username: String, password: String, deviceName: String, server: URL) async throws -> ReceiptDeviceToken {
+        let client = makeClient(server: server)
+        return try await issue {
+            try await client.loginBudgetReceiptDevice(
+                .init(body: .json(.init(deviceName: deviceName, password: password, username: username)))
+            ).ok.body.json
+        }
+    }
+
+    private func issue(
+        _ request: () async throws -> Components.Schemas.BudgetReceiptDeviceRedeemResult
+    ) async throws -> ReceiptDeviceToken {
+        do {
+            let result = try await request()
             guard !result.token.isEmpty, !result.tokenId.isEmpty else { throw DevicePairingError.redeemFailed }
             let expiry = result.expiresAt.ISO8601Format(.init(includingFractionalSeconds: true))
             return ReceiptDeviceToken(token: result.token, tokenID: result.tokenId,
