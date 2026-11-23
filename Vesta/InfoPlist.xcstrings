@@ -1,6 +1,24 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "NSCameraUsageDescription": {
+      "comment": "Purpose shown by iOS when Vesta asks for the camera to scan a receipt.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta uses the camera to scan a receipt. The text is read on your iPhone; the photo is not saved or uploaded."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vesta używa aparatu do skanowania paragonów. Tekst jest odczytywany na Twoim iPhonie; zdjęcie nie jest zapisywane ani wysyłane."
+          }
+        }
+      }
+    },
     "NSLocalNetworkUsageDescription": {
       "comment": "Purpose shown by iOS when Vesta requests access to the local network to connect to the user's own hestia server.",
       "extractionState": "manual",

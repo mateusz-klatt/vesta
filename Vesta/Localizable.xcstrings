@@ -1,6 +1,26 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "0.00": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "0,00"
+          }
+        }
+      }
+    },
+    "Add receipt": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dodaj paragon"
+          }
+        }
+      }
+    },
     "Address": {
       "localizations": {
         "ar": {
@@ -1341,6 +1361,46 @@
         }
       }
     },
+    "BLIK": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "BLIK"
+          }
+        }
+      }
+    },
+    "Back to text": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wróć do tekstu"
+          }
+        }
+      }
+    },
+    "Bank transaction": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transakcja bankowa"
+          }
+        }
+      }
+    },
+    "Bank transaction changed": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transakcja bankowa się zmieniła"
+          }
+        }
+      }
+    },
     "Blinds": {
       "localizations": {
         "ar": {
@@ -1605,6 +1665,36 @@
           "stringUnit": {
             "state": "translated",
             "value": "捲簾"
+          }
+        }
+      }
+    },
+    "Budget unavailable": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Budżet niedostępny"
+          }
+        }
+      }
+    },
+    "Card": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Karta"
+          }
+        }
+      }
+    },
+    "Cash": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gotówka"
           }
         }
       }
@@ -2681,6 +2771,16 @@
         }
       }
     },
+    "Choose a photo": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wybierz zdjęcie"
+          }
+        }
+      }
+    },
     "Closed": {
       "localizations": {
         "ar": {
@@ -2945,6 +3045,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "已關閉"
+          }
+        }
+      }
+    },
+    "Confirm or discard some drafts on the server, then try again.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zatwierdź lub odrzuć część szkiców na serwerze i spróbuj ponownie."
           }
         }
       }
@@ -4289,6 +4399,16 @@
         }
       }
     },
+    "Date": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Data"
+          }
+        }
+      }
+    },
     "Display": {
       "localizations": {
         "ar": {
@@ -4825,6 +4945,16 @@
         }
       }
     },
+    "Don’t link": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nie łącz"
+          }
+        }
+      }
+    },
     "Door": {
       "localizations": {
         "ar": {
@@ -5089,6 +5219,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "門"
+          }
+        }
+      }
+    },
+    "Draft no longer exists": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Szkic już nie istnieje"
+          }
+        }
+      }
+    },
+    "Drafts expire after 48 hours. Scan the receipt again.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Szkice wygasają po 48 godzinach. Zeskanuj paragon ponownie."
           }
         }
       }
@@ -6969,6 +7119,26 @@
         }
       }
     },
+    "Fix anything misread, then send it to your server to read the receipt.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Popraw źle odczytane fragmenty, a potem wyślij tekst na serwer, żeby odczytał paragon."
+          }
+        }
+      }
+    },
+    "Fix the receipt text so the item totals add up to the total, then read it again.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Popraw tekst paragonu tak, żeby kwoty pozycji sumowały się do sumy, i odczytaj go ponownie."
+          }
+        }
+      }
+    },
     "Heat": {
       "localizations": {
         "ar": {
@@ -7501,6 +7671,36 @@
           "stringUnit": {
             "state": "translated",
             "value": "隱藏詳細資訊"
+          }
+        }
+      }
+    },
+    "Items (%lld)": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pozycje (%lld)"
+          }
+        }
+      }
+    },
+    "Items and total differ by %@. Go back and fix the text.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pozycje i suma różnią się o %@. Wróć i popraw tekst."
+          }
+        }
+      }
+    },
+    "Keep it under 500 lines and 32 KB. Remove anything that isn’t part of the receipt.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maksymalnie 500 linii i 32 KB. Usuń wszystko, co nie jest częścią paragonu."
           }
         }
       }
@@ -8845,6 +9045,16 @@
         }
       }
     },
+    "Mixed": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mieszana"
+          }
+        }
+      }
+    },
     "Mode": {
       "localizations": {
         "ar": {
@@ -9649,6 +9859,16 @@
         }
       }
     },
+    "NIP": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "NIP"
+          }
+        }
+      }
+    },
     "No internet connection": {
       "localizations": {
         "ar": {
@@ -9913,6 +10133,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "沒有網際網路連線"
+          }
+        }
+      }
+    },
+    "No matching transaction yet. You can save the receipt without one.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Brak pasującej transakcji. Możesz zapisać paragon bez niej."
           }
         }
       }
@@ -10721,6 +10951,26 @@
         }
       }
     },
+    "Not allowed": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Brak uprawnień"
+          }
+        }
+      }
+    },
+    "Only an admin can add receipts, and the server must allow the app to send them.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paragony może dodawać tylko administrator, a serwer musi pozwalać aplikacji na ich wysyłanie."
+          }
+        }
+      }
+    },
     "Open": {
       "localizations": {
         "ar": {
@@ -11253,6 +11503,46 @@
           "stringUnit": {
             "state": "translated",
             "value": "密碼"
+          }
+        }
+      }
+    },
+    "Paste text": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wklej tekst"
+          }
+        }
+      }
+    },
+    "Payment": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Płatność"
+          }
+        }
+      }
+    },
+    "Pick a different transaction or save the receipt without one.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wybierz inną transakcję albo zapisz paragon bez niej."
+          }
+        }
+      }
+    },
+    "Purchase": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zakup"
           }
         }
       }
@@ -11793,6 +12083,96 @@
         }
       }
     },
+    "Read receipt": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Odczytaj paragon"
+          }
+        }
+      }
+    },
+    "Receipt": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paragon"
+          }
+        }
+      }
+    },
+    "Receipt changed elsewhere": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paragon zmieniono gdzie indziej"
+          }
+        }
+      }
+    },
+    "Receipt rejected": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paragon odrzucony"
+          }
+        }
+      }
+    },
+    "Receipt saved": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paragon zapisany"
+          }
+        }
+      }
+    },
+    "Receipt text is too long": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tekst paragonu jest za długi"
+          }
+        }
+      }
+    },
+    "Receipts are turned off": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paragony są wyłączone"
+          }
+        }
+      }
+    },
+    "Recognised text": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rozpoznany tekst"
+          }
+        }
+      }
+    },
+    "Refund": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zwrot"
+          }
+        }
+      }
+    },
     "Rooms": {
       "localizations": {
         "ar": {
@@ -12325,6 +12705,46 @@
           "stringUnit": {
             "state": "translated",
             "value": "儲存並連線"
+          }
+        }
+      }
+    },
+    "Save receipt": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zapisz paragon"
+          }
+        }
+      }
+    },
+    "Scan receipt": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zeskanuj paragon"
+          }
+        }
+      }
+    },
+    "Scan the receipt again to refresh the matching transactions.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zeskanuj paragon ponownie, żeby odświeżyć pasujące transakcje."
+          }
+        }
+      }
+    },
+    "Scan the receipt again to start from the current version.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zeskanuj paragon ponownie, żeby zacząć od aktualnej wersji."
           }
         }
       }
@@ -14473,6 +14893,16 @@
         }
       }
     },
+    "Shop": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sklep"
+          }
+        }
+      }
+    },
     "Sign in": {
       "localizations": {
         "ar": {
@@ -15813,6 +16243,16 @@
         }
       }
     },
+    "Start over": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zacznij od nowa"
+          }
+        }
+      }
+    },
     "System": {
       "localizations": {
         "ar": {
@@ -16885,6 +17325,36 @@
         }
       }
     },
+    "Text is read on this iPhone. Only the text is sent to your server, with card numbers removed. The photo is not saved or uploaded.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tekst jest odczytywany na tym iPhonie. Na Twój serwer trafia tylko tekst, bez numerów kart. Zdjęcie nie jest zapisywane ani wysyłane."
+          }
+        }
+      }
+    },
+    "The server could not accept this receipt.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Serwer nie mógł przyjąć tego paragonu."
+          }
+        }
+      }
+    },
+    "The server owner has not enabled receipts yet.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Właściciel serwera jeszcze nie włączył paragonów."
+          }
+        }
+      }
+    },
     "The server returned an error (%lld).": {
       "localizations": {
         "ar": {
@@ -17421,6 +17891,16 @@
         }
       }
     },
+    "The server’s budget module is not available right now.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Moduł budżetu na serwerze jest teraz niedostępny."
+          }
+        }
+      }
+    },
     "The server’s certificate could not be verified.": {
       "localizations": {
         "ar": {
@@ -17953,6 +18433,66 @@
           "stringUnit": {
             "state": "translated",
             "value": "恆溫器"
+          }
+        }
+      }
+    },
+    "This iPhone can’t read Polish characters yet — check ą, ę, ł, ż in product names.": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ten iPhone nie rozpoznaje jeszcze polskich znaków — sprawdź ą, ę, ł, ż w nazwach produktów."
+          }
+        }
+      }
+    },
+    "Time (HH:MM)": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Godzina (GG:MM)"
+          }
+        }
+      }
+    },
+    "Too many open drafts": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Za dużo otwartych szkiców"
+          }
+        }
+      }
+    },
+    "Total": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Suma"
+          }
+        }
+      }
+    },
+    "Totals don’t add up": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kwoty się nie sumują"
+          }
+        }
+      }
+    },
+    "Transaction already has a receipt": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transakcja ma już paragon"
           }
         }
       }
@@ -18757,6 +19297,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "開啟"
+          }
+        }
+      }
+    },
+    "Type": {
+      "localizations": {
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rodzaj"
           }
         }
       }

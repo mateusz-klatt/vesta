@@ -169,7 +169,7 @@ private struct ReceiptReviewStep: View {
                 Text("Items (\(flow.form.lines.count))")
             } footer: {
                 if let delta = flow.form.mismatch {
-                    Text("Items add up to \(delta.formatted()) more than the total. Go back and fix the text.")
+                    Text("Items and total differ by \(abs(delta).formatted()). Go back and fix the text.")
                         .foregroundStyle(.red)
                 }
             }
