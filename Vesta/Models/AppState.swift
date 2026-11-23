@@ -143,8 +143,11 @@ final class AppState {
         do {
             _ = try await api.login(user: user, password: password)
             guard generation == sessionGeneration else { return }
-            whoami = try await api.whoami()
+            let identity = try await api.whoami()
+            guard generation == sessionGeneration else { return }
+            whoami = identity
             await loadDiscovery()
+            guard generation == sessionGeneration else { return }
             startEvents()
         } catch {
             phase = .failed(APIError.wrap(error))

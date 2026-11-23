@@ -46,16 +46,7 @@ final class ReceiptPairing {
     /// hestia rotates the token of an unrevoked device with the same name, so
     /// the name stays stable for this install and differs between two iPhones.
     static var deviceName: String {
-        let key = "vesta.receipts.deviceSuffix"
-        let defaults = UserDefaults.standard
-        let suffix: String
-        if let stored = defaults.string(forKey: key), stored.count == 8, stored.allSatisfy(\.isHexDigit) {
-            suffix = stored
-        } else {
-            suffix = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8))
-            defaults.set(suffix, forKey: key)
-        }
-        return "\(UIDevice.current.model) \(suffix)"
+        "\(UIDevice.current.model) \(KeychainDeviceTokenStore().deviceNameSuffix().prefix(12))"
     }
 
     /// The backend pairing requests go to right now.
