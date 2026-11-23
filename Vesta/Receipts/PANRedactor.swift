@@ -7,15 +7,16 @@ import Foundation
 /// Per line:
 /// 0. **Protected spans** — amounts (`45,99`), dates (`2026-11-23`,
 ///    `23.11.2026`), times (`18:04`) and a labelled NIP — are hidden from the
-///    rules below, so masking never eats a total, a date or the shop's NIP.
+///    masked-PAN and terminal fallback rules below.
 /// 1. **Luhn**: any window of 12–19 digits across digit groups (1–2 spaces or a
 ///    dash between groups, OCR look-alikes `O`→0 and `I`/`l`→1) that passes the
-///    Luhn check, anywhere in the text.
+///    Luhn check, including PANs Vision split across adjacent numeric lines.
 /// 2. **Masked PANs** anywhere: `****1234`, `5351********1234`,
 ///    `XXXX XXXX XXXX 1234`, `**** 12 34`.
 /// 3. **Terminal block**: on a line with a card label (`NR KARTY`, `KARTA`,
 ///    `CARD`, `VISA`, `AID`, `ARQC`, …) and the next ``labelWindow`` lines, any
 ///    run of ≥ ``blockMinDigits`` digits and any hex token (AID / ARQC).
+///    Explicit terminal fields also catch short values outside the block.
 enum PANRedactor {
     static let placeholder = "[REDACTED]"
     static let panLength = 12...19
@@ -23,29 +24,36 @@ enum PANRedactor {
     static let blockMinDigits = 8
 
     static func redact(_ text: String) -> String {
-        var lines = text.components(separatedBy: "\n")
+        let lines = text.components(separatedBy: "\n")
+        var wrappedHits: [Int: [NSRange]] = [:]
+        var result: [String] = []
+        result.reserveCapacity(lines.count)
         var windowLeft = 0
         for index in lines.indices {
             let line = lines[index]
-            if hasCardLabel(line) { windowLeft = labelWindow + 1 }
-            lines[index] = redactLine(line, inBlock: windowLeft > 0)
+            let labelled = hasCardLabel(line)
+            if labelled && !isLoyaltyCard(line) { windowLeft = labelWindow + 1 }
+            addWrappedPANHits(in: lines, startingAt: index, afterLabel: labelled, to: &wrappedHits)
+            result.append(redactLine(line, inBlock: windowLeft > 0, wrappedHits: wrappedHits.removeValue(forKey: index) ?? []))
             if windowLeft > 0 { windowLeft -= 1 }
         }
-        return lines.joined(separator: "\n")
+        return result.joined(separator: "\n")
     }
 
     // MARK: - Line pipeline
 
-    private static func redactLine(_ line: String, inBlock: Bool) -> String {
+    private static func redactLine(_ line: String, inBlock: Bool, wrappedHits: [NSRange]) -> String {
         let scan = masked(line, hiding: protectedRanges(in: line))
         // Luhn runs on the ORIGINAL line: a real PAN can contain date- or
         // amount-shaped fragments (`4111-11-11 1111 1111`), and a Luhn-valid
         // 12–19 digit window is strong enough evidence to win over protection.
-        var hits = luhnRanges(in: line) + matches(maskedPAN, in: scan)
+        var hits = luhnRanges(in: line) + wrappedHits + matches(maskedPAN, in: scan)
+        hits += terminalFieldRanges(in: line)
         if inBlock {
             // Amounts are not protected inside a card block: a PAN split by a
             // dot or comma (`NR KARTY: 422222222.2222`) looks like money.
-            hits += blockDigitRanges(in: masked(line, hiding: protectedRanges(in: line, money: false)))
+            let protected = protectedRanges(in: line, money: false) + captureRanges(fiscalReference, in: line)
+            hits += blockDigitRanges(in: masked(line, hiding: protected))
             hits += matches(hexToken, in: scan).filter { range in
                 (scan as NSString).substring(with: range).contains(where: \.isLetter)
             }
@@ -69,7 +77,7 @@ enum PANRedactor {
         try! NSRegularExpression(pattern: #"(?<!\d)(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?!\d)"#),
     ]
     private static let nipPattern = try! NSRegularExpression(
-        pattern: #"(?i)\bNIP\b[\s:.]*((?:\d[\s\-]?){9}\d)"#
+        pattern: #"(?i)\bNIP\b(?:[ \t]+(?:nabywcy|sprzedawcy)\b)?[ \t:.]*((?:\d[ \t-]?){9}\d)(?!-?\d)"#
     )
 
     private static func protectedRanges(in line: String, money: Bool = true) -> [NSRange] {
@@ -101,6 +109,45 @@ enum PANRedactor {
         pattern: #"(?<!\d)[0-9][0-9OoIl]*(?:(?:  ?|-)[0-9OoIl]+)*(?!\d)"#
     )
     private static let group = try! NSRegularExpression(pattern: #"[0-9OoIl]+"#)
+
+    private static let numericBand = try! NSRegularExpression(
+        pattern: #"\A[ \t]*([0-9OoIl]+(?: {1,2}[0-9OoIl]+)*)[ \t\r]*\z"#
+    )
+
+    /// Vision can put the end of a PAN on subsequent numeric-only lines.
+    /// Reuse Luhn across those boundaries and map each hit back to its line.
+    private static func addWrappedPANHits(
+        in lines: [String], startingAt index: Int, afterLabel: Bool, to hits: inout [Int: [NSRange]]
+    ) {
+        guard index + 1 < lines.count, let next = captureRanges(numericBand, in: lines[index + 1]).first else { return }
+        let line = lines[index]
+        guard afterLabel || !captureRanges(numericBand, in: line).isEmpty || !captureRanges(fiscalReference, in: line).isEmpty,
+              let end = line.lastIndex(where: { !$0.isWhitespace }) else { return }
+
+        var joined = String(line[...end])
+        let firstLineLength = joined.utf16.count
+        var bands: [(source: NSRange, joined: NSRange)] = [
+            (NSRange(location: 0, length: firstLineLength), NSRange(location: 0, length: firstLineLength))
+        ]
+        for offset in 1...min(labelWindow, lines.count - index - 1) {
+            let band = lines[index + offset]
+            guard let source = offset == 1 ? next : captureRanges(numericBand, in: band).first else { break }
+            let joinedRange = NSRange(location: joined.utf16.count + 1, length: source.length)
+            joined += " " + (band as NSString).substring(with: source)
+            bands.append((source, joinedRange))
+        }
+
+        for match in luhnRanges(in: joined) where match.location < firstLineLength && NSMaxRange(match) > firstLineLength + 1 {
+            for (offset, band) in bands.enumerated() {
+                let overlap = NSIntersectionRange(match, band.joined)
+                guard overlap.length > 0 else { continue }
+                hits[index + offset, default: []].append(NSRange(
+                    location: band.source.location + overlap.location - band.joined.location,
+                    length: overlap.length
+                ))
+            }
+        }
+    }
 
     private static func luhnRanges(in line: String) -> [NSRange] {
         let ns = line as NSString
@@ -141,9 +188,9 @@ enum PANRedactor {
         return found
     }
 
-    /// Map OCR look-alikes to digits; nil if the group has no real digit (a
-    /// word like `Il` is not a number). One character maps to one digit, so
-    /// offsets inside a group map straight back onto the line.
+    /// Map OCR look-alikes to digits, even when Vision substitutes the entire
+    /// group. Ignore a lone letter such as the Polish receipt unit "l".
+    /// The enclosing run always starts with a real digit.
     private static func ocrDigits(_ token: String) -> [UInt8]? {
         var digits: [UInt8] = []
         var sawDigit = false
@@ -155,7 +202,7 @@ enum PANRedactor {
             default: return nil
             }
         }
-        return sawDigit ? digits : nil
+        return sawDigit || digits.count > 1 ? digits : nil
     }
 
     static func luhnValid(_ digits: String) -> Bool {
@@ -198,8 +245,49 @@ enum PANRedactor {
         pattern: #"(?i)\b(?:NR\s*KARTY|KARTA|KARTY|CARD|VISA|MASTERCARD|MAESTRO|AMEX|PAN|AID|ARQC|TVR|ATC)\b"#
     )
 
+    private static let loyaltyCard = try! NSRegularExpression(
+        pattern: #"(?i)\A\h*(?:KARTA\h+(?:LOJALNOŚCIOWA|MOJA\h+BIEDRONKA)|NR\h+KARTY\h+LOJALNOŚCIOWEJ)\h*:\h*([0-9]{8,19})\h*\r?\z"#
+    )
+
+    /// Short, labelled receipt references may sit beside card fields on the
+    /// printout. The exemption is only for the digit fallback, and only when
+    /// the entire run is shorter than a PAN.
+    private static let fiscalReference = try! NSRegularExpression(
+        pattern: #"(?i)\bNR[ \t]+(?:PARAGONU|TRANSAKCJI)\b[ \t:.]*([0-9]{8,11})(?!\d|(?: {1,2}|[-.,])\d)"#
+    )
+
+    /// Short or alphanumeric values that the generic terminal fallback misses.
+    /// Only the value after an explicit sensitive field name is redacted.
+    private static let terminalField = try! NSRegularExpression(
+        pattern: #"""
+        (?ix)\b(?:
+            (?:AID|ARQC|TVR|TSI|ATC)\b (?:\h*:\h*|\h+) ([A-F0-9]{2,32})
+          | (?:NR\h+TERMINALA|KOD\h+(?:AUTORYZACJI|BLIK))\b
+              (?:\h*:\h*|\h+) ([A-Z0-9]{4,16})
+          | (?:WAŻNA\h+DO|EXP)\b (?:\h*:\h*|\h+) ((?:0[1-9]|1[0-2])[-/.][0-9]{2})
+          | NR\h*KARTY\b (?:\h*:\h*|\h+)
+              ((?:[0-9]{1,6}[\h-]?)?(?:[*xX•\x23][\h-]?){4,}[0-9](?:[\h.,-]?[0-9]){3}|[0-9]{4})
+        )(?=$|\h|\r)
+        """#
+    )
+
+    private static func terminalFieldRanges(in line: String) -> [NSRange] {
+        let range = NSRange(location: 0, length: (line as NSString).length)
+        return terminalField.matches(in: line, range: range).flatMap { match in
+            (1..<match.numberOfRanges).map { match.range(at: $0) }.filter { $0.location != NSNotFound }
+        }
+    }
+
     private static func hasCardLabel(_ line: String) -> Bool {
         cardLabel.firstMatch(in: line, range: NSRange(location: 0, length: (line as NSString).length)) != nil
+    }
+
+    private static func isLoyaltyCard(_ line: String) -> Bool {
+        let ns = line as NSString
+        // A complete, Luhn-invalid loyalty ID does not open a terminal block.
+        // Keep the fallback for values with OCR separators or other ambiguity.
+        guard let loyalty = loyaltyCard.firstMatch(in: line, range: NSRange(location: 0, length: ns.length)) else { return false }
+        return !luhnValid(ns.substring(with: loyalty.range(at: 1)))
     }
 
     /// Digit runs (1–2 spaces, a dash, a dot or a comma between digits) not
@@ -220,6 +308,10 @@ enum PANRedactor {
 
     private static func matches(_ regex: NSRegularExpression, in line: String) -> [NSRange] {
         regex.matches(in: line, range: NSRange(location: 0, length: (line as NSString).length)).map(\.range)
+    }
+
+    private static func captureRanges(_ regex: NSRegularExpression, in line: String) -> [NSRange] {
+        regex.matches(in: line, range: NSRange(location: 0, length: (line as NSString).length)).map { $0.range(at: 1) }
     }
 
     /// Sort and merge overlapping/adjacent ranges.
