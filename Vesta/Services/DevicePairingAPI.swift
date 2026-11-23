@@ -3,11 +3,21 @@ import Foundation
 struct ReceiptPairingCode: Equatable, Sendable {
     let value: String
 
+    /// hestia issues 8 characters of Crockford base32 (`0-9`, `A-Z` without
+    /// I, L, O, U). Normalised exactly as hestia does: uppercase, spaces and
+    /// dashes dropped, O → 0, I/L → 1; U is rejected.
     init?(_ input: String) {
-        let code = input.filter { !$0.isWhitespace && $0 != "-" }
-        let alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz234567"
+        let alphabet = Set("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
+        let code = String(input.compactMap { character -> Character? in
+            if character.isWhitespace || character == "-" { return nil }
+            switch character {
+            case "O", "o": return "0"
+            case "I", "i", "L", "l": return "1"
+            default: return Character(character.uppercased())
+            }
+        })
         guard code.count == 8, code.allSatisfy(alphabet.contains) else { return nil }
-        value = code.uppercased()
+        value = code
     }
 
     init?(qrPayload: String) {

@@ -106,11 +106,13 @@ private final class DevicePairingURLProtocol: URLProtocol, @unchecked Sendable {
 
 @MainActor
 final class DevicePairingTests: XCTestCase {
-    func testTypedCodeRequiresEightBase32CharactersAndNormalizes() {
+    func testTypedCodeIsCrockfordBase32AndNormalizesLikeHestia() {
         for input in ["ABCD2345", "abcd2345", " ab cd-23 45 "] {
             XCTAssertEqual(ReceiptPairingCode(input)?.value, "ABCD2345")
         }
-        for input in ["ABCD234", "ABCD23456", "ABCD0189", "ABCİ2345", "ABCD2345!", ""] {
+        XCTAssertEqual(ReceiptPairingCode("0189XYZ7")?.value, "0189XYZ7")
+        XCTAssertEqual(ReceiptPairingCode("oIlL-89AB")?.value, "011189AB")   // O→0, I/L→1
+        for input in ["ABCD234", "ABCD23456", "ABCU2345", "ABCİ2345", "ABCD2345!", ""] {
             XCTAssertNil(ReceiptPairingCode(input))
         }
     }
@@ -120,7 +122,7 @@ final class DevicePairingTests: XCTestCase {
         XCTAssertEqual(ReceiptPairingCode(qrPayload: "hestia-pair:ab cd-23 45")?.value, "ABCD2345")
         for input in ["ABCD2345", "other:ABCD2345", "HESTIA-pair:ABCD2345",
                       " hestia-pair:ABCD2345", "hestia-pair://ABCD2345",
-                      "hestia-pair:ABCD234", "hestia-pair:ABCD23450", "hestia-pair:ABCD0123"] {
+                      "hestia-pair:ABCD234", "hestia-pair:ABCD23450", "hestia-pair:ABCDU123"] {
             XCTAssertNil(ReceiptPairingCode(qrPayload: input))
         }
     }
