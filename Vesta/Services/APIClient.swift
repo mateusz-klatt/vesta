@@ -78,7 +78,10 @@ actor APIClient: HestiaAPI {
     private let transport: any ClientTransport
     private let auth: BearerAuthMiddleware
 
-    init(transport: any ClientTransport = URLSessionTransport(configuration: .init(session: HTTPSession.shared)),
+    // The streaming transport installs its own task delegate. Use the session's
+    // redirect delegate for generated REST requests.
+    init(transport: any ClientTransport = URLSessionTransport(
+            configuration: .init(session: HTTPSession.shared, httpBodyProcessingMode: .buffered)),
          receiptPairing: ReceiptPairing? = nil,
          sessionToken: @escaping @Sendable () -> String? = { TokenStore.load() }) {
         self.transport = transport

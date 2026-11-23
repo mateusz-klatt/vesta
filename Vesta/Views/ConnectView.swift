@@ -73,7 +73,7 @@ struct ConnectView: View {
     }
 
     private var signInSection: some View {
-        Section("Sign in") {
+        Section {
             TextField("Username", text: $user)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -82,6 +82,12 @@ struct ConnectView: View {
                 Task { await app.login(user: user, password: password) }
             }
             .disabled(user.isEmpty || password.isEmpty)
+        } header: {
+            Text("Sign in")
+        } footer: {
+            if let notice = app.receiptPairing.revocationNotice {
+                Text(notice)
+            }
         }
     }
 

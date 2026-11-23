@@ -79,8 +79,8 @@ struct SettingsView: View {
                                 else { Text("Pair iPhone") }
                             }
                         }
-                        if let pairingMessage {
-                            Text(pairingMessage).foregroundStyle(Theme.textSecondary)
+                        if let notice = pairingMessage ?? app.receiptPairing.revocationNotice {
+                            Text(notice).foregroundStyle(Theme.textSecondary)
                         }
                     }
                     .disabled(app.receiptPairing.isBusy)

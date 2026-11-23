@@ -267,6 +267,32 @@ final class HTTPSessionTests: XCTestCase {
         XCTAssertNil(configuration.httpCookieStorage)
         XCTAssertNil(configuration.urlCache)
     }
+
+    func testRedirectsStayOnOriginAndReceiptRequestsNeverRedirect() async throws {
+        let session = HTTPSession.shared
+        let delegate = try XCTUnwrap(session.delegate as? HestiaRedirectDelegate)
+        let origin = "https://hestia.example"
+        let cases = [
+            ("/api/discovery", "https://HESTIA.example:443/api/discovery-v2", true),
+            ("/api/events", "\(origin)/api/events-v2", true),
+            ("/api/discovery", "http://hestia.example/api/discovery", false),
+            ("/api/discovery", "https://other.example/api/discovery", false),
+            ("/api/events", "https://hestia.example:8443/api/events", false),
+            ("/api/budget/receipts/parse-text", "\(origin)/api/budget/receipts/confirm", false),
+        ]
+        for (path, location, follows) in cases {
+            let url = try XCTUnwrap(URL(string: origin + path))
+            let task = session.dataTask(with: url)
+            defer { task.cancel() }
+            let response = try XCTUnwrap(HTTPURLResponse(
+                url: url, statusCode: 307, httpVersion: nil, headerFields: ["Location": location]
+            ))
+            let redirect = URLRequest(url: try XCTUnwrap(URL(string: location)))
+            let result = await delegate.urlSession(session, task: task, willPerformHTTPRedirection: response,
+                                                   newRequest: redirect)
+            XCTAssertEqual(result?.url, follows ? redirect.url : nil, "\(path) → \(location)")
+        }
+    }
 }
 
 final class TokenStoreTests: XCTestCase {

@@ -52,6 +52,8 @@ private actor MockDevicePairingAPI: DevicePairingAPI {
 }
 
 private final class DevicePairingURLProtocol: URLProtocol, @unchecked Sendable {
+    static let rateLimitedCode = "23456789"
+
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
@@ -76,12 +78,19 @@ private final class DevicePairingURLProtocol: URLProtocol, @unchecked Sendable {
             let json = try XCTUnwrap(body as? [String: String])
             let responseBody: String
             let status: Int
+            var headers = ["Content-Type": "application/json"]
             switch url.path {
             case "/api/budget/receipts/device-token/redeem":
                 XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
-                XCTAssertEqual(json, ["code": "ABCD2345", "device_name": "iPhone"])
-                responseBody = #"{"token":"fake-device-token","token_id":"fake-token-id","scope":"receipts","expires_at":"2027-02-21T18:00:00.125+00:00"}"#
-                status = 200
+                if json["code"] == Self.rateLimitedCode {
+                    responseBody = #"{"ok":false,"error":"device_token_rejected"}"#
+                    status = 429
+                    headers["Retry-After"] = "60"
+                } else {
+                    XCTAssertEqual(json, ["code": "ABCD2345", "device_name": "iPhone"])
+                    responseBody = #"{"token":"fake-device-token","token_id":"fake-token-id","scope":"receipts","expires_at":"2027-02-21T18:00:00.125+00:00"}"#
+                    status = 200
+                }
             case "/api/budget/receipts/device-token/revoke":
                 XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fake-device-token")
                 XCTAssertEqual(json, ["token_id": "fake-token-id"])
@@ -93,7 +102,7 @@ private final class DevicePairingURLProtocol: URLProtocol, @unchecked Sendable {
                 status = 404
             }
             let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: status, httpVersion: nil,
-                                                       headerFields: ["Content-Type": "application/json"]))
+                                                       headerFields: headers))
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: Data(responseBody.utf8))
             client?.urlProtocolDidFinishLoading(self)
@@ -140,6 +149,27 @@ final class DevicePairingTests: XCTestCase {
         XCTAssertEqual(token.tokenID, fakeDeviceToken.tokenID)
         XCTAssertEqual(token.expiresAt, .string("2027-02-21T18:00:00.125Z"))
         try await api.revoke(token, server: fakeServer)
+    }
+
+    func testRateLimitedRedeemAsksTheUserToWait() async throws {
+        let configuration = HTTPSession.configuration
+        configuration.protocolClasses = [DevicePairingURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let pairing = ReceiptPairing(api: GeneratedDevicePairingAPI(session: session),
+                                     store: MemoryDeviceTokenStore(), serverURL: { fakeServer })
+        let code = try XCTUnwrap(ReceiptPairingCode(DevicePairingURLProtocol.rateLimitedCode))
+
+        do {
+            try await pairing.pair(code: code, deviceName: "iPhone")
+            XCTFail("Expected the redeem request to be rate limited")
+        } catch let error as DevicePairingError {
+            guard case .rateLimited = error else {
+                return XCTFail("Expected a pairing rate limit")
+            }
+            XCTAssertEqual(error.message.key, "Too many pairing attempts. Try again in a minute.")
+        }
+        XCTAssertEqual(pairing.status, .notPaired)
     }
 
     func testKeychainRoundTripReplacesAndRemovesCredential() throws {
@@ -196,6 +226,20 @@ final class DevicePairingTests: XCTestCase {
         }
     }
 
+    func testUnpairLeavesNoticeWhenServerRevokeFails() async throws {
+        let store = MemoryDeviceTokenStore(.init(server: fakeServer, credential: fakeDeviceToken))
+        let pairing = ReceiptPairing(api: MockDevicePairingAPI(failRevoke: true),
+                                     store: store, serverURL: { fakeServer })
+        XCTAssertNil(pairing.revocationNotice)
+
+        try await pairing.unpair()
+
+        XCTAssertNil(store.load())
+        XCTAssertNil(pairing.credential(for: fakeServer))
+        XCTAssertEqual(pairing.status, .notPaired)
+        XCTAssertEqual(pairing.revocationNotice?.key, "Couldn't reach hestia. Remove this iPhone in hestia's device list.")
+    }
+
     func testSignOutRevokesAndClearsEvenWhenOffline() async {
         let api = MockDevicePairingAPI(failRevoke: true)
         let store = MemoryDeviceTokenStore(.init(server: fakeServer, credential: fakeDeviceToken))
@@ -210,6 +254,7 @@ final class DevicePairingTests: XCTestCase {
         XCTAssertEqual(homeCalls, [.logout])
         XCTAssertNil(store.load())
         XCTAssertEqual(app.phase, .needsAuth)
+        XCTAssertNotNil(app.receiptPairing.revocationNotice)
     }
 
     func testSignOutRevokesLateRedeemWithoutRestoringPairing() async throws {

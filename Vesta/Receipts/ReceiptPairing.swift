@@ -7,6 +7,7 @@ final class ReceiptPairing {
     enum Status { case notPaired, paired, pairAgain }
 
     private(set) var status: Status = .notPaired
+    private(set) var revocationNotice: LocalizedStringResource?
     private var isPairing = false
     private var isRevoking = false
     var isBusy: Bool { isPairing || isRevoking }
@@ -51,14 +52,14 @@ final class ReceiptPairing {
             throw DevicePairingError.redeemFailed
         }
         guard !pairingCancelled, !Task.isCancelled, server == serverURL() else {
-            try? await api.revoke(token, server: server)
+            await revoke(token, server: server)
             throw CancellationError()
         }
         do {
             try store.save(.init(server: server, credential: token))
             status = .paired
         } catch {
-            try? await api.revoke(token, server: server)
+            await revoke(token, server: server)
             throw DevicePairingError.storage
         }
     }
@@ -69,13 +70,22 @@ final class ReceiptPairing {
         isRevoking = true
         defer { isRevoking = false }
         if let token = try? store.load() {
-            try? await api.revoke(token.credential, server: token.server)
+            await revoke(token.credential, server: token.server)
         }
         do {
             try store.clear()
             status = .notPaired
         } catch {
             throw DevicePairingError.storage
+        }
+    }
+
+    private func revoke(_ token: ReceiptDeviceToken, server: URL) async {
+        do {
+            try await api.revoke(token, server: server)
+            revocationNotice = nil
+        } catch {
+            revocationNotice = "Couldn't reach hestia. Remove this iPhone in hestia's device list."
         }
     }
 

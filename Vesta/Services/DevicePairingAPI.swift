@@ -65,12 +65,14 @@ protocol DevicePairingAPI: Sendable {
 
 enum DevicePairingError: Error {
     case redeemFailed
+    case rateLimited
     case storage
     case receipts(ReceiptError)
 
     var message: LocalizedStringResource {
         switch self {
         case .redeemFailed: "Couldn’t pair this iPhone. Check the code or get a new one from hestia and try again."
+        case .rateLimited: "Too many pairing attempts. Try again in a minute."
         case .storage: "Couldn’t update pairing on this iPhone. Try again while it’s unlocked."
         case .receipts(let error): error.message
         }
@@ -101,9 +103,12 @@ struct GeneratedDevicePairingAPI: DevicePairingAPI {
             return ReceiptDeviceToken(token: result.token, tokenID: result.tokenId,
                                       expiresAt: .string(expiry))
         } catch {
-            let error = ReceiptError.wrap(error)
-            if error == .disabled || error == .ambiguousAuth { throw DevicePairingError.receipts(error) }
-            throw DevicePairingError.redeemFailed
+            switch ReceiptError.wrap(error) {
+            case .rateLimited: throw DevicePairingError.rateLimited
+            case .disabled: throw DevicePairingError.receipts(.disabled)
+            case .ambiguousAuth: throw DevicePairingError.receipts(.ambiguousAuth)
+            default: throw DevicePairingError.redeemFailed
+            }
         }
     }
 

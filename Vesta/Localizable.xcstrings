@@ -42612,6 +42612,554 @@
           }
         }
       }
+    },
+    "Couldn't reach hestia. Remove this iPhone in hestia's device list.": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تعذّر الاتصال بـ hestia. أزل هذا الـ iPhone من قائمة الأجهزة في hestia."
+          }
+        },
+        "bn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia-র সঙ্গে সংযোগ করা যায়নি। hestia-র ডিভাইস তালিকা থেকে এই iPhone সরিয়ে দিন।"
+          }
+        },
+        "bs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nije se moguće povezati s hestijom. Ukloni ovaj iPhone s liste uređaja u hestiji."
+          }
+        },
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nepodařilo se připojit k hestii. Odeberte tento iPhone ze seznamu zařízení v hestii."
+          }
+        },
+        "da": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kunne ikke oprette forbindelse til hestia. Fjern denne iPhone fra enhedslisten i hestia."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia war nicht erreichbar. Entferne dieses iPhone aus der Geräteliste in hestia."
+          }
+        },
+        "el": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Δεν ήταν δυνατή η σύνδεση με το hestia. Αφαιρέστε αυτό το iPhone από τη λίστα συσκευών του hestia."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't reach hestia. Remove this iPhone in hestia's device list."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo conectar con hestia. Elimina este iPhone de la lista de dispositivos de hestia."
+          }
+        },
+        "fa": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "اتصال به hestia ممکن نشد. این iPhone را از فهرست دستگاه‌های hestia حذف کنید."
+          }
+        },
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yhteyttä hestiaan ei saatu. Poista tämä iPhone hestian laiteluettelosta."
+          }
+        },
+        "fil": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hindi makakonekta sa hestia. Alisin ang iPhone na ito sa listahan ng mga device sa hestia."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de joindre hestia. Supprimez cet iPhone de la liste des appareils dans hestia."
+          }
+        },
+        "ga": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Níorbh fhéidir ceangal le hestia. Bain an iPhone seo de liosta na ngléasanna in hestia."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "לא ניתן היה להתחבר ל‑hestia. הסר את ה‑iPhone הזה מרשימת המכשירים ב‑hestia."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia से कनेक्ट नहीं हो सका। hestia की डिवाइस सूची से इस iPhone को हटाएँ।"
+          }
+        },
+        "hr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Povezivanje s hestijom nije uspjelo. Ukloni ovaj iPhone s popisa uređaja u hestiji."
+          }
+        },
+        "hu": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nem sikerült csatlakozni a hestiához. Távolítsd el ezt az iPhone-t a hestia eszközlistájáról."
+          }
+        },
+        "hy": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Չհաջողվեց կապ հաստատել hestia-ի հետ։ Հեռացրեք այս iPhone-ը hestia-ի սարքերի ցանկից։"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tidak dapat terhubung ke hestia. Hapus iPhone ini dari daftar perangkat di hestia."
+          }
+        },
+        "is": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ekki náðist samband við hestia. Fjarlægðu þennan iPhone af tækjalistanum í hestia."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossibile connettersi a hestia. Rimuovi questo iPhone dall’elenco dei dispositivi in hestia."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestiaに接続できませんでした。hestiaのデバイス一覧からこのiPhoneを削除してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia에 연결할 수 없습니다. hestia의 기기 목록에서 이 iPhone을 제거하십시오."
+          }
+        },
+        "lt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nepavyko prisijungti prie hestia. Pašalinkite šį „iPhone“ iš hestia įrenginių sąrašo."
+          }
+        },
+        "lv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neizdevās izveidot savienojumu ar hestia. Noņemiet šo iPhone no hestia ierīču saraksta."
+          }
+        },
+        "ms": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tidak dapat menyambung ke hestia. Alih keluar iPhone ini daripada senarai peranti dalam hestia."
+          }
+        },
+        "my": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia နှင့် ချိတ်ဆက်၍ မရပါ။ hestia ရှိ စက်ပစ္စည်းစာရင်းမှ ဤ iPhone ကို ဖယ်ရှားပါ။"
+          }
+        },
+        "nb": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kunne ikke koble til hestia. Fjern denne iPhonen fra enhetslisten i hestia."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kan geen verbinding maken met hestia. Verwijder deze iPhone uit de apparatenlijst in hestia."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nie udało się połączyć z hestią. Usuń tego iPhone’a z listy urządzeń w hestii."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível conectar ao hestia. Remova este iPhone da lista de dispositivos no hestia."
+          }
+        },
+        "ro": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nu s-a putut stabili conexiunea la hestia. Elimină acest iPhone din lista de dispozitive din hestia."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось подключиться к hestia. Удалите этот iPhone из списка устройств в hestia."
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nepodarilo sa pripojiť k hestii. Odstráňte tento iPhone zo zoznamu zariadení v hestii."
+          }
+        },
+        "sq": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nuk u arrit të lidhej me hestia. Hiqe këtë iPhone nga lista e pajisjeve në hestia."
+          }
+        },
+        "sr-Latn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Povezivanje sa hestijom nije uspelo. Ukloni ovaj iPhone sa liste uređaja u hestiji."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Det gick inte att ansluta till hestia. Ta bort denna iPhone från enhetslistan i hestia."
+          }
+        },
+        "sw": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Imeshindikana kuunganishwa na hestia. Ondoa iPhone hii kwenye orodha ya vifaa katika hestia."
+          }
+        },
+        "th": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ติดต่อ hestia ไม่ได้ ให้นำ iPhone เครื่องนี้ออกจากรายการอุปกรณ์ใน hestia"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia’ya bağlanılamadı. Bu iPhone’u hestia’daki aygıt listesinden kaldırın."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не вдалося підключитися до hestia. Видаліть цей iPhone зі списку пристроїв у hestia."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Không thể kết nối với hestia. Hãy xóa iPhone này khỏi danh sách thiết bị trong hestia."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法连接到 hestia。请在 hestia 的设备列表中移除此 iPhone。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法連線至 hestia。請在 hestia 的裝置列表中移除此 iPhone。"
+          }
+        }
+      }
+    },
+    "Too many pairing attempts. Try again in a minute.": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "محاولات اقتران كثيرة جدًا. حاول مرة أخرى بعد دقيقة."
+          }
+        },
+        "bn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "অনেকবার পেয়ার করার চেষ্টা করা হয়েছে। এক মিনিট পরে আবার চেষ্টা করুন।"
+          }
+        },
+        "bs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Previše pokušaja uparivanja. Pokušaj ponovo za minutu."
+          }
+        },
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Příliš mnoho pokusů o spárování. Zkuste to znovu za minutu."
+          }
+        },
+        "da": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "For mange forsøg på pardannelse. Prøv igen om et minut."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zu viele Kopplungsversuche. Versuche es in einer Minute erneut."
+          }
+        },
+        "el": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Πάρα πολλές προσπάθειες ζευγοποίησης. Δοκιμάστε ξανά σε ένα λεπτό."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Too many pairing attempts. Try again in a minute."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Demasiados intentos de enlace. Inténtalo de nuevo en un minuto."
+          }
+        },
+        "fa": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تعداد تلاش‌ها برای جفت‌سازی بیش از حد است. یک دقیقه دیگر دوباره تلاش کنید."
+          }
+        },
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Liian monta pariliitosyritystä. Yritä uudelleen minuutin kuluttua."
+          }
+        },
+        "fil": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masyadong maraming pagsubok na magpares. Subukan ulit pagkalipas ng isang minuto."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trop de tentatives de jumelage. Réessayez dans une minute."
+          }
+        },
+        "ga": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rinneadh an iomarca iarrachtaí péireála. Bain triail eile as i gceann nóiméid."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "יותר מדי ניסיונות קישור. נסה שוב בעוד דקה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पेयर करने की बहुत ज़्यादा कोशिशें हुईं। एक मिनट बाद फिर कोशिश करें।"
+          }
+        },
+        "hr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Previše pokušaja uparivanja. Pokušaj ponovno za minutu."
+          }
+        },
+        "hu": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Túl sok párosítási kísérlet. Próbáld újra egy perc múlva."
+          }
+        },
+        "hy": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Զուգակցման չափազանց շատ փորձեր։ Կրկին փորձեք մեկ րոպեից։"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Terlalu banyak percobaan pemasangan. Coba lagi dalam satu menit."
+          }
+        },
+        "is": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Of margar pörunartilraunir. Reyndu aftur eftir eina mínútu."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Troppi tentativi di abbinamento. Riprova tra un minuto."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ペアリングの試行回数が多すぎます。1分後にもう一度お試しください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "페어링 시도 횟수가 너무 많습니다. 1분 후 다시 시도하십시오."
+          }
+        },
+        "lt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Per daug bandymų susieti. Bandykite dar kartą po minutės."
+          }
+        },
+        "lv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pārāk daudz mēģinājumu savienot pārī. Mēģiniet vēlreiz pēc minūtes."
+          }
+        },
+        "ms": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Terlalu banyak percubaan pemasangan. Cuba lagi dalam seminit."
+          }
+        },
+        "my": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "တွဲချိတ်ရန် ကြိုးစားမှု များလွန်းသည်။ တစ်မိနစ်အကြာတွင် ထပ်ကြိုးစားပါ။"
+          }
+        },
+        "nb": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "For mange forsøk på sammenkobling. Prøv igjen om et minutt."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Te veel koppelpogingen. Probeer het over een minuut opnieuw."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Za dużo prób parowania. Spróbuj ponownie za minutę."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Muitas tentativas de emparelhamento. Tente novamente em um minuto."
+          }
+        },
+        "ro": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prea multe încercări de asociere. Încearcă din nou peste un minut."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Слишком много попыток сопряжения. Повторите попытку через минуту."
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Príliš veľa pokusov o spárovanie. Skúste to znova o minútu."
+          }
+        },
+        "sq": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shumë përpjekje për çiftim. Provo përsëri pas një minute."
+          }
+        },
+        "sr-Latn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Previše pokušaja uparivanja. Pokušaj ponovo za minut."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "För många parkopplingsförsök. Försök igen om en minut."
+          }
+        },
+        "sw": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Majaribio mengi mno ya kuoanisha. Jaribu tena baada ya dakika moja."
+          }
+        },
+        "th": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "พยายามจับคู่หลายครั้งเกินไป ลองอีกครั้งในอีกหนึ่งนาที"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Çok fazla eşleme denemesi yapıldı. Bir dakika sonra tekrar deneyin."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Забагато спроб створити пару. Повторіть спробу за хвилину."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Đã thử ghép đôi quá nhiều lần. Hãy thử lại sau một phút."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "配对尝试次数过多，请在一分钟后重试。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "配對嘗試次數過多，請在一分鐘後再試一次。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
