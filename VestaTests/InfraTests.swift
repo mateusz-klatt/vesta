@@ -21,9 +21,23 @@ final class PrivacyLocalizationTests: XCTestCase {
                     as? [String: String],
                 locale
             )
-            let purpose = try XCTUnwrap(values["NSLocalNetworkUsageDescription"], locale)
-            XCTAssertFalse(purpose.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, locale)
+            for key in ["NSLocalNetworkUsageDescription", "NSCameraUsageDescription"] {
+                let purpose = try XCTUnwrap(values[key], "\(locale) \(key)")
+                XCTAssertFalse(purpose.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "\(locale) \(key)")
+            }
         }
+    }
+}
+
+final class HTTPSessionTests: XCTestCase {
+    /// hestia sets its session cookie even on a bearer login; Vesta must never
+    /// store or replay it next to `Authorization`.
+    func testNoCookiesAreStoredOrSent() {
+        let configuration = HTTPSession.shared.configuration
+        XCTAssertFalse(configuration.httpShouldSetCookies)
+        XCTAssertEqual(configuration.httpCookieAcceptPolicy, .never)
+        XCTAssertNil(configuration.httpCookieStorage)
+        XCTAssertNil(configuration.urlCache)
     }
 }
 
