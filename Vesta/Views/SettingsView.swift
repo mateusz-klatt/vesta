@@ -9,7 +9,7 @@ struct SettingsView: View {
     @State private var urlInvalid = false
 
     /// Languages Vesta ships (matches the String Catalog).
-    private static let languages = [
+    static let languages = [
         "ar", "bn", "bs", "cs", "da", "de", "el", "en", "es", "fa", "fi", "fil",
         "fr", "ga", "he", "hi", "hr", "hu", "hy", "id", "is", "it", "ja", "ko",
         "lt", "lv", "ms", "my", "nb", "nl", "pl", "pt-BR", "ro", "ru", "sk", "sq",
