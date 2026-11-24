@@ -58,6 +58,9 @@ private actor MockDevicePairingAPI: DevicePairingAPI {
 
     func login(username: String, password: String, deviceName: String, server: URL) async throws -> ReceiptDeviceToken {
         calls.append(.login(username, password, deviceName, server))
+        if holdRedeem {
+            await withCheckedContinuation { redeemGate = $0 }
+        }
         if let loginError { throw loginError }
         return fakeDeviceToken
     }
@@ -343,6 +346,21 @@ final class DevicePairingTests: XCTestCase {
         try await pairing.pair(code: try XCTUnwrap(ReceiptPairingCode("ABCD2345")), deviceName: "iPhone")
         XCTAssertEqual(pairing.status, .paired)
         XCTAssertNil(pairing.pairingNotice)
+    }
+
+    func testLateDeviceLimitAfterUnpairLeavesNoNotice() async throws {
+        let api = MockDevicePairingAPI(holdRedeem: true)
+        await api.failLogin(with: .deviceLimit)
+        let pairing = ReceiptPairing(api: api, store: MemoryDeviceTokenStore(), serverURL: { fakeServer })
+        let login = Task {
+            try await pairing.pair(username: "owner", password: "fake-password", deviceName: "iPhone", server: fakeServer)
+        }
+        while await api.calls.isEmpty { await Task.yield() }
+        try await pairing.unpair()
+        await api.releaseRedeem()
+        _ = try? await login.value
+        XCTAssertNil(pairing.pairingNotice)
+        XCTAssertEqual(pairing.status, .notPaired)
     }
 
     func testDeviceNameIsStableAndFitsHestiasLimit() {

@@ -72,7 +72,10 @@ final class ReceiptPairing {
                 try await api.login(username: username, password: password, deviceName: deviceName, server: server)
             }
         } catch DevicePairingError.deviceLimit {
-            pairingNotice = DevicePairingError.deviceLimit.message
+            // A late answer must not bring the notice back after sign-out or a server change.
+            if !pairingCancelled, expected == serverURL() {
+                pairingNotice = DevicePairingError.deviceLimit.message
+            }
             throw DevicePairingError.deviceLimit
         }
     }
