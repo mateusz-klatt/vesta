@@ -93,6 +93,18 @@ final class APIClientTests: XCTestCase {
         await XCTAssertThrowsErrorEqual(try await api.whoami(), APIError.unauthorized)
     }
 
+    func testMapStatusSeparates401From403() async {
+        let statuses: [(Int, APIError)] = [(401, .unauthorized), (403, .forbidden)]
+        for (status, expected) in statuses {
+            let api = APIClient(transport: StubTransport { _ in (status, nil) }, sessionToken: { nil })
+            await XCTAssertThrowsErrorEqual(try await api.capabilities(), expected)
+            await XCTAssertThrowsErrorEqual(try await api.discovery(), expected)
+            await XCTAssertThrowsErrorEqual(try await api.setSwitch(node: 4, on: true), expected)
+            await XCTAssertThrowsErrorEqual(try await api.scene(.lightsOff), expected)
+            await XCTAssertThrowsErrorEqual(try await api.sendIR(file: "k.ir", button: "off"), expected)
+        }
+    }
+
     func testTransportErrorIsWrapped() async {
         let api = APIClient(transport: StubTransport { _ in throw URLError(.cannotFindHost) })
         await XCTAssertThrowsErrorEqual(try await api.whoami(), APIError.serverNotFound)

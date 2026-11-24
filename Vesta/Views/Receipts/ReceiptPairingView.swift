@@ -1,6 +1,38 @@
 import SwiftUI
 import VisionKit
 
+@MainActor
+struct ReceiptPairingPresentation {
+    private var presentedAt: Int?
+
+    mutating func present(in app: AppState) {
+        guard app.receiptsAPI != nil else { return }
+        presentedAt = app.receiptAccessGeneration
+    }
+
+    func isPresented(accessGeneration: Int) -> Bool {
+        presentedAt == accessGeneration
+    }
+
+    mutating func dismiss(accessGeneration: Int) {
+        if isPresented(accessGeneration: accessGeneration) { presentedAt = nil }
+    }
+}
+
+extension View {
+    func receiptPairingSheet(_ presentation: Binding<ReceiptPairingPresentation>, app: AppState,
+                             onDismiss: (() -> Void)? = nil) -> some View {
+        let generation = app.receiptAccessGeneration
+        let isPresented = Binding(
+            get: { presentation.wrappedValue.isPresented(accessGeneration: generation) },
+            set: { if !$0 { presentation.wrappedValue.dismiss(accessGeneration: generation) } }
+        )
+        return sheet(isPresented: isPresented, onDismiss: onDismiss) {
+            ReceiptPairingView().appLanguage(app.appLanguage)
+        }
+    }
+}
+
 struct ReceiptPairingView: View {
     @Environment(AppState.self) private var app
     @Environment(\.dismiss) private var dismiss

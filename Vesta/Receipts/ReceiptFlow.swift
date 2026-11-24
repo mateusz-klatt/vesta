@@ -283,6 +283,7 @@ final class ReceiptFlow {
     private let api: any ReceiptsAPI
     private let recognizer: any ReceiptTextRecognizing
     private let janitor: ReceiptDraftJanitor
+    private let allowsMatching: @MainActor () -> Bool
     private let server: @MainActor () -> String
     private var abandoned = false
     private var captureGeneration = 0
@@ -292,15 +293,24 @@ final class ReceiptFlow {
     /// ``AppConfig/serverURL``); queued deletes are scoped to it.
     init(api: any ReceiptsAPI,
          recognizer: any ReceiptTextRecognizing = VisionReceiptRecognizer(),
+         allowsMatching: @escaping @MainActor () -> Bool = { true },
          janitor: ReceiptDraftJanitor = .shared,
          server: @escaping @MainActor () -> String = { AppConfig.serverURL.absoluteString }) {
         self.api = api
         self.recognizer = recognizer
         self.janitor = janitor
+        self.allowsMatching = allowsMatching
         self.server = server
     }
 
-    var candidates: [ReceiptCandidate] { parsed?.candidates ?? [] }
+    var canMatchReceipts: Bool { allowsMatching() }
+    var candidates: [ReceiptCandidate] { canMatchReceipts ? parsed?.candidates ?? [] : [] }
+
+    func updateMatchAccess() {
+        guard !canMatchReceipts else { return }
+        parsed?.candidates = []
+        form.candidate = nil
+    }
 
     /// OCR every page (a long receipt can be several scans), in order, then
     /// redact card data before the text is even shown.
@@ -369,16 +379,19 @@ final class ReceiptFlow {
             let origin = server()
             await deleteCurrentDraft()      // re-reading replaces any earlier draft
             guard !abandoned else { return } // closed while cleanup ran: send nothing
-            let result = try await api.parseReceiptText(prepared, source: source)
+            var result = try await api.parseReceiptText(prepared, source: source)
             if abandoned {                  // the sheet closed while we waited
                 await janitor.enqueue(id: result.receiptId, version: result.version, server: origin)
                 await janitor.drain(using: api, server: server())
                 return
             }
+            if !canMatchReceipts { result.candidates = [] }
             parsed = result
             parsedOn = origin
             form = ReceiptForm(draft: result.draft, candidates: result.candidates)
             step = .review
+        } catch is CancellationError {
+            return
         } catch {
             self.error = ReceiptError.wrap(error)
         }
@@ -386,7 +399,7 @@ final class ReceiptFlow {
 
     func confirm() async {
         guard !isBusy, !abandoned, let parsed,
-              let request = form.request(receiptID: parsed.receiptId, version: parsed.version, candidates: parsed.candidates)
+              let request = form.request(receiptID: parsed.receiptId, version: parsed.version, candidates: candidates)
         else { return }
         isBusy = true
         defer { isBusy = false }
@@ -399,7 +412,7 @@ final class ReceiptFlow {
         } catch {
             if abandoned {
                 await deleteCurrentDraft()
-            } else {
+            } else if !(error is CancellationError) {
                 self.error = ReceiptError.wrap(error)
             }
         }

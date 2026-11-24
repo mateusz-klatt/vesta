@@ -62,13 +62,13 @@ enum Control {
         "on_\(mode)_\(temp)"
     }
 
-    /// Roles that may only observe (controls disabled).
+    /// Legacy role mapping for callers that do not have a capability snapshot.
     static func isReadOnly(role: String?) -> Bool {
-        role == "viewer"
+        !Capabilities.fromLegacyRole(role: role, user: nil).canControlIOC
     }
 
     static func canAddReceipts(role: String?) -> Bool {
-        role == "admin"
+        Capabilities.fromLegacyRole(role: role, user: nil).canUseReceipts
     }
 }
 

@@ -7,7 +7,7 @@ import SwiftUI
 struct ReceiptScanView: View {
     @Environment(AppState.self) private var app
     @Environment(\.dismiss) private var dismiss
-    @State private var showPairing = false
+    @State private var pairingPresentation = ReceiptPairingPresentation()
     /// Owned by the presenter, which calls ``ReceiptFlow/abandon()`` when the sheet closes.
     let flow: ReceiptFlow
 
@@ -35,7 +35,7 @@ struct ReceiptScanView: View {
                 }
                 if flow.step != .done && (flow.error == .pairAgain || app.receiptPairing.status == .pairAgain) {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button("Pair again") { showPairing = true }
+                        Button("Pair again") { pairingPresentation.present(in: app) }
                             .disabled(flow.isBusy)
                     }
                 }
@@ -46,11 +46,9 @@ struct ReceiptScanView: View {
         }
         // Cleanup runs on any dismissal; this only guards review edits from a stray swipe.
         .interactiveDismissDisabled(flow.step == .review)
-        .sheet(isPresented: $showPairing, onDismiss: {
+        .receiptPairingSheet($pairingPresentation, app: app, onDismiss: {
             if app.receiptPairing.status == .paired && flow.error == .pairAgain { flow.error = nil }
-        }) {
-            ReceiptPairingView().appLanguage(app.appLanguage)
-        }
+        })
     }
 }
 
@@ -195,7 +193,7 @@ private struct ReceiptReviewStep: View {
                 }
             }
 
-            if flow.form.canLink {
+            if flow.canMatchReceipts && flow.form.canLink {
                 Section {
                     if flow.form.matchFieldsEdited {
                         Text("Shop or NIP changed, so these matches no longer apply. Save without a link, or go back and read the text again.")
