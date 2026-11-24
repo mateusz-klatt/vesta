@@ -12,6 +12,9 @@ final class ReceiptPairing {
 
     private(set) var status: Status = .notPaired
     private(set) var revocationNotice: LocalizedStringResource?
+    /// Why the automatic pairing after login didn't pair this iPhone, when the
+    /// user has to act on it.
+    private(set) var pairingNotice: LocalizedStringResource?
     private var isPairing = false
     private var isRevoking = false
     private var isRetryingPendingRevocations = false
@@ -63,8 +66,14 @@ final class ReceiptPairing {
     /// server the login used; otherwise this does nothing.
     func pair(username: String, password: String, deviceName: String, server expected: URL) async throws {
         guard expected.scheme == "https" else { return }
-        try await issue(expecting: expected) { api, server in
-            try await api.login(username: username, password: password, deviceName: deviceName, server: server)
+        pairingNotice = nil
+        do {
+            try await issue(expecting: expected) { api, server in
+                try await api.login(username: username, password: password, deviceName: deviceName, server: server)
+            }
+        } catch DevicePairingError.deviceLimit {
+            pairingNotice = DevicePairingError.deviceLimit.message
+            throw DevicePairingError.deviceLimit
         }
     }
 
@@ -93,6 +102,7 @@ final class ReceiptPairing {
         do {
             try store.save(.init(server: server, credential: token))
             status = .paired
+            pairingNotice = nil
         } catch {
             try await revoke(token, server: server)
             throw DevicePairingError.storage
@@ -110,6 +120,7 @@ final class ReceiptPairing {
         do {
             try store.clear()
             status = .notPaired
+            pairingNotice = nil
         } catch {
             throw DevicePairingError.storage
         }

@@ -24,7 +24,7 @@ struct ReceiptPairingView: View {
                 } footer: {
                     Text("In hestia, choose Add device to get a one-time pairing code.")
                 }
-                if let message {
+                if let message = message ?? app.receiptPairing.pairingNotice {
                     Text(message).foregroundStyle(Theme.textSecondary)
                 }
                 Section {

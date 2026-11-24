@@ -47,6 +47,9 @@ enum ReceiptError: LocalizedError, Equatable {
     case staleCandidate
     /// 400 `budget_receipt_total_mismatch`: line totals don't add up to the total.
     case totalMismatch
+    /// 409 `device_token_limit_reached`: hestia already has 5 active devices
+    /// and won't evict one for a password login.
+    case deviceLimit
     /// Other 400s (and 409 `budget_requires_sqlite_users`), with hestia's code.
     case rejected(String)
     /// 503: budget configuration unavailable on the server.
@@ -68,6 +71,7 @@ enum ReceiptError: LocalizedError, Equatable {
         case .alreadyLinked: "Transaction already has a receipt"
         case .staleCandidate: "Bank transaction changed"
         case .totalMismatch: "Totals don’t add up"
+        case .deviceLimit: "Device limit reached"
         case .rejected: "Receipt rejected"
         case .unavailable: "Budget unavailable"
         case .api(let error): error.title
@@ -88,6 +92,7 @@ enum ReceiptError: LocalizedError, Equatable {
         case .alreadyLinked: "Pick a different transaction or save the receipt without one."
         case .staleCandidate: "Scan the receipt again to refresh the matching transactions."
         case .totalMismatch: "Fix the receipt text so the item totals add up to the total, then read it again."
+        case .deviceLimit: DevicePairingError.deviceLimit.message
         case .rejected: "The server could not accept this receipt."
         case .unavailable: "The server’s budget module is not available right now."
         case .api(let error): error.message
@@ -118,6 +123,7 @@ enum ReceiptError: LocalizedError, Equatable {
         case (409, "budget_receipt_conflict"): .versionConflict
         case (409, "budget_receipt_tx_already_linked"): .alreadyLinked
         case (409, "budget_receipt_stale_source"): .staleCandidate
+        case (409, "device_token_limit_reached"): .deviceLimit
         case (409, let code?): .rejected(code)
         case (400, "budget_receipt_total_mismatch"): .totalMismatch
         case (400, "budget_auth_ambiguous"): .ambiguousAuth

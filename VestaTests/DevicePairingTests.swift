@@ -93,6 +93,7 @@ private actor MockDevicePairingAPI: DevicePairingAPI {
 private final class DevicePairingURLProtocol: URLProtocol, @unchecked Sendable {
     static let rateLimitedCode = "23456789"
     static let rejectedPassword = "fake-wrong-password"
+    static let limitPassword = "fake-limit-password"
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -136,6 +137,9 @@ private final class DevicePairingURLProtocol: URLProtocol, @unchecked Sendable {
                 if json["password"] == Self.rejectedPassword {
                     responseBody = #"{"ok":false,"error":"device_token_rejected"}"#
                     status = 401
+                } else if json["password"] == Self.limitPassword {
+                    responseBody = #"{"ok":false,"error":"device_token_limit_reached"}"#
+                    status = 409
                 } else {
                     XCTAssertEqual(json, ["username": "owner", "password": "fake-password", "device_name": "iPhone 1A2B"])
                     responseBody = #"{"token":"fake-device-token","token_id":"fake-token-id","scope":"receipts","expires_at":"2027-02-21T18:00:00.125+00:00"}"#
@@ -304,6 +308,41 @@ final class DevicePairingTests: XCTestCase {
         XCTAssertEqual(calls, [])
         XCTAssertEqual(pairing.status, .notPaired)
         XCTAssertEqual(app.phase, .needsAuth)
+    }
+
+    func testDeviceLimitOnLoginIsReportedAndClearedByCodePairing() async throws {
+        let configuration = HTTPSession.configuration
+        configuration.protocolClasses = [DevicePairingURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        do {
+            _ = try await GeneratedDevicePairingAPI(session: session).login(
+                username: "owner", password: DevicePairingURLProtocol.limitPassword,
+                deviceName: "iPhone 1A2B", server: fakeServer)
+            XCTFail("Expected the device limit")
+        } catch let error as DevicePairingError {
+            guard case .deviceLimit = error else { return XCTFail("Expected the device limit") }
+        }
+        XCTAssertEqual(ReceiptError.from(status: 409, code: "device_token_limit_reached"), .deviceLimit)
+
+        let api = MockDevicePairingAPI()
+        await api.failLogin(with: .deviceLimit)
+        let pairing = ReceiptPairing(api: api, store: MemoryDeviceTokenStore(), serverURL: { fakeServer })
+        let hestia = MockHestiaAPI()
+        await hestia.setWhoami(role: "admin")
+        let app = AppState(api: hestia, receiptPairing: pairing, events: noEvents)
+
+        await app.login(user: "owner", password: "fake-password")
+
+        XCTAssertEqual(pairing.status, .notPaired)
+        XCTAssertEqual(pairing.pairingNotice?.key,
+                       "hestia already has 5 paired devices. Remove one in hestia’s device list, or pair with a code.")
+        let loginCalls = await api.calls
+        XCTAssertEqual(loginCalls.count, 1, "no retry at the limit")
+
+        try await pairing.pair(code: try XCTUnwrap(ReceiptPairingCode("ABCD2345")), deviceName: "iPhone")
+        XCTAssertEqual(pairing.status, .paired)
+        XCTAssertNil(pairing.pairingNotice)
     }
 
     func testDeviceNameIsStableAndFitsHestiasLimit() {
