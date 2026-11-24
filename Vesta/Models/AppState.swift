@@ -149,9 +149,12 @@ final class AppState {
     }
 
     func login(user: String, password: String) async {
-        await resetTask?.value
-        receiptPairing.refreshStatus()
+        // Captured before waiting, so a sign-out or another backend change
+        // during the wait still supersedes this attempt.
         let generation = sessionGeneration
+        await resetTask?.value
+        guard generation == sessionGeneration else { return }
+        receiptPairing.refreshStatus()
         let server = receiptPairing.server
         do {
             _ = try await api.login(user: user, password: password)
