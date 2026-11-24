@@ -1,7 +1,12 @@
 .PHONY: setup build test coverage clean pull-spec
 
 SIMULATOR ?= iPhone 17 Pro
+# CI sets SIMULATOR_ID (from scripts/ci-simulator.sh) to a device it verified exists.
+ifdef SIMULATOR_ID
+DESTINATION = platform=iOS Simulator,id=$(SIMULATOR_ID)
+else
 DESTINATION = platform=iOS Simulator,name=$(SIMULATOR)
+endif
 XCB = xcodebuild -project Vesta.xcodeproj -scheme Vesta -destination '$(DESTINATION)' -skipPackagePluginValidation -disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile
 
 RESOLVED_PACKAGES = Vesta.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved

@@ -28,6 +28,13 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - name: Pick an iOS simulator
+        run: |
+          make setup
+          id="$(scripts/ci-simulator.sh)"
+          echo "Using simulator $id"
+          echo "SIMULATOR_ID=$id" >> "$GITHUB_ENV"
+
       - name: Run tests with coverage
         run: make coverage
 
