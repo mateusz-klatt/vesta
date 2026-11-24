@@ -67,6 +67,7 @@ protocol DevicePairingAPI: Sendable {
 enum DevicePairingError: Error {
     case redeemFailed
     case rateLimited
+    case deviceLimit
     case storage
     case receipts(ReceiptError)
 
@@ -74,6 +75,7 @@ enum DevicePairingError: Error {
         switch self {
         case .redeemFailed: "Couldn’t pair this iPhone. Check the code or get a new one from hestia and try again."
         case .rateLimited: "Too many pairing attempts. Try again in a minute."
+        case .deviceLimit: "hestia already has 5 paired devices. Remove one in hestia’s device list, or pair with a code."
         case .storage: "Couldn’t update pairing on this iPhone. Try again while it’s unlocked."
         case .receipts(let error): error.message
         }
@@ -124,6 +126,7 @@ struct GeneratedDevicePairingAPI: DevicePairingAPI {
         } catch {
             switch ReceiptError.wrap(error) {
             case .rateLimited: throw DevicePairingError.rateLimited
+            case .deviceLimit: throw DevicePairingError.deviceLimit
             case .disabled: throw DevicePairingError.receipts(.disabled)
             case .ambiguousAuth: throw DevicePairingError.receipts(.ambiguousAuth)
             default: throw DevicePairingError.redeemFailed

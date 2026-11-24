@@ -79,7 +79,7 @@ struct SettingsView: View {
                                 else { Text("Pair iPhone") }
                             }
                         }
-                        if let notice = pairingMessage ?? app.receiptPairing.revocationNotice {
+                        if let notice = pairingMessage ?? app.receiptPairing.pairingNotice ?? app.receiptPairing.revocationNotice {
                             Text(notice).foregroundStyle(Theme.textSecondary)
                         }
                     }
