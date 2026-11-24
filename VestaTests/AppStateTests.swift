@@ -22,6 +22,8 @@ actor MockHestiaAPI: HestiaAPI {
     private var holdLogin = false
     private var loginGate: CheckedContinuation<Void, Never>?
     private var loginError: APIError?
+    private var holdLogout = false
+    private var logoutGate: CheckedContinuation<Void, Never>?
     private var holdDiscovery = false
     private var discoveryGate: CheckedContinuation<Void, Never>?
 
@@ -35,6 +37,13 @@ actor MockHestiaAPI: HestiaAPI {
         loginGate = nil
     }
     func setLoginError(_ error: APIError) { loginError = error }
+    func setHoldLogout() { holdLogout = true }
+    var isLogoutHeld: Bool { logoutGate != nil }
+    func releaseLogout() {
+        holdLogout = false
+        logoutGate?.resume()
+        logoutGate = nil
+    }
     func setHoldDiscovery() { holdDiscovery = true }
     var isDiscoveryHeld: Bool { discoveryGate != nil }
     func releaseDiscovery() {
@@ -57,7 +66,10 @@ actor MockHestiaAPI: HestiaAPI {
         if let loginError { throw loginError }
         return .init(ok: true, token: "t", user: user)
     }
-    func logout() async { calls.append(.logout) }
+    func logout() async {
+        calls.append(.logout)
+        if holdLogout { await withCheckedContinuation { logoutGate = $0 } }
+    }
     func setSwitch(node: Int, on: Bool, endpoint: Int?) async throws { calls.append(.setSwitch(node, on, endpoint)) }
     func setCover(node: Int, value: Int) async throws { calls.append(.setCover(node, value)) }
     func scene(_ op: Components.Schemas.SceneRequest.OpPayload, value: Int?) async throws {
@@ -143,14 +155,14 @@ final class AppStateTests: XCTestCase {
     /// no per-device fan-out (the server owns the exclusion list), then a refetch.
     /// The home is populated (incl. a 2-gang light) so any reintroduced client-side
     /// sweep would surface as setSwitch/setCover calls and fail the exact match.
-    func testSignOutDuringDiscoveryPublishesNothing() async {
+    func testSignOutDuringDiscoveryPublishesNothing() async throws {
         let mock = MockHestiaAPI()
         await mock.setDiscovery(makeDiscovery(["1": .init(_switch: true, _type: "light")]))
         await mock.setHoldDiscovery()
         let app = AppState(api: mock, receiptPairing: ReceiptPairing(store: MemoryDeviceTokenStore()), events: Self.noEvents)
 
         let load = Task { await app.loadDiscovery() }
-        while !(await mock.isDiscoveryHeld) { await Task.yield() }
+        try await waitUntil("the held discovery") { await mock.isDiscoveryHeld }
         await app.signOut()
         await mock.releaseDiscovery()
         await load.value
@@ -160,19 +172,45 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(app.phase, .needsAuth)
     }
 
-    func testLoginFailureAfterSignOutKeepsSignedOutPhase() async {
+    func testLoginFailureAfterSignOutKeepsSignedOutPhase() async throws {
         let mock = MockHestiaAPI()
         await mock.setHoldLogin()
         await mock.setLoginError(.serverNotFound)
         let app = AppState(api: mock, receiptPairing: ReceiptPairing(store: MemoryDeviceTokenStore()), events: Self.noEvents)
 
         let login = Task { await app.login(user: "u", password: "fake-password") }
-        while await mock.calls.isEmpty { await Task.yield() }
+        try await waitUntil("the held login") { !(await mock.calls.isEmpty) }
         await app.signOut()
         await mock.releaseLogin()
         await login.value
 
         XCTAssertEqual(app.phase, .needsAuth)
+    }
+
+    func testLoginWaitsForTheBackendChangeLogout() async throws {
+        let store = BackendURLStore.shared
+        let previous = store.hasOverride() ? store.currentEffectiveURL() : nil
+        defer { if let previous { store.saveOverride(previous) } else { store.clearOverride() } }
+
+        let mock = MockHestiaAPI()
+        await mock.setHoldLogout()
+        let app = AppState(api: mock, receiptPairing: ReceiptPairing(store: MemoryDeviceTokenStore()), events: Self.noEvents)
+
+        XCTAssertTrue(app.saveAndConnect(AppConfig.serverURL.absoluteString))
+        XCTAssertEqual(app.phase, .connecting)
+        let login = Task { await app.login(user: "u", password: "fake-password") }
+        try await waitUntil("the held logout") { await mock.isLogoutHeld }
+        for _ in 0..<50 { await Task.yield() }
+        let beforeRelease = await mock.calls
+        XCTAssertFalse(beforeRelease.contains(.login("u", "fake-password")),
+                       "login must not start while the backend change is still logging out")
+
+        await mock.releaseLogout()
+        await login.value
+        let calls = await mock.calls
+        let logoutIndex = try XCTUnwrap(calls.firstIndex(of: .logout))
+        let loginIndex = try XCTUnwrap(calls.firstIndex(of: .login("u", "fake-password")))
+        XCTAssertLessThan(logoutIndex, loginIndex)
     }
 
     func testAllLightsRunsServerScene() async {

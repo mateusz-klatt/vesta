@@ -82,6 +82,9 @@ actor APIClient: HestiaAPI {
     /// Bumped by ``logout()``. A login whose response lands after a logout
     /// started must not store its token, or a signed-out app wakes up signed in.
     private var authEpoch = 0
+    /// Bumped on every saved token, so a logout still waiting on the server
+    /// doesn't wipe the token of a login that finished in the meantime.
+    private var tokenVersion = 0
 
     // The streaming transport installs its own task delegate. Use the session's
     // redirect delegate for generated REST requests.
@@ -149,14 +152,20 @@ actor APIClient: HestiaAPI {
         } catch { throw APIError.wrap(error) }
         // Actor-isolated, so this check and the save can't interleave with logout().
         guard epoch == authEpoch else { throw CancellationError() }
-        if let token = success.token { saveToken(token) }
+        if let token = success.token {
+            saveToken(token)
+            tokenVersion += 1
+        }
         return success
     }
 
     func logout() async {
         authEpoch += 1
+        let version = tokenVersion
         refresh()
         _ = try? await client.logout(.init())
+        // A login that began after this logout and already saved its token wins.
+        guard version == tokenVersion else { return }
         clearToken()
     }
 

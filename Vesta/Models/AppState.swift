@@ -47,6 +47,9 @@ final class AppState {
     /// Bumped on sign-out and backend change so a login still in flight
     /// can't pair against the new session.
     private var sessionGeneration = 0
+    /// The logout (and unpair) a backend change runs. A login waits for it, or
+    /// that deferred logout would cancel the new session's login.
+    private var resetTask: Task<Void, Never>?
 
     private var allDevices: [IdentifiedDevice] { rooms.flatMap(\.devices) }
     var isReadOnly: Bool { Control.isReadOnly(role: whoami?.role) }
@@ -133,8 +136,11 @@ final class AppState {
         BackendURLStore.shared.saveOverride(url)
         backendURLString = url.absoluteString
         eventTask?.cancel()
+        phase = .connecting
         let api = self.api
-        Task {
+        let previous = resetTask
+        resetTask = Task {
+            await previous?.value
             if changed { try? await receiptPairing.unpair() }
             await api.logout()
             await connect()
@@ -143,6 +149,7 @@ final class AppState {
     }
 
     func login(user: String, password: String) async {
+        await resetTask?.value
         receiptPairing.refreshStatus()
         let generation = sessionGeneration
         let server = receiptPairing.server
