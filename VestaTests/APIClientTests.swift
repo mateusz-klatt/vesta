@@ -20,6 +20,46 @@ struct StubTransport: ClientTransport {
 
 private func json(_ s: String) -> Data { Data(s.utf8) }
 
+/// Holds the login response until released; every other operation answers at once.
+private final class HeldLoginTransport: ClientTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var gate: CheckedContinuation<Void, Never>?
+    private var released = false
+    var isHolding: Bool { lock.withLock { gate != nil } }
+
+    func release() {
+        let pending: CheckedContinuation<Void, Never>? = lock.withLock {
+            released = true
+            defer { gate = nil }
+            return gate
+        }
+        pending?.resume()
+    }
+
+    func send(_ request: HTTPRequest, body: HTTPBody?, baseURL: URL, operationID: String) async throws -> (HTTPResponse, HTTPBody?) {
+        var response = HTTPResponse(status: .ok)
+        response.headerFields[.contentType] = "application/json"
+        guard operationID == Operations.Login.id else { return (response, HTTPBody(#"{"ok":true}"#)) }
+        await withCheckedContinuation { continuation in
+            let resumeNow: Bool = lock.withLock {
+                if released { return true }
+                gate = continuation
+                return false
+            }
+            if resumeNow { continuation.resume() }
+        }
+        return (response, HTTPBody(#"{"ok":true,"token":"late-token","user":"u"}"#))
+    }
+}
+
+/// Records what APIClient writes to the session-token store.
+private final class TokenLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var events: [String] = []
+    var all: [String] { lock.withLock { events } }
+    func record(_ event: String) { lock.withLock { events.append(event) } }
+}
+
 final class APIClientTests: XCTestCase {
 
     func testWhoamiDecodes() async throws {
@@ -46,6 +86,36 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(success.token, "tok")
         XCTAssertEqual(TokenStore.load(), "tok")
         TokenStore.clear()
+    }
+
+    func testLogoutDuringLoginDiscardsTheLateToken() async throws {
+        let transport = HeldLoginTransport()
+        let log = TokenLog()
+        let api = APIClient(transport: transport, sessionToken: { nil },
+                            saveToken: { log.record("save:\($0)") }, clearToken: { log.record("clear") })
+
+        let login = Task { try await api.login(user: "u", password: "p") }
+        while !transport.isHolding { await Task.yield() }
+        await api.logout()
+        transport.release()
+
+        do {
+            _ = try await login.value
+            XCTFail("A login overtaken by logout must not succeed")
+        } catch is CancellationError {}
+        XCTAssertEqual(log.all, ["clear"])
+    }
+
+    func testLoginAfterLogoutStoresToken() async throws {
+        let transport = HeldLoginTransport()
+        transport.release()
+        let log = TokenLog()
+        let api = APIClient(transport: transport, sessionToken: { nil },
+                            saveToken: { log.record("save:\($0)") }, clearToken: { log.record("clear") })
+
+        await api.logout()
+        _ = try await api.login(user: "u", password: "p")
+        XCTAssertEqual(log.all, ["clear", "save:late-token"])
     }
 
     func testLoginBadCredentials() async {

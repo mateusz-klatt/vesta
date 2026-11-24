@@ -21,6 +21,9 @@ actor MockHestiaAPI: HestiaAPI {
     private var sceneError: APIError?
     private var holdLogin = false
     private var loginGate: CheckedContinuation<Void, Never>?
+    private var loginError: APIError?
+    private var holdDiscovery = false
+    private var discoveryGate: CheckedContinuation<Void, Never>?
 
     func setWhoami(role: String?) { whoamiResult = .init(role: role, user: "u") }
     func setDiscovery(_ discovery: Components.Schemas.Discovery) { discoveryResult = discovery }
@@ -31,10 +34,19 @@ actor MockHestiaAPI: HestiaAPI {
         loginGate?.resume()
         loginGate = nil
     }
+    func setLoginError(_ error: APIError) { loginError = error }
+    func setHoldDiscovery() { holdDiscovery = true }
+    var isDiscoveryHeld: Bool { discoveryGate != nil }
+    func releaseDiscovery() {
+        holdDiscovery = false
+        discoveryGate?.resume()
+        discoveryGate = nil
+    }
 
     func whoami() async throws -> Components.Schemas.WhoAmI { calls.append(.whoami); return whoamiResult }
     func discovery() async throws -> Components.Schemas.Discovery {
         calls.append(.discovery)
+        if holdDiscovery { await withCheckedContinuation { discoveryGate = $0 } }
         if let discoveryResult { return discoveryResult }
         throw APIError.http(599)
     }
@@ -42,6 +54,7 @@ actor MockHestiaAPI: HestiaAPI {
     func login(user: String, password: String) async throws -> Components.Schemas.LoginSuccess {
         calls.append(.login(user, password))
         if holdLogin { await withCheckedContinuation { loginGate = $0 } }
+        if let loginError { throw loginError }
         return .init(ok: true, token: "t", user: user)
     }
     func logout() async { calls.append(.logout) }
@@ -130,6 +143,38 @@ final class AppStateTests: XCTestCase {
     /// no per-device fan-out (the server owns the exclusion list), then a refetch.
     /// The home is populated (incl. a 2-gang light) so any reintroduced client-side
     /// sweep would surface as setSwitch/setCover calls and fail the exact match.
+    func testSignOutDuringDiscoveryPublishesNothing() async {
+        let mock = MockHestiaAPI()
+        await mock.setDiscovery(makeDiscovery(["1": .init(_switch: true, _type: "light")]))
+        await mock.setHoldDiscovery()
+        let app = AppState(api: mock, receiptPairing: ReceiptPairing(store: MemoryDeviceTokenStore()), events: Self.noEvents)
+
+        let load = Task { await app.loadDiscovery() }
+        while !(await mock.isDiscoveryHeld) { await Task.yield() }
+        await app.signOut()
+        await mock.releaseDiscovery()
+        await load.value
+
+        XCTAssertTrue(app.rooms.isEmpty)
+        XCTAssertNil(app.summary)
+        XCTAssertEqual(app.phase, .needsAuth)
+    }
+
+    func testLoginFailureAfterSignOutKeepsSignedOutPhase() async {
+        let mock = MockHestiaAPI()
+        await mock.setHoldLogin()
+        await mock.setLoginError(.serverNotFound)
+        let app = AppState(api: mock, receiptPairing: ReceiptPairing(store: MemoryDeviceTokenStore()), events: Self.noEvents)
+
+        let login = Task { await app.login(user: "u", password: "fake-password") }
+        while await mock.calls.isEmpty { await Task.yield() }
+        await app.signOut()
+        await mock.releaseLogin()
+        await login.value
+
+        XCTAssertEqual(app.phase, .needsAuth)
+    }
+
     func testAllLightsRunsServerScene() async {
         let mock = MockHestiaAPI()
         await mock.setDiscovery(makeDiscovery([

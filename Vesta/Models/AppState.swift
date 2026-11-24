@@ -106,14 +106,20 @@ final class AppState {
 
     func connect() async {
         receiptPairing.refreshStatus()
+        let generation = sessionGeneration
         phase = .connecting
         do {
-            whoami = try await api.whoami()
+            let identity = try await api.whoami()
+            guard generation == sessionGeneration else { return }
+            whoami = identity
             await loadDiscovery()
+            guard generation == sessionGeneration else { return }
             startEvents()
         } catch APIError.unauthorized {
+            guard generation == sessionGeneration else { return }
             phase = .needsAuth
         } catch {
+            guard generation == sessionGeneration else { return }
             phase = .failed(APIError.wrap(error))
         }
     }
@@ -150,6 +156,9 @@ final class AppState {
             guard generation == sessionGeneration else { return }
             startEvents()
         } catch {
+            // A login overtaken by sign-out or a backend change must not
+            // overwrite the newer session's phase with its error.
+            guard generation == sessionGeneration else { return }
             phase = .failed(APIError.wrap(error))
             return
         }
@@ -194,8 +203,11 @@ final class AppState {
     }
 
     func loadDiscovery() async {
+        let generation = sessionGeneration
         do {
             let discovery = try await api.discovery()
+            // Signed out (or switched backend) while this was in flight.
+            guard generation == sessionGeneration else { return }
             rooms = RoomGroup.group(discovery)
             summary = discovery.summary
             globals = discovery.globals
@@ -203,8 +215,10 @@ final class AppState {
             klimaState = discovery.klimaState
             phase = .ready
         } catch APIError.unauthorized {
+            guard generation == sessionGeneration else { return }
             phase = .needsAuth
         } catch {
+            guard generation == sessionGeneration else { return }
             phase = .failed(APIError.wrap(error))
         }
     }

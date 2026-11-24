@@ -77,14 +77,23 @@ actor APIClient: HestiaAPI {
     private(set) var client: Client
     private let transport: any ClientTransport
     private let auth: BearerAuthMiddleware
+    private let saveToken: @Sendable (String) -> Void
+    private let clearToken: @Sendable () -> Void
+    /// Bumped by ``logout()``. A login whose response lands after a logout
+    /// started must not store its token, or a signed-out app wakes up signed in.
+    private var authEpoch = 0
 
     // The streaming transport installs its own task delegate. Use the session's
     // redirect delegate for generated REST requests.
     init(transport: any ClientTransport = URLSessionTransport(
             configuration: .init(session: HTTPSession.shared, httpBodyProcessingMode: .buffered)),
          receiptPairing: ReceiptPairing? = nil,
-         sessionToken: @escaping @Sendable () -> String? = { TokenStore.load() }) {
+         sessionToken: @escaping @Sendable () -> String? = { TokenStore.load() },
+         saveToken: @escaping @Sendable (String) -> Void = { TokenStore.save($0) },
+         clearToken: @escaping @Sendable () -> Void = { TokenStore.clear() }) {
         self.transport = transport
+        self.saveToken = saveToken
+        self.clearToken = clearToken
         auth = BearerAuthMiddleware(token: sessionToken, receiptPairing: receiptPairing)
         serverURL = AppConfig.serverURL
         client = APIClient.make(serverURL, transport, auth)
@@ -129,22 +138,26 @@ actor APIClient: HestiaAPI {
     @discardableResult
     func login(user: String, password: String) async throws -> Components.Schemas.LoginSuccess {
         refresh()
+        let epoch = authEpoch
+        let success: Components.Schemas.LoginSuccess
         do {
             switch try await client.login(.init(body: .json(.init(bearer: true, password: password, user: user)))) {
-            case .ok(let ok):
-                let success = try ok.body.json
-                if let token = success.token { TokenStore.save(token) }
-                return success
+            case .ok(let ok): success = try ok.body.json
             case .unauthorized: throw APIError.unauthorized
             case .undocumented(let code, _): throw mapStatus(code)
             }
         } catch { throw APIError.wrap(error) }
+        // Actor-isolated, so this check and the save can't interleave with logout().
+        guard epoch == authEpoch else { throw CancellationError() }
+        if let token = success.token { saveToken(token) }
+        return success
     }
 
     func logout() async {
+        authEpoch += 1
         refresh()
         _ = try? await client.logout(.init())
-        TokenStore.clear()
+        clearToken()
     }
 
     func setSwitch(node: Int, on: Bool, endpoint: Int? = nil) async throws {
