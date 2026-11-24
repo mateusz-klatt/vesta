@@ -20,6 +20,65 @@ struct StubTransport: ClientTransport {
 
 private func json(_ s: String) -> Data { Data(s.utf8) }
 
+/// Holds one operation's response until released; every other operation answers at once.
+private final class HeldTransport: ClientTransport, @unchecked Sendable {
+    private let held: String
+    private let lock = NSLock()
+    private var gate: CheckedContinuation<Void, Never>?
+    private var released = false
+    var isHolding: Bool { lock.withLock { gate != nil } }
+
+    init(holding operationID: String = Operations.Login.id) { held = operationID }
+
+    func release() {
+        let pending: CheckedContinuation<Void, Never>? = lock.withLock {
+            released = true
+            defer { gate = nil }
+            return gate
+        }
+        pending?.resume()
+    }
+
+    func send(_ request: HTTPRequest, body: HTTPBody?, baseURL: URL, operationID: String) async throws -> (HTTPResponse, HTTPBody?) {
+        var response = HTTPResponse(status: .ok)
+        response.headerFields[.contentType] = "application/json"
+        let reply = operationID == Operations.Login.id
+            ? #"{"ok":true,"token":"late-token","user":"u"}"# : #"{"ok":true}"#
+        guard operationID == held else { return (response, HTTPBody(reply)) }
+        await withCheckedContinuation { continuation in
+            let resumeNow: Bool = lock.withLock {
+                if released { return true }
+                gate = continuation
+                return false
+            }
+            if resumeNow { continuation.resume() }
+        }
+        return (response, HTTPBody(reply))
+    }
+}
+
+/// Polls `condition` with a deadline, so a request that never arrives fails the
+/// test instead of hanging the suite.
+func waitUntil(isolation: isolated (any Actor)? = #isolation, _ what: String, timeout: Duration = .seconds(5),
+               _ condition: () async -> Bool) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while !(await condition()) {
+        guard ContinuousClock.now < deadline else {
+            XCTFail("Timed out waiting for \(what)")
+            throw CancellationError()
+        }
+        try await Task.sleep(for: .milliseconds(1))
+    }
+}
+
+/// Records what APIClient writes to the session-token store.
+private final class TokenLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var events: [String] = []
+    var all: [String] { lock.withLock { events } }
+    func record(_ event: String) { lock.withLock { events.append(event) } }
+}
+
 final class APIClientTests: XCTestCase {
 
     func testWhoamiDecodes() async throws {
@@ -46,6 +105,51 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(success.token, "tok")
         XCTAssertEqual(TokenStore.load(), "tok")
         TokenStore.clear()
+    }
+
+    func testLogoutDuringLoginDiscardsTheLateToken() async throws {
+        let transport = HeldTransport()
+        let log = TokenLog()
+        let api = APIClient(transport: transport, sessionToken: { nil },
+                            saveToken: { log.record("save:\($0)") }, clearToken: { log.record("clear") })
+
+        let login = Task { try await api.login(user: "u", password: "p") }
+        try await waitUntil("the held login") { transport.isHolding }
+        await api.logout()
+        transport.release()
+
+        do {
+            _ = try await login.value
+            XCTFail("A login overtaken by logout must not succeed")
+        } catch is CancellationError {}
+        XCTAssertEqual(log.all, ["clear"])
+    }
+
+    func testLoginAfterLogoutStoresToken() async throws {
+        let transport = HeldTransport()
+        transport.release()
+        let log = TokenLog()
+        let api = APIClient(transport: transport, sessionToken: { nil },
+                            saveToken: { log.record("save:\($0)") }, clearToken: { log.record("clear") })
+
+        await api.logout()
+        _ = try await api.login(user: "u", password: "p")
+        XCTAssertEqual(log.all, ["clear", "save:late-token"])
+    }
+
+    func testLoginDuringSlowLogoutKeepsItsToken() async throws {
+        let transport = HeldTransport(holding: Operations.Logout.id)
+        let log = TokenLog()
+        let api = APIClient(transport: transport, sessionToken: { nil },
+                            saveToken: { log.record("save:\($0)") }, clearToken: { log.record("clear") })
+
+        let logout = Task { await api.logout() }
+        try await waitUntil("the held logout") { transport.isHolding }
+        _ = try await api.login(user: "u", password: "p")
+        transport.release()
+        await logout.value
+
+        XCTAssertEqual(log.all, ["save:late-token"])
     }
 
     func testLoginBadCredentials() async {

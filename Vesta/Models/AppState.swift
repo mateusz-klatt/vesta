@@ -47,6 +47,9 @@ final class AppState {
     /// Bumped on sign-out and backend change so a login still in flight
     /// can't pair against the new session.
     private var sessionGeneration = 0
+    /// The logout (and unpair) a backend change runs. A login waits for it, or
+    /// that deferred logout would cancel the new session's login.
+    private var resetTask: Task<Void, Never>?
 
     private var allDevices: [IdentifiedDevice] { rooms.flatMap(\.devices) }
     var isReadOnly: Bool { Control.isReadOnly(role: whoami?.role) }
@@ -106,14 +109,20 @@ final class AppState {
 
     func connect() async {
         receiptPairing.refreshStatus()
+        let generation = sessionGeneration
         phase = .connecting
         do {
-            whoami = try await api.whoami()
+            let identity = try await api.whoami()
+            guard generation == sessionGeneration else { return }
+            whoami = identity
             await loadDiscovery()
+            guard generation == sessionGeneration else { return }
             startEvents()
         } catch APIError.unauthorized {
+            guard generation == sessionGeneration else { return }
             phase = .needsAuth
         } catch {
+            guard generation == sessionGeneration else { return }
             phase = .failed(APIError.wrap(error))
         }
     }
@@ -127,8 +136,11 @@ final class AppState {
         BackendURLStore.shared.saveOverride(url)
         backendURLString = url.absoluteString
         eventTask?.cancel()
+        phase = .connecting
         let api = self.api
-        Task {
+        let previous = resetTask
+        resetTask = Task {
+            await previous?.value
             if changed { try? await receiptPairing.unpair() }
             await api.logout()
             await connect()
@@ -137,8 +149,12 @@ final class AppState {
     }
 
     func login(user: String, password: String) async {
-        receiptPairing.refreshStatus()
+        // Captured before waiting, so a sign-out or another backend change
+        // during the wait still supersedes this attempt.
         let generation = sessionGeneration
+        await resetTask?.value
+        guard generation == sessionGeneration else { return }
+        receiptPairing.refreshStatus()
         let server = receiptPairing.server
         do {
             _ = try await api.login(user: user, password: password)
@@ -150,6 +166,9 @@ final class AppState {
             guard generation == sessionGeneration else { return }
             startEvents()
         } catch {
+            // A login overtaken by sign-out or a backend change must not
+            // overwrite the newer session's phase with its error.
+            guard generation == sessionGeneration else { return }
             phase = .failed(APIError.wrap(error))
             return
         }
@@ -194,8 +213,11 @@ final class AppState {
     }
 
     func loadDiscovery() async {
+        let generation = sessionGeneration
         do {
             let discovery = try await api.discovery()
+            // Signed out (or switched backend) while this was in flight.
+            guard generation == sessionGeneration else { return }
             rooms = RoomGroup.group(discovery)
             summary = discovery.summary
             globals = discovery.globals
@@ -203,8 +225,10 @@ final class AppState {
             klimaState = discovery.klimaState
             phase = .ready
         } catch APIError.unauthorized {
+            guard generation == sessionGeneration else { return }
             phase = .needsAuth
         } catch {
+            guard generation == sessionGeneration else { return }
             phase = .failed(APIError.wrap(error))
         }
     }
