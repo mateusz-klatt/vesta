@@ -147,7 +147,12 @@ private struct FreshnessBadge: View {
                     Text(verbatim: "·")
                 }
                 if meta.batteryLow {
-                    Text(verbatim: "🪫 ") + Text("Low battery")
+                    // Two views, not `Text + Text` (deprecated in iOS 26); the
+                    // key stays "Low battery" so existing translations apply.
+                    HStack(spacing: 0) {
+                        Text(verbatim: "🪫 ")
+                        Text("Low battery")
+                    }
                 }
             }
             .font(.caption2)
