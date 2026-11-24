@@ -58,7 +58,7 @@ final class AppState {
     private let eventRetryDelay: @Sendable (Duration) async throws -> Void
     private(set) var eventTask: Task<Void, Never>?
     private var eventRunID: UUID?
-    private var eventRequestFence: Fence?
+    private var eventStage: EventStage?
     private var isInForeground = true
     private var lifecycleGeneration = 0
     private var didBootstrap = false
@@ -73,24 +73,43 @@ final class AppState {
     /// that deferred logout would cancel the new session's login.
     private var resetTask: Task<Void, Never>?
 
-    private struct Fence: Equatable {
+    private struct DiscoveryFence: Equatable {
         let session: Int
-        let capabilities: Int
         let discovery: Int
+    }
+
+    private struct Fence: Equatable {
+        let discovery: DiscoveryFence
+        let capabilities: Int
+    }
+
+    private enum EventStage {
+        case opening(Fence)
+        case connected
+        case backingOff
     }
 
     private struct CapabilityRefresh {
         let id: UUID
+        let source: RefreshSource
         let fence: Fence
         let task: Task<Fence?, Never>
     }
 
+    private var currentDiscoveryFence: DiscoveryFence {
+        DiscoveryFence(session: sessionGeneration, discovery: discoveryGeneration)
+    }
+
     private var currentFence: Fence {
-        Fence(session: sessionGeneration, capabilities: capabilitiesGeneration, discovery: discoveryGeneration)
+        Fence(discovery: currentDiscoveryFence, capabilities: capabilitiesGeneration)
     }
 
     private func isCurrent(_ fence: Fence) -> Bool {
         !Task.isCancelled && fence == currentFence
+    }
+
+    private func isCurrentDiscovery(_ fence: DiscoveryFence) -> Bool {
+        !Task.isCancelled && fence == currentDiscoveryFence && canViewIOC
     }
 
     private var allDevices: [IdentifiedDevice] { rooms.flatMap(\.devices) }
@@ -101,17 +120,18 @@ final class AppState {
         let session = sessionGeneration
         let access = receiptAccessGeneration
         return DenialReportingReceiptsAPI(api: api) { [weak self] in
-            guard let self, self.sessionGeneration == session, self.receiptAccessGeneration == access,
-                  self.capabilities?.canUseReceipts == true else {
-                return nil
-            }
-            let fence = self.currentFence
+            guard let self, hasReceiptAccess(session: session, generation: access) else { return nil }
             return { [weak self] in
-                guard let self, self.isCurrent(fence) else { return }
-                self.reportDenial()
+                guard let self, hasReceiptAccess(session: session, generation: access) else { return }
+                reportDenial()
             }
         }
     }
+
+    private func hasReceiptAccess(session: Int, generation: Int) -> Bool {
+        sessionGeneration == session && receiptAccessGeneration == generation && capabilities?.canUseReceipts == true
+    }
+
     var hasLights: Bool { allDevices.contains { $0.device._type == "light" } }
     var hasBlinds: Bool { allDevices.contains { $0.device._type == "blind" } }
 
@@ -120,7 +140,7 @@ final class AppState {
         let session = sessionGeneration
         let access = receiptAccessGeneration
         let flow = ReceiptFlow(api: api, allowsMatching: { [weak self] in
-            guard let self, sessionGeneration == session, receiptAccessGeneration == access else { return false }
+            guard let self, hasReceiptAccess(session: session, generation: access) else { return false }
             return capabilities?.canMatchReceipts == true
         })
         openReceiptFlow = flow
@@ -240,7 +260,7 @@ final class AppState {
             phase = .ready
             return
         }
-        if await loadDiscovery(failingOnTransient: true) == .loaded, isCurrent(fence) {
+        if await loadDiscovery(failingOnTransient: true) == .loaded, isCurrentDiscovery(fence.discovery) {
             startEvents()
         }
     }
@@ -294,19 +314,22 @@ final class AppState {
         let expectedPhase: Phase = source == .initialAuth ? .connecting : .ready
         guard phase == expectedPhase else { return nil }
         let fence = currentFence
-        if let active = activeCapabilitiesRefresh, active.fence == fence {
+        // A denial needs an answer requested after the rejection. Explicit
+        // refreshes own their follow-up work, so only like denials can share it.
+        if let active = activeCapabilitiesRefresh, active.fence == fence,
+           source == .denial, active.source == .denial {
             return active.task
         }
         activeCapabilitiesRefresh?.task.cancel()
         let id = UUID()
         let task = Task { [weak self] in
-            await self?.performCapabilityRefresh(id: id, fence: fence, phase: expectedPhase)
+            await self?.performCapabilityRefresh(id: id, source: source, fence: fence, phase: expectedPhase)
         }
-        activeCapabilitiesRefresh = CapabilityRefresh(id: id, fence: fence, task: task)
+        activeCapabilitiesRefresh = CapabilityRefresh(id: id, source: source, fence: fence, task: task)
         return task
     }
 
-    private func performCapabilityRefresh(id: UUID, fence: Fence, phase expectedPhase: Phase) async -> Fence? {
+    private func performCapabilityRefresh(id: UUID, source: RefreshSource, fence: Fence, phase expectedPhase: Phase) async -> Fence? {
         defer {
             if activeCapabilitiesRefresh?.id == id { activeCapabilitiesRefresh = nil }
         }
@@ -315,6 +338,7 @@ final class AppState {
             let resolved = try await api.capabilities()
             guard isCurrent(fence), phase == expectedPhase else { return nil }
             publishCapabilities(resolved)
+            if source == .foreground || source == .userPull { notice = nil }
             return currentFence
         } catch {
             guard isCurrent(fence), phase == expectedPhase, !APIError.isCancellation(error) else { return nil }
@@ -379,7 +403,6 @@ final class AppState {
             guard let self, session == sessionGeneration, lifecycle == lifecycleGeneration,
                   let fence = await refreshCapabilities(source: .foreground),
                   isCurrent(fence), lifecycle == lifecycleGeneration, canViewIOC else { return }
-            notice = nil
             startEvents()
         }
     }
@@ -394,20 +417,24 @@ final class AppState {
 
     func refresh() async {
         guard let fence = await refreshCapabilities(source: .userPull), isCurrent(fence), canViewIOC else { return }
-        guard await loadDiscovery() == .loaded, isCurrent(fence) else { return }
-        notice = nil
-        if eventTask == nil || (eventRequestFence.map { $0 != fence } ?? false) {
-            startEvents(after: fence)
+        guard await loadDiscovery() == .loaded, isCurrentDiscovery(fence.discovery) else { return }
+        switch eventStage {
+        case nil, .backingOff:
+            startEvents(after: fence.discovery)
+        case .opening(let openingFence) where openingFence != currentFence:
+            startEvents(after: fence.discovery)
+        case .opening, .connected:
+            break
         }
     }
 
     @discardableResult
     func loadDiscovery(failingOnTransient: Bool = false) async -> DiscoveryOutcome {
-        let fence = currentFence
-        guard !Task.isCancelled, canViewIOC else { return .cancelledOrStale }
+        let fence = currentDiscoveryFence
+        guard isCurrentDiscovery(fence) else { return .cancelledOrStale }
         do {
             let discovery = try await api.discovery()
-            guard isCurrent(fence) else { return .cancelledOrStale }
+            guard isCurrentDiscovery(fence) else { return .cancelledOrStale }
             rooms = RoomGroup.group(discovery)
             summary = discovery.summary
             globals = discovery.globals
@@ -416,7 +443,7 @@ final class AppState {
             if phase == .connecting { phase = .ready }
             return .loaded
         } catch {
-            guard isCurrent(fence), !APIError.isCancellation(error) else { return .cancelledOrStale }
+            guard isCurrentDiscovery(fence), !APIError.isCancellation(error) else { return .cancelledOrStale }
             switch APIError.wrap(error) {
             case .forbidden:
                 stopForIOCDenial()
@@ -567,14 +594,15 @@ final class AppState {
         eventTask?.cancel()
         eventTask = nil
         eventRunID = nil
-        eventRequestFence = nil
+        eventStage = nil
     }
 
-    private func startEvents(after snapshot: Fence? = nil) {
+    private func startEvents(after snapshot: DiscoveryFence? = nil) {
         guard isInForeground, phase == .ready, canViewIOC else { return }
         stopEvents()
         let id = UUID()
         eventRunID = id
+        eventStage = .opening(currentFence)
         eventTask = Task { [weak self] in
             guard let self else { return }
             await runEvents(id: id, initialSnapshot: snapshot)
@@ -583,18 +611,18 @@ final class AppState {
 
     /// SSE carries future events. Each connection starts with a current snapshot
     /// to catch up on changes made while the socket was closed.
-    private func runEvents(id: UUID, initialSnapshot: Fence?) async {
+    private func runEvents(id: UUID, initialSnapshot: DiscoveryFence?) async {
         defer {
             if eventRunID == id { stopEvents() }
         }
         var snapshot = initialSnapshot
         var backoff = Duration.seconds(1)
         while !Task.isCancelled, eventRunID == id, canViewIOC {
-            let streamFence = currentFence
-            eventRequestFence = streamFence
+            let streamFence = currentDiscoveryFence
+            eventStage = .opening(currentFence)
             let outcome: DiscoveryOutcome
             if let initial = snapshot {
-                guard isCurrent(initial) else { return }
+                guard isCurrentDiscovery(initial) else { return }
                 snapshot = nil
                 outcome = .loaded
             } else {
@@ -602,15 +630,14 @@ final class AppState {
             }
             switch outcome {
             case .loaded:
-                guard isCurrent(streamFence), eventRunID == id else { return }
                 guard await consumeEvents(id: id, fence: streamFence, backoff: &backoff) else { return }
             case .transientFailure:
                 break
             case .denied, .unauthenticated, .cancelledOrStale:
                 return
             }
-            guard !Task.isCancelled, eventRunID == id else { return }
-            eventRequestFence = nil
+            guard isCurrentDiscovery(streamFence), eventRunID == id else { return }
+            eventStage = .backingOff
             do {
                 try await eventRetryDelay(backoff)
             } catch {
@@ -620,30 +647,27 @@ final class AppState {
         }
     }
 
-    /// Returns whether the stream may reconnect. Only failures at stream startup
-    /// use the opening fence. A change on the live socket takes a new snapshot.
-    private func consumeEvents(id: UUID, fence: Fence, backoff: inout Duration) async -> Bool {
-        guard isCurrent(fence), eventRunID == id else { return false }
+    /// Returns whether the current IOC subscription may reconnect.
+    private func consumeEvents(id: UUID, fence: DiscoveryFence, backoff: inout Duration) async -> Bool {
+        guard isCurrentDiscovery(fence), eventRunID == id else { return false }
         for await event in makeEvents() {
-            guard !Task.isCancelled, eventRunID == id, canViewIOC else { return false }
+            guard isCurrentDiscovery(fence), eventRunID == id else { return false }
             switch event {
             case .connected:
-                eventRequestFence = nil
+                eventStage = .connected
                 backoff = .seconds(1)
             case .change(let node):
                 if let node { markChanged(String(node)) }
-                eventRequestFence = currentFence
                 switch await loadDiscovery() {
-                case .loaded:
-                    if eventRunID == id { eventRequestFence = nil }
+                case .loaded: continue
                 case .transientFailure: return true
                 case .denied, .unauthenticated, .cancelledOrStale: return false
                 }
             case .forbidden:
-                if isCurrent(fence) { stopForIOCDenial() }
+                stopForIOCDenial()
                 return false
             case .unauthorized:
-                if isCurrent(fence) { invalidateSession() }
+                invalidateSession()
                 return false
             }
         }
@@ -654,10 +678,10 @@ final class AppState {
     /// a brief highlight.
     private func markChanged(_ id: String) {
         recentlyChanged.insert(id)
-        let fence = currentFence
+        let fence = currentDiscoveryFence
         Task {
             try? await Task.sleep(for: .milliseconds(1400))
-            guard sessionGeneration == fence.session, discoveryGeneration == fence.discovery else { return }
+            guard currentDiscoveryFence == fence else { return }
             recentlyChanged.remove(id)
         }
     }

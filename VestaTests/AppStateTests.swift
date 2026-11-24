@@ -34,6 +34,9 @@ actor MockHestiaAPI: HestiaAPI, ReceiptsAPI {
     private var logoutGate: CheckedContinuation<Void, Never>?
     private var holdDiscovery = false
     private var discoveryGate: CheckedContinuation<Void, Never>?
+    private var receiptParseResult: Result<ReceiptParseResult, ReceiptError> = .failure(.forbidden)
+    private var holdReceiptParse = false
+    private var receiptParseGate: CheckedContinuation<Void, Never>?
 
     func setWhoami(role: String?) {
         whoamiResult = .init(role: role, user: "u")
@@ -82,6 +85,14 @@ actor MockHestiaAPI: HestiaAPI, ReceiptsAPI {
         holdDiscovery = false
         discoveryGate?.resume()
         discoveryGate = nil
+    }
+    func setReceiptParseResult(_ result: ReceiptParseResult) { receiptParseResult = .success(result) }
+    func setHoldReceiptParse() { holdReceiptParse = true }
+    var isReceiptParseHeld: Bool { receiptParseGate != nil }
+    func releaseReceiptParse() {
+        holdReceiptParse = false
+        receiptParseGate?.resume()
+        receiptParseGate = nil
     }
 
     func count(_ call: Call) -> Int { calls.filter { $0 == call }.count }
@@ -135,7 +146,12 @@ actor MockHestiaAPI: HestiaAPI, ReceiptsAPI {
 
     func parseReceiptText(_ text: String, source: ReceiptSourceKind) async throws -> ReceiptParseResult {
         calls.append(.parseReceipt)
-        throw ReceiptError.forbidden
+        let result = receiptParseResult
+        if holdReceiptParse {
+            holdReceiptParse = false
+            await withCheckedContinuation { receiptParseGate = $0 }
+        }
+        return try result.get()
     }
 
     func confirmReceipt(_ request: ReceiptConfirmRequest) async throws -> ReceiptDetail { throw ReceiptError.forbidden }
@@ -879,17 +895,22 @@ final class AppStateTests: XCTestCase {
         let mock = MockHestiaAPI()
         let events = RecordedEvents()
         let app = makeApp(mock: mock, events: events)
-        await mock.setWhoami(role: "admin")
-        try await connectLive(app, mock: mock, events: events)
-        app.enterBackground()
-        let updated = Capabilities.fromLegacyRole(role: "admin", user: "updated")
-        await mock.setCapabilities(updated)
-        await mock.setHoldCapabilities()
-        await mock.setSceneError(.forbidden)
         defer {
             app.enterBackground()
             Task { await mock.releaseCapabilities() }
         }
+        await mock.setWhoami(role: "admin")
+        try await connectLive(app, mock: mock, events: events)
+        let afterStreamDenial = Capabilities.fromLegacyRole(role: "admin", user: "current")
+        await mock.setCapabilities(afterStreamDenial)
+        events.send(.forbidden)
+        try await waitUntil("the foreground stream to stop and its denial refresh to finish") {
+            app.eventTask == nil && app.capabilities == afterStreamDenial
+        }
+        let updated = Capabilities.fromLegacyRole(role: "admin", user: "updated")
+        await mock.setCapabilities(updated)
+        await mock.setHoldCapabilities()
+        await mock.setSceneError(.forbidden)
 
         let before = await mock.calls.count
         let receipts = try XCTUnwrap(app.receiptsAPI)
@@ -910,6 +931,243 @@ final class AppStateTests: XCTestCase {
         XCTAssertNil(app.eventTask)
         XCTAssertEqual(app.phase, .ready)
         XCTAssertEqual(app.notice, .forbidden)
+    }
+
+    func testSSEDenialsAfterCapabilityChangeStillApplyToLiveStream() async throws {
+        for event: EventStream.Event in [.unauthorized, .forbidden] {
+            let mock = MockHestiaAPI()
+            let events = RecordedEvents()
+            let app = makeApp(mock: mock, events: events)
+            defer { app.enterBackground() }
+            try await connectLive(app, mock: mock, events: events)
+            events.send(.connected)
+            await mock.setDiscovery(makeDiscovery(["2": .init(_type: "blind")]))
+            events.send(.change(node: nil))
+            try await waitUntil("the connected stream's snapshot") {
+                app.rooms.flatMap(\.devices).map(\.id) == ["2"]
+            }
+
+            let viewer = Capabilities.fromLegacyRole(role: "viewer", user: "u")
+            await mock.setCapabilities(viewer)
+            await app.refresh()
+            XCTAssertEqual(app.capabilities, viewer)
+            XCTAssertTrue(app.canViewIOC)
+            XCTAssertTrue(events.isOpen(1))
+            XCTAssertEqual(events.starts, 1)
+
+            events.send(event)
+            try await waitUntil("the live stream to stop after the denial") { app.eventTask == nil }
+            switch event {
+            case .unauthorized:
+                XCTAssertEqual(app.phase, .needsAuth)
+                XCTAssertNil(app.capabilities)
+                try await waitUntil("credential invalidation") { await mock.count(.logout) == 1 }
+            case .forbidden:
+                XCTAssertEqual(app.phase, .ready)
+                XCTAssertEqual(app.notice, .forbidden)
+                try await waitUntil("the SSE denial's capability refresh") { await mock.count(.capabilities) == 3 }
+            default:
+                XCTFail("Expected an SSE authorization error")
+            }
+            assertIOCCleared(app)
+            XCTAssertEqual(events.starts, 1)
+        }
+    }
+
+    func testDenialCapabilityUpdatePreservesInFlightDiscoveryAndEventStream() async throws {
+        for resuming in [false, true] {
+            let mock = MockHestiaAPI()
+            let events = RecordedEvents()
+            let app = makeApp(mock: mock, events: events)
+            defer {
+                app.enterBackground()
+                Task { await mock.releaseDiscovery() }
+            }
+            try await connectLive(app, mock: mock, events: events)
+            events.send(.connected)
+            await mock.setDiscovery(makeDiscovery(["2": .init(_type: "blind")]))
+            await mock.setHoldDiscovery()
+            if resuming {
+                app.enterForeground()
+            } else {
+                events.send(.change(node: nil))
+            }
+            try await waitUntil("the event loop's discovery request") { await mock.isDiscoveryHeld }
+
+            let viewer = Capabilities.fromLegacyRole(role: "viewer", user: "u")
+            await mock.setCapabilities(viewer)
+            await mock.setSceneError(.forbidden)
+            await app.allLights(on: false)
+            try await waitUntil("the denial refresh to update capabilities") { app.capabilities == viewer }
+            XCTAssertTrue(app.canViewIOC)
+            await mock.releaseDiscovery()
+
+            let streamID = resuming ? 2 : 1
+            try await waitUntil("discovery to publish and the stream to stay open") {
+                app.rooms.flatMap(\.devices).map(\.id) == ["2"] && events.isOpen(streamID)
+            }
+            XCTAssertNotNil(app.eventTask)
+            XCTAssertEqual(events.starts, streamID)
+            XCTAssertEqual(app.notice, .forbidden)
+            let snapshots = await mock.count(.discovery)
+            XCTAssertEqual(snapshots, 3)
+        }
+    }
+
+    func testSuccessfulExplicitRefreshClearsDenialNoticeWithoutIOCGrant() async throws {
+        for foreground in [false, true] {
+            let mock = MockHestiaAPI()
+            let events = RecordedEvents()
+            let app = makeApp(mock: mock, events: events)
+            defer { app.enterBackground() }
+            let grant = Capabilities(delegatedReceipts: .init(permissions: [.budgetReceiptsAdd], canUse: true))
+            let changed = Capabilities(delegatedReceipts: .init(
+                permissions: [.budgetReceiptsAdd, .budgetReceiptsMatch], canUse: true
+            ))
+            await mock.setCapabilities(grant)
+            await app.connect()
+            let receipts = try XCTUnwrap(app.receiptsAPI)
+            await mock.setCapabilities(changed)
+            do {
+                _ = try await receipts.parseReceiptText("receipt", source: .paste)
+                XCTFail("Expected a receipt denial")
+            } catch let error as ReceiptError {
+                XCTAssertEqual(error, .forbidden)
+            }
+            try await waitUntil("the receipt denial's refresh") { app.capabilities == changed }
+            XCTAssertEqual(app.notice, .forbidden)
+
+            await mock.setCapabilities(grant)
+            if foreground {
+                app.enterForeground()
+                try await waitUntil("the foreground refresh to clear the denial notice") {
+                    app.capabilities == grant && app.notice == nil
+                }
+            } else {
+                await app.refresh()
+            }
+
+            XCTAssertEqual(app.capabilities, grant)
+            XCTAssertNil(app.notice)
+            XCTAssertFalse(app.canViewIOC)
+            XCTAssertNotNil(app.receiptsAPI)
+            XCTAssertEqual(events.starts, 0)
+            let snapshots = await mock.count(.discovery)
+            XCTAssertEqual(snapshots, 0)
+        }
+    }
+
+    func testDenialSupersedesHeldExplicitCapabilityRefresh() async throws {
+        for foreground in [false, true] {
+            let mock = MockHestiaAPI()
+            let events = RecordedEvents()
+            let app = makeApp(mock: mock, events: events)
+            defer {
+                app.enterBackground()
+                Task { await mock.releaseCapabilities() }
+            }
+            try await connectLive(app, mock: mock, events: events)
+            await mock.setCapabilitiesError(.unauthorized)
+            await mock.setHoldCapabilities()
+            let pull: Task<Void, Never>?
+            if foreground {
+                pull = nil
+                app.enterForeground()
+            } else {
+                pull = Task { await app.refresh() }
+            }
+            try await waitUntil("the older explicit capability request") { await mock.isCapabilitiesHeld }
+
+            let viewer = Capabilities.fromLegacyRole(role: "viewer", user: "u")
+            await mock.setCapabilities(viewer)
+            await mock.setSceneError(.forbidden)
+            await app.allLights(on: false)
+            try await waitUntil("the fresh denial request to publish while the older request is held") {
+                app.capabilities == viewer
+            }
+            XCTAssertEqual(app.notice, .forbidden)
+            XCTAssertTrue(events.isOpen(1))
+            await mock.releaseCapabilities()
+            await pull?.value
+
+            let queries = await mock.count(.capabilities)
+            let logouts = await mock.count(.logout)
+            XCTAssertEqual(queries, 3)
+            XCTAssertEqual(logouts, 0)
+            XCTAssertEqual(app.phase, .ready)
+            XCTAssertEqual(app.capabilities, viewer)
+        }
+    }
+
+    func testExplicitCapabilityRefreshSupersedesHeldDenialRefresh() async throws {
+        for foreground in [false, true] {
+            let mock = MockHestiaAPI()
+            let events = RecordedEvents()
+            let app = makeApp(mock: mock, events: events)
+            defer {
+                app.enterBackground()
+                Task { await mock.releaseCapabilities() }
+            }
+            try await connectLive(app, mock: mock, events: events)
+            await mock.setCapabilities(.init())
+            await mock.setHoldCapabilities()
+            await mock.setSceneError(.forbidden)
+            await app.allLights(on: false)
+            try await waitUntil("the older denial capability request") { await mock.isCapabilitiesHeld }
+
+            let viewer = Capabilities.fromLegacyRole(role: "viewer", user: "u")
+            await mock.setCapabilities(viewer)
+            let pull: Task<Void, Never>?
+            if foreground {
+                pull = nil
+                app.enterForeground()
+            } else {
+                pull = Task { await app.refresh() }
+            }
+            try await waitUntil("the explicit refresh replacing the older denial") {
+                app.capabilities == viewer && events.isOpen(2)
+            }
+            await pull?.value
+            await mock.releaseCapabilities()
+
+            let queries = await mock.count(.capabilities)
+            XCTAssertEqual(queries, 3)
+            XCTAssertEqual(app.phase, .ready)
+            XCTAssertNil(app.notice)
+            XCTAssertEqual(app.capabilities, viewer)
+        }
+    }
+
+    func testPullToRefreshReplacesSSEWaitingInBackoff() async throws {
+        let mock = MockHestiaAPI()
+        let events = RecordedEvents()
+        let retry = EventRetryGate()
+        let app = makeApp(mock: mock, events: events, retry: retry)
+        defer {
+            app.enterBackground()
+            Task { await retry.finish() }
+        }
+        try await connectLive(app, mock: mock, events: events)
+        let waitingTask = try XCTUnwrap(app.eventTask)
+        await mock.setDiscoveryError(APIError.http(503))
+        events.send(.change(node: nil))
+        try await waitUntil("the failed snapshot's retry delay") { await retry.delays.count == 1 }
+        XCTAssertNotNil(app.eventTask)
+        XCTAssertEqual(events.starts, 1)
+
+        await mock.setDiscovery(makeDiscovery(["2": .init(_type: "blind")]))
+        await app.refresh()
+        try await waitUntil("SSE to reopen before the held backoff ends") { events.isOpen(2) }
+        await retry.release()
+        await waitingTask.value
+
+        XCTAssertTrue(events.isOpen(2))
+        XCTAssertEqual(events.starts, 2)
+        XCTAssertEqual(app.rooms.flatMap(\.devices).map(\.id), ["2"])
+        let snapshots = await mock.count(.discovery)
+        let delays = await retry.delays
+        XCTAssertEqual(snapshots, 4)
+        XCTAssertEqual(delays, [.seconds(1)])
     }
 
     func testSSEDenial403StopsWithoutReconnectLoopAnd401LogsOut() async throws {

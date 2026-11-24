@@ -44,4 +44,179 @@ final class HomeAndSettingsTests: XCTestCase {
         XCTAssertFalse(homePairing.isPresented(accessGeneration: app.receiptAccessGeneration))
         XCTAssertFalse(settingsPairing.isPresented(accessGeneration: app.receiptAccessGeneration))
     }
+
+    func testReceiptAccessWithdrawalInvalidatesAnOpenFlowAndRetainedAPI() async throws {
+        let api = MockHestiaAPI()
+        let app = AppState(api: api)
+        let grant = receiptGrant(matching: true)
+        await api.setCapabilities(grant)
+        await app.connect()
+
+        let generation = app.receiptAccessGeneration
+        let originalAPI = try XCTUnwrap(app.receiptsAPI)
+        let originalFlow = try XCTUnwrap(app.makeReceiptFlow())
+        XCTAssertTrue(originalFlow.canMatchReceipts)
+        originalFlow.useText("Receipt text")
+        await api.setHoldReceiptParse()
+        let pendingRequest = Task { try await originalAPI.parseReceiptText("Receipt text", source: .paste) }
+        defer { Task { await api.releaseReceiptParse() } }
+        try await waitUntil("the receipt request under the original grant") { await api.isReceiptParseHeld }
+
+        await api.setCapabilities(.init())
+        await app.refresh()
+
+        let withdrawnGeneration = app.receiptAccessGeneration
+        XCTAssertGreaterThan(withdrawnGeneration, generation)
+        XCTAssertNil(app.receiptsAPI)
+        XCTAssertNil(app.makeReceiptFlow())
+        XCTAssertFalse(originalFlow.canMatchReceipts)
+
+        await api.setCapabilities(grant)
+        await app.refresh()
+
+        XCTAssertEqual(app.receiptAccessGeneration, withdrawnGeneration)
+        XCTAssertFalse(originalFlow.canMatchReceipts)
+        let before = await api.count(.capabilities)
+        await api.releaseReceiptParse()
+        await assertReceiptError(try await pendingRequest.value, .forbidden)
+        XCTAssertNil(app.notice)
+        let after = await api.count(.capabilities)
+        XCTAssertEqual(after, before)
+
+        await api.setReceiptParseResult(try sampleReceipt())
+        do {
+            _ = try await originalAPI.parseReceiptText("Receipt text", source: .paste)
+            XCTFail("The retained API must cancel requests after its grant was withdrawn")
+        } catch is CancellationError {
+            // The original API must not send a request using the restored grant.
+        }
+        await originalFlow.send()
+        XCTAssertEqual(originalFlow.step, .edit)
+        XCTAssertNil(originalFlow.error)
+        let obsoleteParseCalls = await api.count(.parseReceipt)
+        XCTAssertEqual(obsoleteParseCalls, 1)
+
+        let newFlow = try XCTUnwrap(app.makeReceiptFlow())
+        XCTAssertTrue(newFlow.canMatchReceipts)
+        newFlow.useText("Receipt text")
+        await newFlow.send()
+        XCTAssertEqual(newFlow.step, .review)
+        XCTAssertFalse(newFlow.candidates.isEmpty)
+        let newParseCalls = await api.count(.parseReceipt)
+        XCTAssertEqual(newParseCalls, 2)
+    }
+
+    func testReceiptFlowMatchGrantUpdatesOpenReview() async throws {
+        let api = MockHestiaAPI()
+        let app = AppState(api: api)
+        let matchingGrant = receiptGrant(matching: true)
+        await api.setCapabilities(matchingGrant)
+        await api.setReceiptParseResult(try sampleReceipt())
+        await app.connect()
+
+        let generation = app.receiptAccessGeneration
+        let openReview = try XCTUnwrap(app.makeReceiptFlow())
+        openReview.useText("Receipt text")
+        await openReview.send()
+        XCTAssertEqual(openReview.step, .review)
+        XCTAssertFalse(openReview.candidates.isEmpty)
+        XCTAssertNotNil(openReview.form.candidate)
+
+        await api.setCapabilities(receiptGrant())
+        await app.refresh()
+
+        XCTAssertEqual(app.receiptAccessGeneration, generation)
+        XCTAssertNotNil(app.receiptsAPI)
+        XCTAssertFalse(openReview.canMatchReceipts)
+        XCTAssertEqual(openReview.parsed?.candidates.count, 0)
+        XCTAssertNil(openReview.form.candidate)
+
+        let newReview = try XCTUnwrap(app.makeReceiptFlow())
+        newReview.useText("Receipt text")
+        await newReview.send()
+        XCTAssertEqual(newReview.step, .review)
+        XCTAssertEqual(newReview.parsed?.candidates.count, 0)
+        XCTAssertNil(newReview.form.candidate)
+
+        await api.setCapabilities(matchingGrant)
+        await app.refresh()
+
+        XCTAssertEqual(app.receiptAccessGeneration, generation)
+        XCTAssertTrue(openReview.canMatchReceipts)
+        XCTAssertTrue(openReview.candidates.isEmpty)
+        XCTAssertNil(openReview.form.candidate)
+    }
+
+    func testPausedReceiptDenialDoesNotRefreshANewerSession() async throws {
+        let api = MockHestiaAPI()
+        let app = AppState(api: api, receiptPairing: ReceiptPairing(store: MemoryDeviceTokenStore()))
+        await api.setCapabilities(receiptGrant(user: "old"))
+        await app.connect()
+
+        let receipts = try XCTUnwrap(app.receiptsAPI)
+        await api.setHoldReceiptParse()
+        let request = Task { try await receipts.parseReceiptText("Receipt text", source: .paste) }
+        defer { Task { await api.releaseReceiptParse() } }
+        try await waitUntil("the old receipt request") { await api.isReceiptParseHeld }
+
+        await app.signOut()
+        let newGrant = receiptGrant(user: "new")
+        await api.setCapabilities(newGrant)
+        await app.connect()
+        let before = await api.count(.capabilities)
+
+        await api.releaseReceiptParse()
+        await assertReceiptError(try await request.value, .forbidden)
+
+        XCTAssertEqual(app.phase, .ready)
+        XCTAssertEqual(app.capabilities, newGrant)
+        XCTAssertNil(app.notice)
+        let after = await api.count(.capabilities)
+        XCTAssertEqual(after, before)
+    }
+
+    func testPausedReceiptDenialStillRefreshesAfterDiscoveryGenerationChanges() async throws {
+        let api = MockHestiaAPI()
+        let app = AppState(api: api)
+        let grant = receiptGrant()
+        await api.setCapabilities(grant)
+        await app.connect()
+
+        let generation = app.receiptAccessGeneration
+        let receipts = try XCTUnwrap(app.receiptsAPI)
+        await api.setHoldReceiptParse()
+        let request = Task { try await receipts.parseReceiptText("Receipt text", source: .paste) }
+        defer { Task { await api.releaseReceiptParse() } }
+        try await waitUntil("the receipt request") { await api.isReceiptParseHeld }
+
+        // Republishing the same receipt-only grants resets discovery without
+        // changing the receipt generation or replacing the session.
+        await app.refresh()
+        XCTAssertEqual(app.capabilities, grant)
+        XCTAssertEqual(app.receiptAccessGeneration, generation)
+        XCTAssertNil(app.notice)
+        let before = await api.count(.capabilities)
+
+        let refreshedGrant = receiptGrant(matching: true)
+        await api.setCapabilities(refreshedGrant)
+        await api.releaseReceiptParse()
+        await assertReceiptError(try await request.value, .forbidden)
+
+        XCTAssertEqual(app.notice, .forbidden)
+        try await waitUntil("the receipt denial refresh") { app.capabilities == refreshedGrant }
+        XCTAssertEqual(app.phase, .ready)
+        XCTAssertEqual(app.receiptAccessGeneration, generation)
+        let after = await api.count(.capabilities)
+        XCTAssertEqual(after, before + 1)
+    }
+
+    private func receiptGrant(user: String? = nil, matching: Bool = false) -> Capabilities {
+        var permissions: Set<Permission> = [.budgetReceiptsAdd]
+        if matching { permissions.insert(.budgetReceiptsMatch) }
+        return Capabilities(user: user, delegatedReceipts: .init(permissions: permissions, canUse: true))
+    }
+
+    private func sampleReceipt() throws -> ReceiptParseResult {
+        try JSONDecoder().decode(ReceiptParseResult.self, from: Data(sampleParseJSON.utf8))
+    }
 }

@@ -8,7 +8,7 @@ import OSLog
 enum EventStream {
     static let log = Logger(subsystem: "ie.klatt.vesta", category: "sse")
 
-    enum Event: Sendable {
+    enum Event: Equatable, Sendable {
         case connected            // stream is live — reset reconnect backoff
         case change(node: Int?)   // a state frame (node id, or nil for activity/discovery)
         case unauthorized
@@ -20,7 +20,7 @@ enum EventStream {
         let node: Int?
     }
 
-    static func changes() -> AsyncStream<Event> {
+    static func changes(session: URLSession = HTTPSession.shared) -> AsyncStream<Event> {
         AsyncStream { continuation in
             let task = Task {
                 let url = AppConfig.serverURL.appendingPathComponent("api/events")
@@ -31,7 +31,7 @@ enum EventStream {
                 }
                 log.debug("SSE connecting \(url.absoluteString, privacy: .public)")
                 do {
-                    let (bytes, response) = try await HTTPSession.shared.bytes(for: request)
+                    let (bytes, response) = try await session.bytes(for: request)
                     let status = (response as? HTTPURLResponse)?.statusCode
                     guard status == 200 else {
                         if status == 401 { continuation.yield(.unauthorized) }
