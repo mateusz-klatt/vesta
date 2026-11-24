@@ -3075,6 +3075,1254 @@
         ],
         "title": "WholeHomeRequest",
         "type": "object"
+      },
+      "BudgetAccountStatus": {
+        "properties": {
+          "components": {
+            "$ref": "#/components/schemas/BudgetComponents"
+          },
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "control_version": {
+            "title": "Control Version",
+            "type": "integer"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "kind_confirmed_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "title": "Kind Confirmed At"
+          },
+          "last_attempt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "title": "Last Attempt"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Last Error"
+          },
+          "last_success": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "title": "Last Success"
+          },
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "enabled",
+          "configured",
+          "paused",
+          "control_version",
+          "kind",
+          "components"
+        ],
+        "title": "BudgetAccountStatus",
+        "type": "object"
+      },
+      "BudgetAnalyticsAnnotation": {
+        "properties": {
+          "category_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Category Id"
+          },
+          "display_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Display Label"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Label"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "mode",
+          "kind",
+          "stale"
+        ],
+        "title": "BudgetAnalyticsAnnotation",
+        "type": "object"
+      },
+      "BudgetAnalyticsEffective": {
+        "properties": {
+          "category_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Category Id"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "rule_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Rule Id"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "source"
+        ],
+        "title": "BudgetAnalyticsEffective",
+        "type": "object"
+      },
+      "BudgetAnalyticsMetadata": {
+        "properties": {
+          "creditor_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Creditor Name"
+          },
+          "debtor_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Debtor Name"
+          },
+          "mcc": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Mcc"
+          }
+        },
+        "title": "BudgetAnalyticsMetadata",
+        "type": "object"
+      },
+      "BudgetAnalyticsMonthlyBudget": {
+        "description": "Read-only owner-private monthly budget dashboard evaluated in Europe/Warsaw from one snapshot.",
+        "properties": {
+          "available_currencies": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Available Currencies",
+            "type": "array"
+          },
+          "card_exposure": {
+            "$ref": "#/components/schemas/BudgetAnalyticsMonthlyBudgetCardExposure"
+          },
+          "category_spend": {
+            "items": {
+              "$ref": "#/components/schemas/BudgetAnalyticsMonthlyBudgetCategorySpend"
+            },
+            "title": "Category Spend",
+            "type": "array"
+          },
+          "configuration": {
+            "$ref": "#/components/schemas/BudgetAnalyticsMonthlyBudgetConfiguration"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/BudgetAnalyticsMonthlyBudgetCoverage"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "current_month": {
+            "title": "Current Month",
+            "type": "string"
+          },
+          "cutoff": {
+            "title": "Cutoff",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "evaluated_at": {
+            "title": "Evaluated At",
+            "type": "number"
+          },
+          "evaluation_date": {
+            "title": "Evaluation Date",
+            "type": "string"
+          },
+          "evaluation_timezone": {
+            "const": "Europe/Warsaw",
+            "title": "Evaluation Timezone",
+            "type": "string"
+          },
+          "expected_income": {
+            "$ref": "#/components/schemas/BudgetAnalyticsMonthlyBudgetExpectedIncome"
+          },
+          "pace": {
+            "$ref": "#/components/schemas/BudgetAnalyticsMonthlyBudgetPace"
+          },
+          "pass_through": {
+            "$ref": "#/components/schemas/BudgetAnalyticsMonthlyBudgetPassThrough"
+          },
+          "period": {
+            "title": "Period",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/BudgetAnalyticsMonthlyBudgetSummary"
+          }
+        },
+        "required": [
+          "period",
+          "start",
+          "end",
+          "cutoff",
+          "current_month",
+          "evaluated_at",
+          "evaluation_date",
+          "evaluation_timezone",
+          "currency",
+          "available_currencies",
+          "configuration",
+          "coverage",
+          "category_spend",
+          "card_exposure"
+        ],
+        "title": "BudgetAnalyticsMonthlyBudget",
+        "type": "object"
+      },
+      "BudgetAnalyticsMonthlyBudgetCardExposure": {
+        "properties": {
+          "amount": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Amount"
+          },
+          "as_of_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "As Of Date"
+          },
+          "status": {
+            "const": "unavailable",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "BudgetAnalyticsMonthlyBudgetCardExposure",
+        "type": "object"
+      },
+      "BudgetAnalyticsMonthlyBudgetCategoryLimit": {
+        "properties": {
+          "monthly_limit": {
+            "title": "Monthly Limit",
+            "type": "string"
+          },
+          "over_by": {
+            "maxLength": 192,
+            "title": "Over By",
+            "type": "string"
+          },
+          "percent_used_floor": {
+            "maxLength": 192,
+            "title": "Percent Used Floor",
+            "type": "string"
+          },
+          "remaining": {
+            "maxLength": 192,
+            "title": "Remaining",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "within",
+              "approaching",
+              "at_limit",
+              "exceeded"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "warning_percent": {
+            "maximum": 99,
+            "minimum": 1,
+            "title": "Warning Percent",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "monthly_limit",
+          "remaining",
+          "over_by",
+          "percent_used_floor",
+          "warning_percent",
+          "status"
+        ],
+        "title": "BudgetAnalyticsMonthlyBudgetCategoryLimit",
+        "type": "object"
+      },
+      "BudgetAnalyticsMonthlyBudgetCategorySpend": {
+        "properties": {
+          "archived": {
+            "title": "Archived",
+            "type": "boolean"
+          },
+          "category_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Category Id"
+          },
+          "color_hue": {
+            "maximum": 359,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ],
+            "title": "Color Hue"
+          },
+          "display_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Display Label"
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Display Name"
+          },
+          "expenses": {
+            "maxLength": 192,
+            "title": "Expenses",
+            "type": "string"
+          },
+          "limit": {
+            "$ref": "#/components/schemas/BudgetAnalyticsMonthlyBudgetCategoryLimit"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Name"
+          },
+          "net_spending": {
+            "maxLength": 192,
+            "title": "Net Spending",
+            "type": "string"
+          },
+          "one_off": {
+            "title": "One Off",
+            "type": "boolean"
+          },
+          "one_off_key": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "One Off Key"
+          },
+          "refunds": {
+            "maxLength": 192,
+            "title": "Refunds",
+            "type": "string"
+          }
+        },
+        "required": [
+          "archived",
+          "expenses",
+          "refunds",
+          "net_spending"
+        ],
+        "title": "BudgetAnalyticsMonthlyBudgetCategorySpend",
+        "type": "object"
+      },
+      "BudgetAnalyticsMonthlyBudgetConfiguration": {
+        "properties": {
+          "income_window": {
+            "$ref": "#/components/schemas/BudgetAnalyticsMonthlyBudgetIncomeWindow"
+          },
+          "source": {
+            "enum": [
+              "bootstrap",
+              "saved",
+              "none"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ready",
+              "unconfigured"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "source"
+        ],
+        "title": "BudgetAnalyticsMonthlyBudgetConfiguration",
+        "type": "object"
+      },
+      "BudgetAnalyticsMonthlyBudgetCoverage": {
+        "properties": {
+          "has_activity": {
+            "title": "Has Activity",
+            "type": "boolean"
+          },
+          "ledger_as_of": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "title": "Ledger As Of"
+          },
+          "pending_row_keys": {
+            "items": {
+              "maxLength": 1153,
+              "minLength": 3,
+              "pattern": "^[^/\\x00-\\x1f\\x7f]{1,128}/[^\\x00-\\x1f\\x7f]{1,1024}$",
+              "type": "string"
+            },
+            "maxItems": 500,
+            "title": "Pending Row Keys",
+            "type": "array"
+          },
+          "pending_row_keys_truncated": {
+            "title": "Pending Row Keys Truncated",
+            "type": "boolean"
+          },
+          "pending_transfer_rows": {
+            "title": "Pending Transfer Rows",
+            "type": "integer"
+          },
+          "provisional": {
+            "title": "Provisional",
+            "type": "boolean"
+          },
+          "purchase_date_fallback_count": {
+            "title": "Purchase Date Fallback Count",
+            "type": "integer"
+          },
+          "stale_selected_accounts": {
+            "title": "Stale Selected Accounts",
+            "type": "integer"
+          },
+          "transfer_scan_limited": {
+            "title": "Transfer Scan Limited",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "stale_selected_accounts",
+          "purchase_date_fallback_count",
+          "pending_transfer_rows",
+          "transfer_scan_limited",
+          "provisional",
+          "has_activity"
+        ],
+        "title": "BudgetAnalyticsMonthlyBudgetCoverage",
+        "type": "object"
+      },
+      "BudgetAnalyticsMonthlyBudgetExpectedIncome": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BudgetAnalyticsMonthlyBudgetExpectedIncomeItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "estimated",
+              "partial",
+              "unavailable",
+              "none",
+              "historical"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "total": {
+            "maxLength": 192,
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Total"
+          }
+        },
+        "required": [
+          "status",
+          "items"
+        ],
+        "title": "BudgetAnalyticsMonthlyBudgetExpectedIncome",
+        "type": "object"
+      },
+      "BudgetAnalyticsMonthlyBudgetExpectedIncomeItem": {
+        "properties": {
+          "amount": {
+            "maxLength": 192,
+            "title": "Amount",
+            "type": "string"
+          },
+          "category_id": {
+            "title": "Category Id",
+            "type": "string"
+          },
+          "expected_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Expected Date"
+          },
+          "source": {
+            "const": "previous_month",
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "category_id",
+          "amount",
+          "source"
+        ],
+        "title": "BudgetAnalyticsMonthlyBudgetExpectedIncomeItem",
+        "type": "object"
+      },
+      "BudgetAnalyticsMonthlyBudgetIncomeWindow": {
+        "properties": {
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "start_day": {
+            "maximum": 28,
+            "minimum": 1,
+            "title": "Start Day",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "start_day"
+        ],
+        "title": "BudgetAnalyticsMonthlyBudgetIncomeWindow",
+        "type": "object"
+      },
+      "BudgetAnalyticsMonthlyBudgetPace": {
+        "properties": {
+          "basis": {
+            "enum": [
+              "received",
+              "received_plus_expected"
+            ],
+            "title": "Basis",
+            "type": "string"
+          },
+          "budget": {
+            "maxLength": 192,
+            "title": "Budget",
+            "type": "string"
+          },
+          "daily_rate": {
+            "$ref": "#/components/schemas/BudgetAnalyticsMonthlyBudgetRatio"
+          },
+          "exhaustion_day": {
+            "maximum": 31,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ],
+            "title": "Exhaustion Day"
+          },
+          "projected_month_spend": {
+            "$ref": "#/components/schemas/BudgetAnalyticsMonthlyBudgetRatio"
+          },
+          "status": {
+            "enum": [
+              "historical",
+              "no_budget",
+              "already_reached",
+              "no_positive_pace",
+              "runs_out",
+              "within_budget"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "basis",
+          "budget",
+          "status"
+        ],
+        "title": "BudgetAnalyticsMonthlyBudgetPace",
+        "type": "object"
+      },
+      "BudgetAnalyticsMonthlyBudgetPassThrough": {
+        "properties": {
+          "matched": {
+            "maxLength": 192,
+            "title": "Matched",
+            "type": "string"
+          },
+          "mortgage_category_id": {
+            "title": "Mortgage Category Id",
+            "type": "string"
+          },
+          "mortgage_debits": {
+            "maxLength": 192,
+            "title": "Mortgage Debits",
+            "type": "string"
+          },
+          "mortgage_refunds": {
+            "maxLength": 192,
+            "title": "Mortgage Refunds",
+            "type": "string"
+          },
+          "rent_category_id": {
+            "title": "Rent Category Id",
+            "type": "string"
+          },
+          "rent_received": {
+            "maxLength": 192,
+            "title": "Rent Received",
+            "type": "string"
+          },
+          "unapplied_mortgage_refunds": {
+            "maxLength": 192,
+            "title": "Unapplied Mortgage Refunds",
+            "type": "string"
+          },
+          "unapplied_rent": {
+            "maxLength": 192,
+            "title": "Unapplied Rent",
+            "type": "string"
+          },
+          "uncovered_mortgage": {
+            "maxLength": 192,
+            "title": "Uncovered Mortgage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rent_category_id",
+          "mortgage_category_id",
+          "rent_received",
+          "mortgage_debits",
+          "mortgage_refunds",
+          "unapplied_mortgage_refunds",
+          "matched",
+          "unapplied_rent",
+          "uncovered_mortgage"
+        ],
+        "title": "BudgetAnalyticsMonthlyBudgetPassThrough",
+        "type": "object"
+      },
+      "BudgetAnalyticsMonthlyBudgetRatio": {
+        "properties": {
+          "denominator": {
+            "minimum": 1,
+            "title": "Denominator",
+            "type": "integer"
+          },
+          "numerator": {
+            "maxLength": 192,
+            "title": "Numerator",
+            "type": "string"
+          }
+        },
+        "required": [
+          "numerator",
+          "denominator"
+        ],
+        "title": "BudgetAnalyticsMonthlyBudgetRatio",
+        "type": "object"
+      },
+      "BudgetAnalyticsMonthlyBudgetSummary": {
+        "properties": {
+          "remaining": {
+            "maxLength": 192,
+            "title": "Remaining",
+            "type": "string"
+          },
+          "spent": {
+            "maxLength": 192,
+            "title": "Spent",
+            "type": "string"
+          },
+          "start_budget": {
+            "maxLength": 192,
+            "title": "Start Budget",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start_budget",
+          "spent",
+          "remaining"
+        ],
+        "title": "BudgetAnalyticsMonthlyBudgetSummary",
+        "type": "object"
+      },
+      "BudgetAnalyticsTransaction": {
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "amount": {
+            "pattern": "^[0-9]+(?:\\.[0-9]+)?$",
+            "title": "Amount",
+            "type": "string"
+          },
+          "annotation": {
+            "$ref": "#/components/schemas/BudgetAnalyticsAnnotation"
+          },
+          "api_observed_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "title": "Api Observed At"
+          },
+          "booking_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Booking Date"
+          },
+          "counterparty_account": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Counterparty Account"
+          },
+          "counterparty_account_key": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Counterparty Account Key"
+          },
+          "credit_debit_indicator": {
+            "enum": [
+              "CRDT",
+              "DBIT"
+            ],
+            "title": "Credit Debit Indicator",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "effective": {
+            "$ref": "#/components/schemas/BudgetAnalyticsEffective"
+          },
+          "entry_reference": {
+            "title": "Entry Reference",
+            "type": "string"
+          },
+          "fingerprint": {
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/BudgetAnalyticsMetadata"
+          },
+          "observed_at": {
+            "title": "Observed At",
+            "type": "number"
+          },
+          "remittance_information": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Remittance Information",
+            "type": "array"
+          },
+          "source": {
+            "description": "Currently api or offline_import; clients must handle future values.",
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "const": "BOOK",
+            "title": "Status",
+            "type": "string"
+          },
+          "transaction_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Transaction Date"
+          },
+          "transfer": {
+            "$ref": "#/components/schemas/BudgetAnalyticsTransactionTransfer"
+          },
+          "transfer_fingerprint": {
+            "title": "Transfer Fingerprint",
+            "type": "string"
+          },
+          "value_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Value Date"
+          }
+        },
+        "required": [
+          "entry_reference",
+          "amount",
+          "currency",
+          "credit_debit_indicator",
+          "status",
+          "remittance_information",
+          "source",
+          "observed_at",
+          "account_id",
+          "fingerprint",
+          "transfer_fingerprint",
+          "annotation",
+          "effective",
+          "transfer"
+        ],
+        "title": "BudgetAnalyticsTransaction",
+        "type": "object"
+      },
+      "BudgetAnalyticsTransactionTransfer": {
+        "properties": {
+          "ambiguous": {
+            "title": "Ambiguous",
+            "type": "boolean"
+          },
+          "candidate_count": {
+            "title": "Candidate Count",
+            "type": "integer"
+          },
+          "decision_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Decision Id"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "candidate_count",
+          "ambiguous"
+        ],
+        "title": "BudgetAnalyticsTransactionTransfer",
+        "type": "object"
+      },
+      "BudgetAnalyticsTransactions": {
+        "properties": {
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "filtered_total": {
+            "title": "Filtered Total",
+            "type": "integer"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Next Cursor"
+          },
+          "period": {
+            "title": "Period",
+            "type": "string"
+          },
+          "snapshot_digest": {
+            "title": "Snapshot Digest",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "transactions": {
+            "items": {
+              "$ref": "#/components/schemas/BudgetAnalyticsTransaction"
+            },
+            "title": "Transactions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "period",
+          "start",
+          "end",
+          "snapshot_digest",
+          "transactions",
+          "filtered_total"
+        ],
+        "title": "BudgetAnalyticsTransactions",
+        "type": "object"
+      },
+      "BudgetComponentStatus": {
+        "description": "Independent API freshness and effective component/shared retry policy.",
+        "properties": {
+          "age_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "title": "Age Seconds"
+          },
+          "failures": {
+            "title": "Failures",
+            "type": "integer"
+          },
+          "last_attempt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "title": "Last Attempt"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Last Error"
+          },
+          "last_success": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "title": "Last Success"
+          },
+          "next_attempt": {
+            "title": "Next Attempt",
+            "type": "number"
+          },
+          "retry_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "title": "Retry At"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "stale_after_seconds": {
+            "title": "Stale After Seconds",
+            "type": "integer"
+          },
+          "state": {
+            "description": "Currently blocked, running, error, deferred, never, ready or ok; clients must handle future values.",
+            "title": "State",
+            "type": "string"
+          },
+          "suspended": {
+            "title": "Suspended",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "failures",
+          "next_attempt",
+          "state",
+          "suspended",
+          "stale",
+          "stale_after_seconds"
+        ],
+        "title": "BudgetComponentStatus",
+        "type": "object"
+      },
+      "BudgetComponents": {
+        "properties": {
+          "balances": {
+            "$ref": "#/components/schemas/BudgetComponentStatus"
+          },
+          "transactions": {
+            "$ref": "#/components/schemas/BudgetComponentStatus"
+          }
+        },
+        "required": [
+          "transactions",
+          "balances"
+        ],
+        "title": "BudgetComponents",
+        "type": "object"
+      },
+      "BudgetConnectionStatus": {
+        "properties": {
+          "accounts": {
+            "items": {
+              "$ref": "#/components/schemas/BudgetAccountStatus"
+            },
+            "title": "Accounts",
+            "type": "array"
+          },
+          "configured_accounts": {
+            "title": "Configured Accounts",
+            "type": "integer"
+          },
+          "connection": {
+            "title": "Connection",
+            "type": "string"
+          },
+          "control_version": {
+            "title": "Control Version",
+            "type": "integer"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "failures": {
+            "title": "Failures",
+            "type": "integer"
+          },
+          "last_attempt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "title": "Last Attempt"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "Last Error"
+          },
+          "last_success": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "title": "Last Success"
+          },
+          "next_attempt": {
+            "title": "Next Attempt",
+            "type": "number"
+          },
+          "offline_imports": {
+            "title": "Offline Imports",
+            "type": "integer"
+          },
+          "offline_transactions": {
+            "title": "Offline Transactions",
+            "type": "integer"
+          },
+          "offline_unresolved": {
+            "title": "Offline Unresolved",
+            "type": "integer"
+          },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          },
+          "renewal_due": {
+            "title": "Renewal Due",
+            "type": "boolean"
+          },
+          "request_limits": {
+            "$ref": "#/components/schemas/BudgetSharedState"
+          },
+          "selected_accounts": {
+            "title": "Selected Accounts",
+            "type": "integer"
+          },
+          "selection_policy_version": {
+            "minimum": 1,
+            "title": "Selection Policy Version",
+            "type": "integer"
+          },
+          "transactions": {
+            "title": "Transactions",
+            "type": "integer"
+          },
+          "uncertain_transactions": {
+            "title": "Uncertain Transactions",
+            "type": "integer"
+          },
+          "unresolved": {
+            "title": "Unresolved",
+            "type": "integer"
+          },
+          "valid_until": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "title": "Valid Until"
+          }
+        },
+        "required": [
+          "connection",
+          "owner",
+          "enabled",
+          "paused",
+          "control_version",
+          "selection_policy_version",
+          "configured_accounts",
+          "selected_accounts",
+          "transactions",
+          "unresolved",
+          "uncertain_transactions",
+          "offline_imports",
+          "offline_transactions",
+          "offline_unresolved",
+          "next_attempt",
+          "failures",
+          "request_limits",
+          "renewal_due",
+          "accounts"
+        ],
+        "title": "BudgetConnectionStatus",
+        "type": "object"
+      },
+      "BudgetSharedState": {
+        "properties": {
+          "next_attempt": {
+            "title": "Next Attempt",
+            "type": "number"
+          },
+          "retry_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "title": "Retry At"
+          },
+          "suspended": {
+            "title": "Suspended",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "next_attempt",
+          "suspended"
+        ],
+        "title": "BudgetSharedState",
+        "type": "object"
+      },
+      "BudgetStatus": {
+        "properties": {
+          "status": {
+            "items": {
+              "$ref": "#/components/schemas/BudgetConnectionStatus"
+            },
+            "title": "Status",
+            "type": "array"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "BudgetStatus",
+        "type": "object"
       }
     }
   },
@@ -4886,6 +6134,397 @@
           }
         },
         "summary": "Opt one device in/out of the house-wide \"all\" sweeps",
+        "x-required-role": "admin"
+      }
+    },
+    "/api/budget/analytics/monthly-budget": {
+      "get": {
+        "description": "Pure read-only single-snapshot monthly budget dashboard evaluated in Europe/Warsaw from one UTC instant. Computes booked configured start budget, adjusted category spending and limits, rent/mortgage pass-through, unresolved transfer and repayment candidate provisional flags, previous-month expected income estimates (including cross-account salary matching), and spending pace. Card exposure is reported as unavailable in P1. Makes no bank requests and no database writes.",
+        "operationId": "getBudgetAnalyticsMonthlyBudget",
+        "parameters": [
+          {
+            "description": "Optional calendar month YYYY-MM, 1900 through the current Europe/Warsaw month; defaults to current month.",
+            "in": "query",
+            "name": "period",
+            "required": false,
+            "schema": {
+              "pattern": "^[0-9]{4}-[0-9]{2}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional uppercase 3-letter ISO currency code; defaults to PLN.",
+            "in": "query",
+            "name": "currency",
+            "required": false,
+            "schema": {
+              "default": "PLN",
+              "pattern": "^[A-Z]{3}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetAnalyticsMonthlyBudget"
+                }
+              }
+            },
+            "description": "Owner-private monthly budget dashboard and ledger coverage from one local snapshot."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Invalid monthly budget query: period must match ^[0-9]{4}-[0-9]{2}$ through the current Europe/Warsaw month, currency must match ^[A-Z]{3}$, and unknown or duplicate parameters are rejected."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "session required; middleware may return an empty body"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "admin owner or browser-origin requirement failed; middleware may return an empty body"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "unknown, disabled or foreign resource"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "SQLite backend required: monthly-budget requires HESTIA_PERSIST=sqlite."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Monthly budget limit exceeded (>100,000 selected rows, >1,000 category limits, >192-character aggregate decimal output, or >4 MiB UTF-8 JSON payload); no partial totals returned."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Stored ledger, category, limit, metadata, or timestamp integrity check failed (`budget_analytics_data_error`), including stored-data helper errors mapped to 500 after query validation, or unexpected internal failure (`budget_internal_error`)."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Analytics storage, Europe/Warsaw time zone, or monthly budget configuration unavailable (`budget_analytics_unavailable` or `budget_unavailable`)."
+          }
+        },
+        "summary": "Read the owner-private monthly budget dashboard",
+        "x-required-role": "admin"
+      }
+    },
+    "/api/budget/analytics/transactions": {
+      "get": {
+        "operationId": "getBudgetAnalyticsTransactions",
+        "parameters": [
+          {
+            "description": "Inclusive calendar month or year, 1900 through 9999.",
+            "in": "query",
+            "name": "period",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9]{4}(?:-[0-9]{2})?$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "currency",
+            "required": false,
+            "schema": {
+              "pattern": "^[A-Z]{3}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Category ID, or uncategorised for no category.",
+            "in": "query",
+            "name": "category_id",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "query",
+            "required": false,
+            "schema": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque cursor bound to the current projection. A changed snapshot returns 409.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "maxLength": 8192,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetAnalyticsTransactions"
+                }
+              }
+            },
+            "description": "owner-scoped stored state; no bank request"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "session required; middleware may return an empty body"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "admin owner or browser-origin requirement failed; middleware may return an empty body"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "unknown, disabled or foreign resource"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Version, financial source, reserved transfer leg, preview or cursor changed; reload and review."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Explicit analytics processing or owner configuration limit; no partial totals."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "internal error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "budget configuration unavailable"
+          }
+        },
+        "summary": "Read owner-private local budget analytics",
+        "x-required-role": "admin"
+      }
+    },
+    "/api/budget/status": {
+      "get": {
+        "description": "Requires an authenticated SQLite admin owner. Reads never contact a bank.",
+        "operationId": "getBudgetStatus",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetStatus"
+                }
+              }
+            },
+            "description": "owner-scoped stored state; no bank request"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "session required; middleware may return an empty body"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "admin owner or browser-origin requirement failed; middleware may return an empty body"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "unknown, disabled or foreign resource"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "SQLite session users required"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "internal error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "budget configuration unavailable"
+          }
+        },
+        "summary": "Stored component freshness and acquisition health",
         "x-required-role": "admin"
       }
     }

@@ -72,6 +72,7 @@ final class AppState {
     /// The logout (and unpair) a backend change runs. A login waits for it, or
     /// that deferred logout would cancel the new session's login.
     private var resetTask: Task<Void, Never>?
+    private weak var activeBudgetStore: BudgetStore?
 
     private struct DiscoveryFence: Equatable {
         let session: Int
@@ -132,6 +133,28 @@ final class AppState {
         sessionGeneration == session && receiptAccessGeneration == generation && capabilities?.canUseReceipts == true
     }
 
+
+    /// Native budget reads stay hidden until hestia advertises
+    /// `budget_native_read` and capabilities grant `budget.view` (V2 plan §10).
+    /// Nothing in production turns this on yet; tests do.
+    var nativeBudgetEnabled = false
+    var budgetAPI: (any BudgetAPI)? {
+        guard nativeBudgetEnabled, capabilities?.effectiveDeviceEligiblePermissions.contains(.budgetView) == true else { return nil }
+        return api as? any BudgetAPI
+    }
+
+    func makeBudgetStore(now: Date = Date()) -> BudgetStore? {
+        guard let api = budgetAPI else { return nil }
+        closeBudget()
+        let store = BudgetStore(api: api, now: now)
+        activeBudgetStore = store
+        return store
+    }
+
+    func closeBudget() {
+        activeBudgetStore?.clear()
+        activeBudgetStore = nil
+    }
     var hasLights: Bool { allDevices.contains { $0.device._type == "light" } }
     var hasBlinds: Bool { allDevices.contains { $0.device._type == "blind" } }
 
@@ -297,6 +320,7 @@ final class AppState {
     }
 
     private func clearAuthorization() {
+        closeBudget()
         activeCapabilitiesRefresh?.task.cancel()
         activeCapabilitiesRefresh = nil
         publishCapabilities(nil)

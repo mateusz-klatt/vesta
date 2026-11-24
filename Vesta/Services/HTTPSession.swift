@@ -34,8 +34,39 @@ final class HestiaRedirectDelegate: NSObject, URLSessionTaskDelegate {
         let defaultPort = scheme == "https" ? 443 : 80
         guard (original.port ?? defaultPort) == (target.port ?? defaultPort) else { return nil }
 
-        // Receipt requests carry a scoped credential and can contain sensitive JSON.
-        guard !original.path.hasPrefix("/api/budget/receipts/") else { return nil }
+        // Budget routes use a scoped device credential (or must never be reached by
+        // redirecting a session-authenticated request below the bearer middleware).
+        guard !Self.isBudgetPath(original),
+              !Self.isBudgetPath(target),
+              task.currentRequest?.url.map(Self.isBudgetPath) != true,
+              response.url.map(Self.isBudgetPath) != true
+        else { return nil }
         return request
+    }
+
+    private static func isBudgetPath(_ url: URL) -> Bool {
+        guard let rawPath = URLComponents(url: url, resolvingAgainstBaseURL: true)?.percentEncodedPath,
+              let decoded = rawPath.removingPercentEncoding
+        else { return true }
+
+        // Reject encoded slashes before or after decoding, and any backslash.
+        if rawPath.range(of: "%2f", options: .caseInsensitive) != nil
+            || decoded.range(of: "%2f", options: .caseInsensitive) != nil
+            || decoded.contains("\\") {
+            return true
+        }
+
+        var segments: [Substring] = []
+        for segment in decoded.split(separator: "/", omittingEmptySubsequences: true) {
+            if segment == "." {
+                continue
+            } else if segment == ".." {
+                if !segments.isEmpty { segments.removeLast() }
+            } else {
+                segments.append(segment)
+            }
+        }
+        let normalized = "/" + segments.joined(separator: "/").lowercased()
+        return normalized == "/api/budget" || normalized.hasPrefix("/api/budget/")
     }
 }

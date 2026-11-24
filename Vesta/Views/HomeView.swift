@@ -7,6 +7,7 @@ struct HomeView: View {
     @State private var showSettings = false
     @State private var pairingPresentation = ReceiptPairingPresentation()
     @State private var receiptFlow: (flow: ReceiptFlow, accessGeneration: Int)?
+    @State private var budgetStore: BudgetStore?
 
     var body: some View {
         NavigationStack {
@@ -40,6 +41,14 @@ struct HomeView: View {
             .background(Theme.background)
             .navigationTitle("Rooms")
             .toolbar {
+                if app.budgetAPI != nil {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { budgetStore = app.makeBudgetStore() } label: {
+                            Image(systemName: "chart.pie")
+                        }
+                        .accessibilityLabel("Budget")
+                    }
+                }
                 if app.receiptsAPI != nil {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button {
@@ -67,6 +76,18 @@ struct HomeView: View {
             .sheet(isPresented: Binding(get: { receiptFlow != nil }, set: { if !$0 { closeReceipt() } })) {
                 if let receiptFlow { ReceiptScanView(flow: receiptFlow.flow).appLanguage(app.appLanguage) }
             }
+            .sheet(isPresented: Binding(get: { budgetStore != nil }, set: { if !$0 { closeBudget() } })) {
+                if let budgetStore {
+                    BudgetView(store: budgetStore, onClose: closeBudget).appLanguage(app.appLanguage)
+                }
+            }
+            .onChange(of: app.budgetAPI == nil) { _, signedOut in
+                if signedOut { closeBudget() }
+            }
+            .onChange(of: app.phase) { _, phase in
+                if phase != .ready { closeBudget() }
+            }
+            .onDisappear { closeBudget() }
             .onChange(of: app.receiptAccessGeneration) { _, generation in
                 if receiptFlow?.accessGeneration != generation { closeReceipt() }
             }
@@ -85,6 +106,12 @@ struct HomeView: View {
         guard let flow = receiptFlow?.flow else { return }
         receiptFlow = nil
         Task { await flow.abandon() }
+    }
+
+    private func closeBudget() {
+        app.closeBudget()
+        budgetStore?.clear()
+        budgetStore = nil
     }
 }
 
