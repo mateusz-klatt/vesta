@@ -1014,6 +1014,57 @@ struct StubRecognizer: ReceiptTextRecognizing {
 }
 
 @MainActor
+final class ReceiptTests: XCTestCase {
+    @MainActor
+    private final class MatchGrant {
+        var isGranted = true
+    }
+
+    func testMatchLossClearsOpenReviewCandidatesAndFormSelection() async throws {
+        let api = MockReceiptsAPI()
+        let matchGrant = MatchGrant()
+        let flow = ReceiptFlow(api: api, allowsMatching: { matchGrant.isGranted }, janitor: ReceiptDraftJanitor())
+        flow.useText("Receipt text")
+        await flow.send()
+
+        XCTAssertEqual(flow.step, .review)
+        XCTAssertFalse(flow.candidates.isEmpty)
+        XCTAssertNotNil(flow.form.candidate)
+
+        matchGrant.isGranted = false
+        flow.updateMatchAccess()
+
+        XCTAssertEqual(flow.step, .review)
+        XCTAssertTrue(flow.candidates.isEmpty)
+        XCTAssertNil(flow.form.candidate)
+        matchGrant.isGranted = true
+        flow.updateMatchAccess()
+        XCTAssertTrue(flow.candidates.isEmpty)
+        XCTAssertNil(flow.form.candidate)
+
+        await flow.backToEdit()
+        await api.holdNextParse()
+        let reading = Task { await flow.send() }
+        defer { Task { await api.releaseParse() } }
+        try await waitUntil("the held receipt reparse") { await api.calls.count == 3 }
+        matchGrant.isGranted = false
+        flow.updateMatchAccess()
+        await api.releaseParse()
+        await reading.value
+
+        XCTAssertEqual(flow.step, .review)
+        XCTAssertTrue(flow.candidates.isEmpty)
+        XCTAssertNil(flow.form.candidate)
+        await flow.confirm()
+        XCTAssertEqual(flow.step, .done)
+        let calls = await api.calls
+        XCTAssertEqual(calls, [
+            .parse("Receipt text"), .delete(sampleReceiptID, 1), .parse("Receipt text"), .confirm(nil),
+        ])
+    }
+}
+
+@MainActor
 final class ReceiptFlowTests: XCTestCase {
     private func image() -> CGImage {
         let context = CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
