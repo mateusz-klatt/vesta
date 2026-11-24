@@ -2,8 +2,9 @@ import Foundation
 import HTTPTypes
 import OpenAPIRuntime
 
-/// Receipt operations use the device token. Login bearers are restricted to
-/// endpoints outside the budget API.
+/// Receipt operations use the device token. Native budget reads also use the
+/// device token (hestia authz Part C §11, `budget_native_read`), never the login
+/// bearer or a cookie; other budget routes never receive either credential.
 struct BearerAuthMiddleware: ClientMiddleware {
     let token: @Sendable () -> String?
     var receiptPairing: ReceiptPairing?
@@ -15,6 +16,11 @@ struct BearerAuthMiddleware: ClientMiddleware {
         Operations.DeleteBudgetReceipt.id, Operations.RevokeBudgetReceiptDevice.id,
         // The phone does not pin the OpenAPI paths for these read operations.
         "listBudgetReceipts", "searchBudgetReceipts", "getBudgetReceiptDetail", "getBudgetReceiptImage",
+    ]
+    private static let budgetReadOperations: Set<String> = [
+        Operations.GetBudgetAnalyticsMonthlyBudget.id,
+        Operations.GetBudgetAnalyticsTransactions.id,
+        Operations.GetBudgetStatus.id,
     ]
 
     func intercept(
@@ -28,6 +34,17 @@ struct BearerAuthMiddleware: ClientMiddleware {
         let requiresDevice = Self.receiptOperations.contains(operationID)
         let issuesDeviceToken = operationID == Operations.RedeemBudgetReceiptDevice.id
             || operationID == Operations.LoginBudgetReceiptDevice.id
+        if Self.budgetReadOperations.contains(operationID) {
+            request.headerFields[.cookie] = nil
+            request.headerFields[.authorization] = nil
+            // No device token means no request: the session bearer is refused
+            // here by hestia, and sending it would widen its use.
+            guard let device = await receiptPairing?.credential(for: baseURL) else { throw BudgetError.forbidden }
+            request.headerFields[.authorization] = "Bearer \(device.credential.token)"
+            let (response, responseBody) = try await next(request, body, baseURL)
+            guard response.status.code == 200 else { throw BudgetError.from(status: response.status.code) }
+            return (response, responseBody)
+        }
         guard requiresDevice || issuesDeviceToken else {
             if let path = request.path, path == "/api/budget" || path.hasPrefix("/api/budget/") {
                 request.headerFields[.authorization] = nil

@@ -8,6 +8,7 @@ struct HomeView: View {
     @State private var showSettings = false
     @State private var showPairing = false
     @State private var receiptFlow: ReceiptFlow?
+    @State private var budgetStore: BudgetStore?
 
     var body: some View {
         NavigationStack {
@@ -32,6 +33,14 @@ struct HomeView: View {
             .background(Theme.background)
             .navigationTitle("Rooms")
             .toolbar {
+                if let api = app.budgetAPI {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { budgetStore = BudgetStore(api: api) } label: {
+                            Image(systemName: "chart.pie")
+                        }
+                        .accessibilityLabel("Budget")
+                    }
+                }
                 if let api = app.receiptsAPI {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button {
@@ -57,6 +66,12 @@ struct HomeView: View {
             .sheet(isPresented: Binding(get: { receiptFlow != nil }, set: { if !$0 { closeReceipt() } })) {
                 if let receiptFlow { ReceiptScanView(flow: receiptFlow).appLanguage(app.appLanguage) }
             }
+            .sheet(isPresented: Binding(get: { budgetStore != nil }, set: { if !$0 { closeBudget() } })) {
+                if let budgetStore { BudgetView(store: budgetStore).appLanguage(app.appLanguage) }
+            }
+            .onChange(of: app.budgetAPI == nil) { _, signedOut in
+                if signedOut { closeBudget() }
+            }
             .refreshable { await app.loadDiscovery() }
             #if DEBUG
             .onAppear {
@@ -72,6 +87,11 @@ struct HomeView: View {
         guard let flow = receiptFlow else { return }
         receiptFlow = nil
         Task { await flow.abandon() }
+    }
+
+    private func closeBudget() {
+        budgetStore?.clear()
+        budgetStore = nil
     }
 }
 

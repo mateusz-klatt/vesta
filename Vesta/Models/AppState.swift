@@ -58,6 +58,14 @@ final class AppState {
     var receiptsAPI: (any ReceiptsAPI)? {
         Control.canAddReceipts(role: whoami?.role) ? api as? any ReceiptsAPI : nil
     }
+    /// Native budget reads stay hidden until hestia advertises
+    /// `budget_native_read` and capabilities grant `budget.view` (V2 plan §10).
+    /// Nothing in production turns this on yet; tests do.
+    var nativeBudgetEnabled = false
+    var budgetAPI: (any BudgetAPI)? {
+        guard nativeBudgetEnabled, Control.canAddReceipts(role: whoami?.role) else { return nil }
+        return api as? any BudgetAPI
+    }
     var hasLights: Bool { allDevices.contains { $0.device._type == "light" } }
     var hasBlinds: Bool { allDevices.contains { $0.device._type == "blind" } }
 
