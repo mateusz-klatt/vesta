@@ -7,7 +7,7 @@ struct SettingsView: View {
 
     @State private var urlText = ""
     @State private var urlInvalid = false
-    @State private var showPairing = false
+    @State private var pairingPresentation = ReceiptPairingPresentation()
     @State private var pairingMessage: LocalizedStringResource?
 
     /// Languages Vesta ships (matches the String Catalog).
@@ -73,7 +73,7 @@ struct SettingsView: View {
                         } else {
                             Text("Not paired")
                             Button {
-                                showPairing = true
+                                pairingPresentation.present(in: app)
                             } label: {
                                 if app.receiptPairing.status == .pairAgain { Text("Pair again") }
                                 else { Text("Pair iPhone") }
@@ -102,7 +102,7 @@ struct SettingsView: View {
                 urlText = app.backendURLString
                 app.receiptPairing.refreshStatus()
             }
-            .sheet(isPresented: $showPairing) { ReceiptPairingView().appLanguage(app.appLanguage) }
+            .receiptPairingSheet($pairingPresentation, app: app)
         }
     }
 }

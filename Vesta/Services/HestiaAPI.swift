@@ -4,10 +4,12 @@ import Foundation
 /// tested against a mock (the real implementation is ``APIClient``).
 protocol HestiaAPI: Sendable {
     func whoami() async throws -> Components.Schemas.WhoAmI
+    func capabilities() async throws -> Capabilities
     func discovery() async throws -> Components.Schemas.Discovery
     @discardableResult
     func login(user: String, password: String) async throws -> Components.Schemas.LoginSuccess
     func logout() async
+    func invalidateSession() async
     func setSwitch(node: Int, on: Bool, endpoint: Int?) async throws
     func setCover(node: Int, value: Int) async throws
     /// Run a house-wide scene. `value` is the wire position (0–99) for `blindsSet`
@@ -19,6 +21,8 @@ protocol HestiaAPI: Sendable {
 }
 
 extension HestiaAPI {
+    func invalidateSession() async { await logout() }
+
     /// Convenience for the valueless sweeps (lights on/off, blinds up/down).
     func scene(_ op: Components.Schemas.SceneRequest.OpPayload) async throws {
         try await scene(op, value: nil)

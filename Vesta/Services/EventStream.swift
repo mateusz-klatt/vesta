@@ -2,16 +2,17 @@ import Foundation
 import OSLog
 
 /// Consumes hestia's `/api/events` SSE stream. Emits `.connected` once the stream
-/// is live (HTTP 200) so the caller can refetch a fresh snapshot — SSE only carries
-/// *future* events — then a `.change` per device-state frame. A single call covers
+/// is live (HTTP 200), then a `.change` per device-state frame. A single call covers
 /// one connection; hestia closes the stream after its max lifetime (it expects
 /// clients to reconnect, like a browser EventSource), so `AppState` loops over this.
 enum EventStream {
     static let log = Logger(subsystem: "ie.klatt.vesta", category: "sse")
 
     enum Event: Sendable {
-        case connected            // stream is live — caller should snapshot
+        case connected            // stream is live — reset reconnect backoff
         case change(node: Int?)   // a state frame (node id, or nil for activity/discovery)
+        case unauthorized
+        case forbidden
     }
 
     private struct Frame: Decodable {
@@ -31,8 +32,11 @@ enum EventStream {
                 log.debug("SSE connecting \(url.absoluteString, privacy: .public)")
                 do {
                     let (bytes, response) = try await HTTPSession.shared.bytes(for: request)
-                    guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                        log.error("SSE bad status \((response as? HTTPURLResponse)?.statusCode ?? -1)")
+                    let status = (response as? HTTPURLResponse)?.statusCode
+                    guard status == 200 else {
+                        if status == 401 { continuation.yield(.unauthorized) }
+                        if status == 403 { continuation.yield(.forbidden) }
+                        log.error("SSE bad status \(status ?? -1)")
                         continuation.finish()
                         return
                     }

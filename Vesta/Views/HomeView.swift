@@ -1,30 +1,38 @@
 import SwiftUI
 
-/// Rooms home — the wife-friendly surface: live environment, A/C, one-tap
-/// whole-home controls, then devices grouped by room. A viewer-role session sees
-/// everything but controls are disabled. Devices briefly highlight on live events.
+/// Live environment, A/C, whole-home controls and devices grouped by room.
+/// Devices briefly highlight on live events.
 struct HomeView: View {
     @Environment(AppState.self) private var app
     @State private var showSettings = false
-    @State private var showPairing = false
-    @State private var receiptFlow: ReceiptFlow?
+    @State private var pairingPresentation = ReceiptPairingPresentation()
+    @State private var receiptFlow: (flow: ReceiptFlow, accessGeneration: Int)?
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
-                    if let globals = app.globals {
-                        GlobalsHeader(globals: globals)
+                    if let notice = app.notice {
+                        Label { Text(notice.message) } icon: { Image(systemName: "exclamationmark.circle") }
+                            .foregroundStyle(Theme.textSecondary)
+                    } else if !app.canViewIOC {
+                        Label("You don’t have access to rooms.", systemImage: "lock")
+                            .foregroundStyle(Theme.textSecondary)
                     }
-                    if let klima = app.klima, klima.file != nil,
-                       !(klima.powerOn?.additionalProperties.isEmpty ?? true) {
-                        KlimaCard(klima: klima, state: app.klimaState)
-                    }
-                    if app.hasLights || app.hasBlinds {
-                        WholeHomeCard()
-                    }
-                    ForEach(app.rooms) { room in
-                        RoomCard(room: room)
+                    if app.canViewIOC {
+                        if let globals = app.globals {
+                            GlobalsHeader(globals: globals)
+                        }
+                        if let klima = app.klima, klima.file != nil,
+                           !(klima.powerOn?.additionalProperties.isEmpty ?? true) {
+                            KlimaCard(klima: klima, state: app.klimaState)
+                        }
+                        if app.hasLights || app.hasBlinds {
+                            WholeHomeCard()
+                        }
+                        ForEach(app.rooms) { room in
+                            RoomCard(room: room)
+                        }
                     }
                 }
                 .padding()
@@ -32,13 +40,15 @@ struct HomeView: View {
             .background(Theme.background)
             .navigationTitle("Rooms")
             .toolbar {
-                if let api = app.receiptsAPI {
+                if app.receiptsAPI != nil {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button {
                             if app.receiptPairing.status == .paired {
-                                receiptFlow = ReceiptFlow(api: api)
+                                if let flow = app.makeReceiptFlow() {
+                                    receiptFlow = (flow, app.receiptAccessGeneration)
+                                }
                             } else {
-                                showPairing = true
+                                pairingPresentation.present(in: app)
                             }
                         } label: {
                             Image(systemName: app.receiptPairing.status == .paired ? "doc.text.viewfinder" : "link")
@@ -53,11 +63,14 @@ struct HomeView: View {
                 }
             }
             .sheet(isPresented: $showSettings) { SettingsView().appLanguage(app.appLanguage) }
-            .sheet(isPresented: $showPairing) { ReceiptPairingView().appLanguage(app.appLanguage) }
+            .receiptPairingSheet($pairingPresentation, app: app)
             .sheet(isPresented: Binding(get: { receiptFlow != nil }, set: { if !$0 { closeReceipt() } })) {
-                if let receiptFlow { ReceiptScanView(flow: receiptFlow).appLanguage(app.appLanguage) }
+                if let receiptFlow { ReceiptScanView(flow: receiptFlow.flow).appLanguage(app.appLanguage) }
             }
-            .refreshable { await app.loadDiscovery() }
+            .onChange(of: app.receiptAccessGeneration) { _, generation in
+                if receiptFlow?.accessGeneration != generation { closeReceipt() }
+            }
+            .refreshable { await app.refresh() }
             #if DEBUG
             .onAppear {
                 // Screenshot automation: auto-present Settings for layout capture.
@@ -69,7 +82,7 @@ struct HomeView: View {
 
     /// Sheet gone (Cancel, Done or swipe): drop any open draft server-side.
     private func closeReceipt() {
-        guard let flow = receiptFlow else { return }
+        guard let flow = receiptFlow?.flow else { return }
         receiptFlow = nil
         Task { await flow.abandon() }
     }

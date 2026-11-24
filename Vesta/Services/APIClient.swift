@@ -7,6 +7,7 @@ import OpenAPIURLSession
 /// never surfaced as the primary message.
 enum APIError: LocalizedError, Equatable {
     case unauthorized
+    case forbidden
     case serverNotFound
     case timedOut
     case offline
@@ -18,6 +19,7 @@ enum APIError: LocalizedError, Equatable {
     var title: LocalizedStringResource {
         switch self {
         case .unauthorized: "Sign-in required"
+        case .forbidden: "Not allowed"
         case .serverNotFound: "Server not found"
         case .timedOut: "Server didn’t respond"
         case .offline: "No internet connection"
@@ -31,6 +33,7 @@ enum APIError: LocalizedError, Equatable {
     var message: LocalizedStringResource {
         switch self {
         case .unauthorized: "Enter your username and password."
+        case .forbidden: "You don’t have permission to use this feature."
         case .serverNotFound: "Check the server address and try again."
         case .timedOut: "The server took too long to answer. Check Wi-Fi, VPN, or the server."
         case .offline: "Your iPhone appears to be offline."
@@ -47,6 +50,11 @@ enum APIError: LocalizedError, Equatable {
     }
 
     var errorDescription: String? { String(localized: message) }
+
+    static func isCancellation(_ error: any Error) -> Bool {
+        if let clientError = error as? ClientError { return isCancellation(clientError.underlyingError) }
+        return error is CancellationError || (error as? URLError)?.code == .cancelled
+    }
 
     static func wrap(_ error: any Error) -> APIError {
         if let api = error as? APIError { return api }
@@ -125,7 +133,12 @@ actor APIClient: HestiaAPI {
             case .ok(let ok): return try ok.body.json
             case .undocumented(let code, _): throw mapStatus(code)
             }
-        } catch { throw APIError.wrap(error) }
+        } catch { throw Self.requestError(error) }
+    }
+
+    func capabilities() async throws -> Capabilities {
+        let identity = try await whoami()
+        return Capabilities.fromLegacyRole(role: identity.role, user: identity.user)
     }
 
     func discovery() async throws -> Components.Schemas.Discovery {
@@ -135,7 +148,7 @@ actor APIClient: HestiaAPI {
             case .ok(let ok): return try ok.body.json
             case .undocumented(let code, _): throw mapStatus(code)
             }
-        } catch { throw APIError.wrap(error) }
+        } catch { throw Self.requestError(error) }
     }
 
     @discardableResult
@@ -149,7 +162,7 @@ actor APIClient: HestiaAPI {
             case .unauthorized: throw APIError.unauthorized
             case .undocumented(let code, _): throw mapStatus(code)
             }
-        } catch { throw APIError.wrap(error) }
+        } catch { throw Self.requestError(error) }
         // Actor-isolated, so this check and the save can't interleave with logout().
         guard epoch == authEpoch else { throw CancellationError() }
         if let token = success.token {
@@ -166,6 +179,11 @@ actor APIClient: HestiaAPI {
         _ = try? await client.logout(.init())
         // A login that began after this logout and already saved its token wins.
         guard version == tokenVersion else { return }
+        clearToken()
+    }
+
+    func invalidateSession() {
+        authEpoch += 1
         clearToken()
     }
 
@@ -190,7 +208,7 @@ actor APIClient: HestiaAPI {
             case .badRequest: throw APIError.http(400)
             case .undocumented(let code, _): throw mapStatus(code)
             }
-        } catch { throw APIError.wrap(error) }
+        } catch { throw Self.requestError(error) }
     }
 
     func setThermostat(node: Int, celsius: Int) async throws {
@@ -211,7 +229,7 @@ actor APIClient: HestiaAPI {
             case .serviceUnavailable: throw APIError.http(503)
             case .undocumented(let code, _): throw mapStatus(code)
             }
-        } catch { throw APIError.wrap(error) }
+        } catch { throw Self.requestError(error) }
     }
 
     private func sendControl(_ body: Components.Schemas.ControlRequest) async throws {
@@ -223,10 +241,19 @@ actor APIClient: HestiaAPI {
             case .serviceUnavailable: throw APIError.http(503)
             case .undocumented(let code, _): throw mapStatus(code)
             }
-        } catch { throw APIError.wrap(error) }
+        } catch { throw Self.requestError(error) }
     }
 
     func mapStatus(_ code: Int) -> APIError {
-        (code == 401 || code == 403) ? .unauthorized : .http(code)
+        switch code {
+        case 401: .unauthorized
+        case 403: .forbidden
+        default: .http(code)
+        }
+    }
+
+    private static func requestError(_ error: any Error) -> any Error {
+        if APIError.isCancellation(error) { return CancellationError() }
+        return APIError.wrap(error)
     }
 }

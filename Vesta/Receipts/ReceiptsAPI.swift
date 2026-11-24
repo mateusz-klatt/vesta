@@ -18,6 +18,42 @@ protocol ReceiptsAPI: Sendable {
     func deleteReceipt(id: String, expectedVersion: Int) async throws
 }
 
+/// Reports a denial against the app session that started each receipt operation.
+struct DenialReportingReceiptsAPI: ReceiptsAPI {
+    typealias DenialHandler = @MainActor @Sendable () -> Void
+
+    private let api: any ReceiptsAPI
+    private let beforeRequest: @MainActor @Sendable () -> DenialHandler?
+
+    init(api: any ReceiptsAPI, beforeRequest: @escaping @MainActor @Sendable () -> DenialHandler?) {
+        self.api = api
+        self.beforeRequest = beforeRequest
+    }
+
+    func parseReceiptText(_ text: String, source: ReceiptSourceKind) async throws -> ReceiptParseResult {
+        try await reportingDenial { try await api.parseReceiptText(text, source: source) }
+    }
+
+    func confirmReceipt(_ request: ReceiptConfirmRequest) async throws -> ReceiptDetail {
+        try await reportingDenial { try await api.confirmReceipt(request) }
+    }
+
+    func deleteReceipt(id: String, expectedVersion: Int) async throws {
+        try await reportingDenial { try await api.deleteReceipt(id: id, expectedVersion: expectedVersion) }
+    }
+
+    private func reportingDenial<Result: Sendable>(_ operation: () async throws -> Result) async throws -> Result {
+        guard let reportDenial = await beforeRequest() else { throw CancellationError() }
+        try Task.checkCancellation()
+        do {
+            return try await operation()
+        } catch ReceiptError.forbidden {
+            if !Task.isCancelled { await reportDenial() }
+            throw ReceiptError.forbidden
+        }
+    }
+}
+
 /// Receipt failures, mapped from hestia's status + `BudgetError.error` code to
 /// copy the user can act on.
 enum ReceiptError: LocalizedError, Equatable {
@@ -61,7 +97,7 @@ enum ReceiptError: LocalizedError, Equatable {
         switch self {
         case .disabled: "Receipts are turned off"
         case .notFound: "Draft no longer exists"
-        case .forbidden: "Not allowed"
+        case .forbidden: APIError.forbidden.title
         case .pairAgain: "Pair again"
         case .ambiguousAuth: "Multiple credentials"
         case .rateLimited: "Receipt limit reached"
@@ -82,7 +118,7 @@ enum ReceiptError: LocalizedError, Equatable {
         switch self {
         case .disabled: "The server owner has not enabled receipts yet."
         case .notFound: "Drafts expire after 48 hours. Scan the receipt again."
-        case .forbidden: "Only an admin can add receipts, and the server must allow the app to send them."
+        case .forbidden: APIError.forbidden.message
         case .pairAgain: "Pair this iPhone with hestia to continue."
         case .ambiguousAuth: "The server received more than one credential. Check your connection and try again."
         case .rateLimited: "Too many receipts, try again in a minute"
