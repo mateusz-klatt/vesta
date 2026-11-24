@@ -25,9 +25,13 @@ struct BudgetView: View {
                         ToolbarItem(placement: .primaryAction) { ProgressView() }
                     }
                 }
-                .task { await store.load() }
+                .task {
+                    if !closeIfDenied() {
+                        await store.load()
+                    }
+                }
                 .onChange(of: store.isDenied) { _, denied in
-                    if denied { shownCategory = nil }
+                    if denied { closeIfDenied() }
                 }
                 .navigationDestination(item: $shownCategory) { category in
                     BudgetCategoryTransactionsView(store: store, category: category)
@@ -38,6 +42,15 @@ struct BudgetView: View {
             onClose()
             store.clear()
         }
+    }
+
+    @discardableResult
+    func closeIfDenied() -> Bool {
+        guard store.isDenied else { return false }
+        shownCategory = nil
+        onClose()
+        dismiss()
+        return true
     }
 
     @ViewBuilder private var content: some View {

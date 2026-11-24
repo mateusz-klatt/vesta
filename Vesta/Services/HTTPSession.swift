@@ -45,8 +45,28 @@ final class HestiaRedirectDelegate: NSObject, URLSessionTaskDelegate {
     }
 
     private static func isBudgetPath(_ url: URL) -> Bool {
-        [url.path, url.standardized.path].contains { path in
-            path == "/api/budget" || path.hasPrefix("/api/budget/")
+        guard let rawPath = URLComponents(url: url, resolvingAgainstBaseURL: true)?.percentEncodedPath,
+              let decoded = rawPath.removingPercentEncoding
+        else { return true }
+
+        // Reject encoded slashes before or after decoding, and any backslash.
+        if rawPath.range(of: "%2f", options: .caseInsensitive) != nil
+            || decoded.range(of: "%2f", options: .caseInsensitive) != nil
+            || decoded.contains("\\") {
+            return true
         }
+
+        var segments: [Substring] = []
+        for segment in decoded.split(separator: "/", omittingEmptySubsequences: true) {
+            if segment == "." {
+                continue
+            } else if segment == ".." {
+                if !segments.isEmpty { segments.removeLast() }
+            } else {
+                segments.append(segment)
+            }
+        }
+        let normalized = "/" + segments.joined(separator: "/").lowercased()
+        return normalized == "/api/budget" || normalized.hasPrefix("/api/budget/")
     }
 }

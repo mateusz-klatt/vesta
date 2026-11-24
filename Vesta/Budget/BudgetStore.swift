@@ -53,6 +53,7 @@ final class BudgetStore {
     private(set) var isLoadingMore = false
 
     var isDenied: Bool { state == .forbidden || state == .unauthorized }
+    private var isTerminal: Bool { isCleared || isDenied }
     var period: String { Self.period(for: monthDate) }
     var maxPeriod: String { serverCurrentMonth ?? Self.period(for: now) }
     var canGoNext: Bool { period < maxPeriod }
@@ -71,45 +72,46 @@ final class BudgetStore {
     }
 
     func load() async {
-        guard !isCleared else { return }
+        guard !isTerminal else { return }
         await reload(keepContent: false)
     }
 
     func refresh() async {
-        guard !isCleared, !isDenied else { return }
+        guard !isTerminal else { return }
         await reload(keepContent: true)
     }
 
     func previousMonth() async {
-        guard !isCleared, !isDenied else { return }
+        guard !isTerminal else { return }
         await moveMonth(by: -1)
     }
 
     func nextMonth() async {
-        guard !isCleared, !isDenied, canGoNext else { return }
+        guard !isTerminal, canGoNext else { return }
         await moveMonth(by: 1)
     }
 
     func selectCurrency(_ value: String) async {
-        guard !isCleared, !isDenied, value != currency, availableCurrencies.contains(value) else { return }
+        guard !isTerminal, value != currency, availableCurrencies.contains(value) else { return }
         currency = value
         await reload(keepContent: false)
     }
 
     func selectCategory(_ value: String?) async {
-        guard !isCleared, !isDenied, value != categoryID else { return }
+        guard !isTerminal, value != categoryID else { return }
         categoryID = value
         transactions = []
         filteredTotal = 0
-        nextCursor = nil
-        activeQuery = nil
         await reload(keepContent: true)
     }
 
     func loadMore() async {
-        guard !isCleared, !isDenied, !isLoading, !isLoadingMore, state == .loaded,
+        guard !isTerminal, !isLoading, !isLoadingMore, state == .loaded,
               let cursor = nextCursor, let query = activeQuery else { return }
-        await runTask { [weak self] requestGeneration in
+        cancelWork()
+        let requestGeneration = generation
+        isLoadingMore = true
+        await runReservedTask(generation: requestGeneration) { [weak self] in
             await self?.performLoadMore(cursor: cursor, query: query, requestGeneration: requestGeneration)
         }
     }
@@ -133,17 +135,37 @@ final class BudgetStore {
     }
 
     private func reload(keepContent: Bool) async {
-        await runTask { [weak self] requestGeneration in
-            await self?.performReload(keepContent: keepContent, requestGeneration: requestGeneration)
+        guard !isTerminal else { return }
+        // Reserve the reload synchronously before yielding so a queued loadMore()
+        // cannot observe the old cursor or cancel this reload.
+        cancelWork()
+        let requestGeneration = generation
+        isLoading = true
+        isRefreshing = keepContent && overview != nil
+        isLoadingMore = false
+        nextCursor = nil
+        activeQuery = nil
+        if !keepContent {
+            overview = nil
+            transactions = []
+            filteredTotal = 0
+            dataAsOf = nil
+            availableCurrencies = []
+            state = .loading
+            failure = nil
+        }
+        await runReservedTask(generation: requestGeneration) { [weak self] in
+            await self?.performReload(requestGeneration: requestGeneration)
         }
     }
 
-    private func runTask(_ work: @escaping @MainActor (Int) async -> Void) async {
-        guard !isCleared else { return }
-        cancelWork()
-        let requestGeneration = generation
+    private func runReservedTask(
+        generation requestGeneration: Int,
+        _ work: @escaping @MainActor () async -> Void
+    ) async {
+        guard !isTerminal, requestGeneration == generation else { return }
         let task = Task { @MainActor in
-            await work(requestGeneration)
+            await work()
         }
         activeTask = task
         await withTaskCancellationHandler {
@@ -175,28 +197,14 @@ final class BudgetStore {
         serverCurrentMonth = nil
     }
 
-    private func performReload(keepContent: Bool, requestGeneration: Int) async {
-        guard !isCleared, requestGeneration == generation else { return }
-        isLoading = true
-        isRefreshing = keepContent && overview != nil
-        isLoadingMore = false
-        if !keepContent {
-            overview = nil
-            transactions = []
-            filteredTotal = 0
-            nextCursor = nil
-            activeQuery = nil
-            dataAsOf = nil
-            availableCurrencies = []
-            state = .loading
-            failure = nil
-        }
+    private func performReload(requestGeneration: Int) async {
+        guard !isTerminal, requestGeneration == generation else { return }
         let requestedPeriod = period
         let requestedCurrency = currency
         let requestedCategory = categoryID
         do {
             let monthlyResult = try await api.monthlyBudget(period: requestedPeriod, currency: requestedCurrency)
-            guard !isCleared, requestGeneration == generation else { return }
+            guard !isTerminal, requestGeneration == generation else { return }
             let resolvedPeriod = Self.validPeriod(monthlyResult.period) ?? requestedPeriod
             let resolvedCurrency = monthlyResult.currency
             let query = TransactionQuery(
@@ -207,27 +215,12 @@ final class BudgetStore {
                 period: query.period, currency: query.currency,
                 categoryID: query.categoryID, cursor: nil, limit: query.limit
             )
-            guard !isCleared, requestGeneration == generation else { return }
-            if let currentMonth = Self.validPeriod(monthlyResult.currentMonth) {
-                serverCurrentMonth = currentMonth
-            }
-            if let resolvedDate = Self.date(forPeriod: resolvedPeriod) {
-                monthDate = resolvedDate
-            }
-            overview = monthlyResult
-            currency = resolvedCurrency
-            availableCurrencies = monthlyResult.availableCurrencies
-            transactions = pageResult.transactions
-            filteredTotal = pageResult.filteredTotal
-            nextCursor = pageResult.nextCursor
-            activeQuery = query
-            dataAsOf = monthlyResult.ledgerAsOf
-            state = .loaded
-            failure = nil
+            guard !isTerminal, requestGeneration == generation else { return }
+            applyLoaded(monthly: monthlyResult, page: pageResult, resolvedPeriod: resolvedPeriod, query: query)
             isLoading = false
             isRefreshing = false
         } catch {
-            guard !isCleared, requestGeneration == generation else { return }
+            guard !isTerminal, requestGeneration == generation else { return }
             isLoading = false
             isRefreshing = false
             if Self.isCancellation(error) { return }
@@ -236,21 +229,20 @@ final class BudgetStore {
     }
 
     private func performLoadMore(cursor: String, query: TransactionQuery, requestGeneration: Int) async {
-        guard !isCleared, requestGeneration == generation else { return }
-        isLoadingMore = true
+        guard !isTerminal, requestGeneration == generation else { return }
         do {
             let page = try await api.transactions(
                 period: query.period, currency: query.currency, categoryID: query.categoryID,
                 cursor: cursor, limit: query.limit
             )
-            guard !isCleared, requestGeneration == generation else { return }
+            guard !isTerminal, requestGeneration == generation else { return }
             var ids = Set(transactions.map(\.id))
             transactions.append(contentsOf: page.transactions.filter { ids.insert($0.id).inserted })
             filteredTotal = page.filteredTotal
             nextCursor = page.nextCursor
             isLoadingMore = false
         } catch {
-            guard !isCleared, requestGeneration == generation else { return }
+            guard !isTerminal, requestGeneration == generation else { return }
             if Self.isCancellation(error) {
                 isLoadingMore = false
                 return
@@ -261,26 +253,55 @@ final class BudgetStore {
                 publish(wrapped)
                 return
             }
-            // Snapshot changed between pages; restart from page 0 with the exact same filters.
+            // Snapshot changed between pages; refresh overview together with page 0
+            // using the exact same filters so summary, rows and freshness stay coherent.
             nextCursor = nil
             do {
-                let restarted = try await api.transactions(
-                    period: query.period, currency: query.currency, categoryID: query.categoryID,
-                    cursor: nil, limit: query.limit
+                let monthlyResult = try await api.monthlyBudget(period: query.period, currency: query.currency)
+                guard !isTerminal, requestGeneration == generation else { return }
+                let resolvedPeriod = Self.validPeriod(monthlyResult.period) ?? query.period
+                let refreshedQuery = TransactionQuery(
+                    period: resolvedPeriod, currency: monthlyResult.currency,
+                    categoryID: query.categoryID, limit: query.limit
                 )
-                guard !isCleared, requestGeneration == generation else { return }
-                transactions = restarted.transactions
-                filteredTotal = restarted.filteredTotal
-                nextCursor = restarted.nextCursor
-                activeQuery = query
+                let restarted = try await api.transactions(
+                    period: refreshedQuery.period, currency: refreshedQuery.currency,
+                    categoryID: refreshedQuery.categoryID, cursor: nil, limit: refreshedQuery.limit
+                )
+                guard !isTerminal, requestGeneration == generation else { return }
+                applyLoaded(monthly: monthlyResult, page: restarted, resolvedPeriod: resolvedPeriod, query: refreshedQuery)
                 isLoadingMore = false
             } catch {
-                guard !isCleared, requestGeneration == generation else { return }
+                guard !isTerminal, requestGeneration == generation else { return }
                 isLoadingMore = false
                 if Self.isCancellation(error) { return }
                 publish(BudgetError.wrap(error))
             }
         }
+    }
+
+    private func applyLoaded(
+        monthly: BudgetMonthly,
+        page: BudgetTransactionPage,
+        resolvedPeriod: String,
+        query: TransactionQuery
+    ) {
+        if let currentMonth = Self.validPeriod(monthly.currentMonth) {
+            serverCurrentMonth = currentMonth
+        }
+        if let resolvedDate = Self.date(forPeriod: resolvedPeriod) {
+            monthDate = resolvedDate
+        }
+        overview = monthly
+        currency = monthly.currency
+        availableCurrencies = monthly.availableCurrencies
+        transactions = page.transactions
+        filteredTotal = page.filteredTotal
+        nextCursor = page.nextCursor
+        activeQuery = query
+        dataAsOf = monthly.ledgerAsOf
+        state = .loaded
+        failure = nil
     }
 
     private func publish(_ error: BudgetError) {

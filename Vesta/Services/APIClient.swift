@@ -100,7 +100,7 @@ actor APIClient: HestiaAPI {
         self.saveToken = saveToken
         self.clearToken = clearToken
         self.budgetEnabled = budgetEnabled
-        auth = BearerAuthMiddleware(token: sessionToken, receiptPairing: receiptPairing)
+        auth = BearerAuthMiddleware(token: sessionToken, receiptPairing: receiptPairing, budgetEnabled: budgetEnabled)
         serverURL = AppConfig.serverURL
         client = APIClient.make(serverURL, transport, auth)
     }

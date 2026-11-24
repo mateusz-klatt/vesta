@@ -10,6 +10,7 @@ struct BearerAuthMiddleware: ClientMiddleware {
     var receiptPairing: ReceiptPairing?
     // Unpair can revoke after the active pairing/backend has changed.
     var revoking: ReceiptDeviceToken?
+    var budgetEnabled: @Sendable () -> Bool = { false }
 
     private static let receiptOperations: Set<String> = [
         Operations.ParseBudgetReceiptText.id, Operations.ConfirmBudgetReceipt.id,
@@ -37,6 +38,7 @@ struct BearerAuthMiddleware: ClientMiddleware {
         if Self.budgetReadOperations.contains(operationID) {
             request.headerFields[.cookie] = nil
             request.headerFields[.authorization] = nil
+            guard budgetEnabled() else { throw BudgetError.forbidden }
             // No device token means no request: the session bearer is refused
             // here by hestia, and sending it would widen its use.
             guard let device = await receiptPairing?.credential(for: baseURL) else { throw BudgetError.forbidden }

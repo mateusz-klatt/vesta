@@ -307,14 +307,28 @@ final class HTTPSessionTests: XCTestCase {
             ("/api/discovery", "\(origin)/api/budget/status", false),
             ("/api/discovery", "\(origin)/api/budget/receipts/parse-text", false),
             ("/api/discovery", "\(origin)/api/other/../budget/status", false),
+            // Proxy normalization bypasses (MergeSlashes, dot segments, case, encoded slash, backslash)
+            ("/api/discovery", "\(origin)//api/budget/status", false),
+            ("/api/discovery", "\(origin)/api//budget/status", false),
+            ("/api/discovery", "\(origin)/api/./budget/x", false),
+            ("/api/discovery", "\(origin)/x/../api/budget/x", false),
+            ("/api/discovery", "\(origin)/API/Budget/x", false),
+            ("/api/discovery", "\(origin)/api/budget%2Fstatus", false),
+            ("/api/discovery", "\(origin)/api%2Fbudget/x", false),
+            ("/api/discovery", "\(origin)/api/budget%252Fstatus", false),
+            ("/api/discovery", "\(origin)/api/budget%5Cx", false),
             // Budget request redirected out of its allowlist (or anywhere else)
             ("/api/budget", "\(origin)/api/discovery", false),
             ("/api/budget/", "\(origin)/api/discovery", false),
+            ("//api/budget/status", "\(origin)/api/discovery", false),
+            ("/API/Budget/x", "\(origin)/api/discovery", false),
+            ("/api/budget%2Fstatus", "\(origin)/api/discovery", false),
             ("/api/budget/analytics/monthly-budget", "\(origin)/api/discovery", false),
             ("/api/budget/analytics/transactions", "\(origin)/api/events", false),
             ("/api/budget/status", "\(origin)/api/budget/analytics/monthly-budget", false),
             // Prefix boundary: /api/budgeting is not /api/budget or /api/budget/*
             ("/api/discovery", "\(origin)/api/budgeting", true),
+            ("/api/discovery", "\(origin)/api//budgeting", true),
         ]
         for (path, location, follows) in cases {
             let url = try XCTUnwrap(URL(string: origin + path))
