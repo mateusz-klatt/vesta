@@ -155,6 +155,7 @@ final class AppState {
         activeBudgetStore?.clear()
         activeBudgetStore = nil
     }
+    var calendarAPI: (any CalendarAPI)?
     var hasLights: Bool { allDevices.contains { $0.device._type == "light" } }
     var hasBlinds: Bool { allDevices.contains { $0.device._type == "blind" } }
 
@@ -172,10 +173,12 @@ final class AppState {
 
     init(api: (any HestiaAPI)? = nil,
          receiptPairing: ReceiptPairing = ReceiptPairing(),
+         calendarAPI: (any CalendarAPI)? = nil,
          events: @escaping @Sendable () -> AsyncStream<EventStream.Event> = { EventStream.changes() },
          eventRetryDelay: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
         self.receiptPairing = receiptPairing
         self.api = api ?? APIClient(receiptPairing: receiptPairing)
+        self.calendarAPI = calendarAPI
         self.makeEvents = events
         self.eventRetryDelay = eventRetryDelay
         tempScale = TempScale(rawValue: UserDefaults.standard.string(forKey: Self.tempScaleKey) ?? "C") ?? .celsius

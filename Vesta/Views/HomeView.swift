@@ -8,6 +8,7 @@ struct HomeView: View {
     @State private var pairingPresentation = ReceiptPairingPresentation()
     @State private var receiptFlow: (flow: ReceiptFlow, accessGeneration: Int)?
     @State private var budgetStore: BudgetStore?
+    @State private var agendaStore: AgendaStore?
 
     var body: some View {
         NavigationStack {
@@ -66,6 +67,14 @@ struct HomeView: View {
                         .disabled(app.receiptPairing.isBusy)
                     }
                 }
+                if let api = app.calendarAPI {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { agendaStore = AgendaStore(api: api) } label: {
+                            Image(systemName: "calendar")
+                        }
+                        .accessibilityLabel("Calendar")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
                         .accessibilityLabel("Settings")
@@ -73,6 +82,9 @@ struct HomeView: View {
             }
             .sheet(isPresented: $showSettings) { SettingsView().appLanguage(app.appLanguage) }
             .receiptPairingSheet($pairingPresentation, app: app)
+            .sheet(isPresented: Binding(get: { agendaStore != nil }, set: { if !$0 { agendaStore = nil } })) {
+                if let agendaStore { AgendaView(store: agendaStore).appLanguage(app.appLanguage) }
+            }
             .sheet(isPresented: Binding(get: { receiptFlow != nil }, set: { if !$0 { closeReceipt() } })) {
                 if let receiptFlow { ReceiptScanView(flow: receiptFlow.flow).appLanguage(app.appLanguage) }
             }
