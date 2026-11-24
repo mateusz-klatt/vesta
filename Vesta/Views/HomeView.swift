@@ -33,9 +33,9 @@ struct HomeView: View {
             .background(Theme.background)
             .navigationTitle("Rooms")
             .toolbar {
-                if let api = app.budgetAPI {
+                if app.budgetAPI != nil {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button { budgetStore = BudgetStore(api: api) } label: {
+                        Button { budgetStore = app.makeBudgetStore() } label: {
                             Image(systemName: "chart.pie")
                         }
                         .accessibilityLabel("Budget")
@@ -67,11 +67,17 @@ struct HomeView: View {
                 if let receiptFlow { ReceiptScanView(flow: receiptFlow).appLanguage(app.appLanguage) }
             }
             .sheet(isPresented: Binding(get: { budgetStore != nil }, set: { if !$0 { closeBudget() } })) {
-                if let budgetStore { BudgetView(store: budgetStore).appLanguage(app.appLanguage) }
+                if let budgetStore {
+                    BudgetView(store: budgetStore, onClose: closeBudget).appLanguage(app.appLanguage)
+                }
             }
             .onChange(of: app.budgetAPI == nil) { _, signedOut in
                 if signedOut { closeBudget() }
             }
+            .onChange(of: app.phase) { _, phase in
+                if phase != .ready { closeBudget() }
+            }
+            .onDisappear { closeBudget() }
             .refreshable { await app.loadDiscovery() }
             #if DEBUG
             .onAppear {
@@ -90,6 +96,7 @@ struct HomeView: View {
     }
 
     private func closeBudget() {
+        app.closeBudget()
         budgetStore?.clear()
         budgetStore = nil
     }

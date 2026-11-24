@@ -43,21 +43,69 @@ struct BudgetCategoryLimit: Hashable, Sendable {
 struct BudgetCategory: Identifiable, Hashable, Sendable {
     let categoryID: String?
     let name: String?
+    let isOneOff: Bool
+    let oneOffKey: String?
     let expenses: Decimal
     let refunds: Decimal
     let netSpending: Decimal
     let limit: BudgetCategoryLimit?
 
-    var id: String { categoryID ?? "uncategorised" }
+    var id: String {
+        if let oneOffKey { return oneOffKey }
+        if isOneOff { return "one-off:\(categoryID ?? "uncategorised"):\(name ?? "")" }
+        return categoryID ?? "uncategorised"
+    }
+
+    init(
+        categoryID: String?,
+        name: String?,
+        isOneOff: Bool = false,
+        oneOffKey: String? = nil,
+        expenses: Decimal,
+        refunds: Decimal,
+        netSpending: Decimal,
+        limit: BudgetCategoryLimit?
+    ) {
+        self.categoryID = categoryID
+        self.name = name
+        self.isOneOff = isOneOff
+        self.oneOffKey = oneOffKey
+        self.expenses = expenses
+        self.refunds = refunds
+        self.netSpending = netSpending
+        self.limit = limit
+    }
 }
 
 struct BudgetMonthly: Equatable, Sendable {
     let period: String
+    let currentMonth: String?
     let currency: String
     let availableCurrencies: [String]
+    let ledgerAsOf: Date?
     let summary: BudgetSummary?
     let pace: BudgetPace?
     let categories: [BudgetCategory]
+
+    init(
+        period: String,
+        currentMonth: String? = nil,
+        currency: String,
+        availableCurrencies: [String],
+        ledgerAsOf: Date? = nil,
+        summary: BudgetSummary?,
+        pace: BudgetPace?,
+        categories: [BudgetCategory]
+    ) {
+        self.period = period
+        self.currentMonth = currentMonth
+        self.currency = currency
+        self.availableCurrencies = availableCurrencies
+        self.ledgerAsOf = ledgerAsOf
+        self.summary = summary
+        self.pace = pace
+        self.categories = categories
+    }
 }
 
 struct BudgetTransaction: Identifiable, Equatable, Sendable {
@@ -144,6 +192,8 @@ extension BudgetCategory {
     init(wire: Components.Schemas.BudgetAnalyticsMonthlyBudgetCategorySpend) throws {
         categoryID = wire.categoryId
         name = wire.displayLabel ?? wire.displayName ?? wire.name
+        isOneOff = (wire.oneOff ?? false) || wire.oneOffKey != nil
+        oneOffKey = wire.oneOffKey
         expenses = try BudgetWire.decimal(wire.expenses)
         refunds = try BudgetWire.decimal(wire.refunds)
         netSpending = try BudgetWire.decimal(wire.netSpending)
@@ -154,8 +204,10 @@ extension BudgetCategory {
 extension BudgetMonthly {
     init(wire: Components.Schemas.BudgetAnalyticsMonthlyBudget) throws {
         period = wire.period
+        currentMonth = wire.currentMonth
         currency = wire.currency
         availableCurrencies = wire.availableCurrencies
+        ledgerAsOf = wire.coverage.ledgerAsOf.map(Date.init(timeIntervalSince1970:))
         summary = try wire.summary.map(BudgetSummary.init(wire:))
         pace = try wire.pace.map(BudgetPace.init(wire:))
         categories = try wire.categorySpend.map(BudgetCategory.init(wire:))

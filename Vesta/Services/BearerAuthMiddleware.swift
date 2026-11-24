@@ -42,7 +42,10 @@ struct BearerAuthMiddleware: ClientMiddleware {
             guard let device = await receiptPairing?.credential(for: baseURL) else { throw BudgetError.forbidden }
             request.headerFields[.authorization] = "Bearer \(device.credential.token)"
             let (response, responseBody) = try await next(request, body, baseURL)
-            guard response.status.code == 200 else { throw BudgetError.from(status: response.status.code) }
+            guard response.status.code == 200 else {
+                let code = await Self.errorCode(in: responseBody)
+                throw BudgetError.from(status: response.status.code, code: code)
+            }
             return (response, responseBody)
         }
         guard requiresDevice || issuesDeviceToken else {

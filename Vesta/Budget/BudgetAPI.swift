@@ -11,6 +11,7 @@ enum BudgetError: LocalizedError, Equatable {
     case unauthorized
     case forbidden
     case unavailable
+    case staleCursor
     case failed
 
     var title: LocalizedStringResource {
@@ -18,7 +19,7 @@ enum BudgetError: LocalizedError, Equatable {
         case .unauthorized: APIError.unauthorized.title
         case .forbidden: "Not allowed"
         case .unavailable: "Budget unavailable"
-        case .failed: APIError.cannotConnect.title
+        case .staleCursor, .failed: APIError.cannotConnect.title
         }
     }
 
@@ -27,17 +28,18 @@ enum BudgetError: LocalizedError, Equatable {
         case .unauthorized: APIError.unauthorized.message
         case .forbidden: "Only an admin can view the household budget."
         case .unavailable: ReceiptError.unavailable.message
-        case .failed: APIError.cannotConnect.message
+        case .staleCursor, .failed: APIError.cannotConnect.message
         }
     }
 
     var errorDescription: String? { String(localized: message) }
 
-    static func from(status: Int) -> BudgetError {
-        switch status {
-        case 401: .unauthorized
-        case 403: .forbidden
-        case 404, 503: .unavailable
+    static func from(status: Int, code: String? = nil) -> BudgetError {
+        switch (status, code) {
+        case (401, _): .unauthorized
+        case (403, _): .forbidden
+        case (404, _), (503, _): .unavailable
+        case (409, "budget_analytics_stale_cursor"): .staleCursor
         default: .failed
         }
     }

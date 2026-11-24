@@ -34,8 +34,19 @@ final class HestiaRedirectDelegate: NSObject, URLSessionTaskDelegate {
         let defaultPort = scheme == "https" ? 443 : 80
         guard (original.port ?? defaultPort) == (target.port ?? defaultPort) else { return nil }
 
-        // Receipt requests carry a scoped credential and can contain sensitive JSON.
-        guard !original.path.hasPrefix("/api/budget/receipts/") else { return nil }
+        // Budget routes use a scoped device credential (or must never be reached by
+        // redirecting a session-authenticated request below the bearer middleware).
+        guard !Self.isBudgetPath(original),
+              !Self.isBudgetPath(target),
+              task.currentRequest?.url.map(Self.isBudgetPath) != true,
+              response.url.map(Self.isBudgetPath) != true
+        else { return nil }
         return request
+    }
+
+    private static func isBudgetPath(_ url: URL) -> Bool {
+        [url.path, url.standardized.path].contains { path in
+            path == "/api/budget" || path.hasPrefix("/api/budget/")
+        }
     }
 }

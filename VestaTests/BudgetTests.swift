@@ -5,14 +5,23 @@ import OpenAPIRuntime
 @testable import Vesta
 
 private enum BudgetFixtures {
-    static func monthly(period: String = "2026-11", currency: String = "PLN") -> BudgetMonthly {
+    static func monthly(
+        period: String = "2026-11",
+        currentMonth: String? = "2026-11",
+        currency: String = "PLN",
+        availableCurrencies: [String] = ["PLN", "EUR"],
+        ledgerAsOf: Date? = Date(timeIntervalSince1970: 1_795_557_000),
+        categories: [BudgetCategory] = []
+    ) -> BudgetMonthly {
         BudgetMonthly(
             period: period,
+            currentMonth: currentMonth,
             currency: currency,
-            availableCurrencies: ["PLN", "EUR"],
+            availableCurrencies: availableCurrencies,
+            ledgerAsOf: ledgerAsOf,
             summary: BudgetSummary(startBudget: 2_000, spent: 500, remaining: 1_500),
             pace: nil,
-            categories: []
+            categories: categories
         )
     }
 
@@ -44,8 +53,10 @@ final class BudgetMappingTests: XCTestCase {
         let monthly = try BudgetMonthly(wire: wire)
 
         XCTAssertEqual(monthly.period, "2026-11")
+        XCTAssertEqual(monthly.currentMonth, "2026-11")
         XCTAssertEqual(monthly.currency, "PLN")
         XCTAssertEqual(monthly.availableCurrencies, ["PLN", "EUR"])
+        XCTAssertNil(monthly.ledgerAsOf)
         XCTAssertEqual(monthly.summary?.startBudget, Decimal(string: "10000.123456789012345678"))
         XCTAssertEqual(monthly.summary?.spent, Decimal(string: "2345.67"))
         XCTAssertEqual(monthly.pace?.status, .runsOut)
@@ -53,6 +64,8 @@ final class BudgetMappingTests: XCTestCase {
         XCTAssertEqual(monthly.pace?.exhaustionDay, 26)
         XCTAssertEqual(monthly.categories.count, 2)
         XCTAssertEqual(monthly.categories[0].name, "Weekly food")
+        XCTAssertFalse(monthly.categories[0].isOneOff)
+        XCTAssertNil(monthly.categories[0].oneOffKey)
         XCTAssertEqual(monthly.categories[0].limit?.monthlyLimit, Decimal(string: "960.08"))
         XCTAssertEqual(monthly.categories[0].limit?.percentUsedFloor, Decimal(string: "125.9"))
         XCTAssertTrue(monthly.categories[0].limit?.isOver == true)
@@ -60,6 +73,65 @@ final class BudgetMappingTests: XCTestCase {
         XCTAssertNil(monthly.categories[1].name)
         XCTAssertNil(monthly.categories[1].limit)
         XCTAssertEqual(monthly.categories[1].id, "uncategorised")
+    }
+
+    func testMonthlyMappingReadsCoverageLedgerAsOf() throws {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Self.monthlyJSON.utf8)) as? [String: Any])
+        var coverage = try XCTUnwrap(object["coverage"] as? [String: Any])
+        coverage["ledger_as_of"] = 1_795_557_123.5
+        object["coverage"] = coverage
+        let data = try JSONSerialization.data(withJSONObject: object)
+        let wire = try JSONDecoder().decode(Components.Schemas.BudgetAnalyticsMonthlyBudget.self, from: data)
+        let monthly = try BudgetMonthly(wire: wire)
+
+        XCTAssertEqual(monthly.ledgerAsOf, Date(timeIntervalSince1970: 1_795_557_123.5))
+    }
+
+    func testOneOffCategoryKeepsOneOffKeyIdentityAndHasNoDrillDown() throws {
+        let keyA = String(repeating: "a", count: 64)
+        let keyB = String(repeating: "b", count: 64)
+        let keyC = String(repeating: "c", count: 64)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Self.monthlyJSON.utf8)) as? [String: Any])
+        object["category_spend"] = [
+            [
+                "category_id": "groceries", "name": "Groceries", "display_label": NSNull(), "display_name": NSNull(),
+                "archived": false, "color_hue": NSNull(), "one_off": false, "one_off_key": NSNull(),
+                "expenses": "100.00", "refunds": "0", "net_spending": "100.00", "limit": NSNull(),
+            ],
+            [
+                "category_id": "groceries", "name": "Bulk pantry", "display_label": NSNull(), "display_name": NSNull(),
+                "archived": false, "color_hue": NSNull(), "one_off": true, "one_off_key": keyA,
+                "expenses": "50.00", "refunds": "0", "net_spending": "50.00", "limit": NSNull(),
+            ],
+            [
+                "category_id": "groceries", "name": "Party supplies", "display_label": NSNull(), "display_name": NSNull(),
+                "archived": false, "color_hue": NSNull(), "one_off": true, "one_off_key": keyB,
+                "expenses": "25.00", "refunds": "0", "net_spending": "25.00", "limit": NSNull(),
+            ],
+            [
+                "category_id": NSNull(), "name": "One-off gift", "display_label": NSNull(), "display_name": NSNull(),
+                "archived": false, "color_hue": NSNull(), "one_off": true, "one_off_key": keyC,
+                "expenses": "10.00", "refunds": "0", "net_spending": "10.00", "limit": NSNull(),
+            ],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: object)
+        let wire = try JSONDecoder().decode(Components.Schemas.BudgetAnalyticsMonthlyBudget.self, from: data)
+        let monthly = try BudgetMonthly(wire: wire)
+
+        XCTAssertEqual(monthly.categories.count, 4)
+        XCTAssertEqual(Set(monthly.categories.map(\.id)).count, 4)
+        XCTAssertEqual(monthly.categories[0].id, "groceries")
+        XCTAssertFalse(monthly.categories[0].isOneOff)
+        XCTAssertEqual(monthly.categories[1].id, keyA)
+        XCTAssertEqual(monthly.categories[1].oneOffKey, keyA)
+        XCTAssertEqual(monthly.categories[1].categoryID, "groceries")
+        XCTAssertTrue(monthly.categories[1].isOneOff)
+        XCTAssertEqual(monthly.categories[2].id, keyB)
+        XCTAssertEqual(monthly.categories[2].oneOffKey, keyB)
+        XCTAssertTrue(monthly.categories[2].isOneOff)
+        XCTAssertEqual(monthly.categories[3].id, keyC)
+        XCTAssertNil(monthly.categories[3].categoryID)
+        XCTAssertTrue(monthly.categories[3].isOneOff)
     }
 
     func testMonthlyMappingHandlesMissingSummaryAndPace() throws {
@@ -256,16 +328,10 @@ private actor BudgetResponseGate {
 
 @MainActor
 final class BudgetStoreTests: XCTestCase {
-    private var calendar: Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        return calendar
-    }
-
     private var now: Date { Date(timeIntervalSince1970: 1_795_557_600) }
 
-    private func store(_ api: any BudgetAPI) -> BudgetStore {
-        BudgetStore(api: api, now: now, calendar: calendar)
+    private func store(_ api: any BudgetAPI, now: Date? = nil) -> BudgetStore {
+        BudgetStore(api: api, now: now ?? self.now)
     }
 
     func testLoadedPublishesOverviewTransactionsAndFreshness() async throws {
@@ -281,10 +347,39 @@ final class BudgetStoreTests: XCTestCase {
         XCTAssertEqual(store.transactions, [transaction])
         XCTAssertEqual(store.currency, "PLN")
         XCTAssertEqual(store.availableCurrencies, ["PLN", "EUR"])
-        XCTAssertEqual(store.dataAsOf, Date(timeIntervalSince1970: 300))
+        XCTAssertEqual(store.dataAsOf, BudgetFixtures.monthly().ledgerAsOf)
         let calls = await mock.calls
         XCTAssertTrue(calls.contains(.monthly("2026-11", nil)))
-        XCTAssertTrue(calls.contains(.transactions("2026-11", nil, nil, nil, 50)))
+        XCTAssertTrue(calls.contains(.transactions("2026-11", "PLN", nil, nil, 50)))
+        XCTAssertFalse(calls.contains(.status))
+    }
+
+    func testDataAsOfUsesCoverageLedgerAsOfInsteadOfStatusSync() async {
+        let expectedAsOf = Date(timeIntervalSince1970: 1_795_500_123)
+        let mock = MockBudgetAPI(
+            monthly: { period, currency in
+                BudgetFixtures.monthly(period: period, currency: currency ?? "PLN", ledgerAsOf: expectedAsOf)
+            },
+            status: {
+                XCTFail("BudgetStore must read dataAsOf from monthly coverage.ledger_as_of, not /status")
+                return BudgetStatus(dataAsOf: Date(timeIntervalSince1970: 1))
+            }
+        )
+        let store = store(mock)
+        await store.load()
+
+        XCTAssertEqual(store.state, .loaded)
+        XCTAssertEqual(store.dataAsOf, expectedAsOf)
+
+        let nilAsOfMock = MockBudgetAPI(
+            monthly: { period, currency in
+                BudgetFixtures.monthly(period: period, currency: currency ?? "PLN", ledgerAsOf: nil)
+            },
+            status: { BudgetStatus(dataAsOf: Date(timeIntervalSince1970: 999)) }
+        )
+        let nilStore = self.store(nilAsOfMock)
+        await nilStore.load()
+        XCTAssertNil(nilStore.dataAsOf)
     }
 
     func testForbiddenAndUnavailableStates() async {
@@ -406,13 +501,329 @@ final class BudgetStoreTests: XCTestCase {
         XCTAssertNil(store.dataAsOf)
         XCTAssertTrue(store.availableCurrencies.isEmpty)
     }
+
+    func testFirstTransactionsAndCursorPagesSendResolvedAndIdenticalFilters() async {
+        let one = BudgetFixtures.transaction("one")
+        let two = BudgetFixtures.transaction("two")
+        let mock = MockBudgetAPI(
+            monthly: { period, currency in
+                BudgetFixtures.monthly(period: period, currency: currency ?? "EUR", availableCurrencies: ["EUR", "PLN"])
+            },
+            transactions: { _, _, category, cursor, _ in
+                if category == "groceries", cursor == nil {
+                    return BudgetFixtures.page([one], nextCursor: "page-2", total: 2)
+                }
+                if category == "groceries", cursor == "page-2" {
+                    return BudgetFixtures.page([two], nextCursor: nil, total: 2)
+                }
+                return BudgetFixtures.page([one], nextCursor: "root-page-2", total: 2)
+            }
+        )
+        let store = store(mock)
+
+        await store.load()
+        await store.selectCategory("groceries")
+        await store.loadMore()
+
+        let txCalls = await mock.calls.filter {
+            if case .transactions = $0 { return true }
+            return false
+        }
+        XCTAssertEqual(txCalls, [
+            .transactions("2026-11", "EUR", nil, nil, 50),
+            .transactions("2026-11", "EUR", "groceries", nil, 50),
+            .transactions("2026-11", "EUR", "groceries", "page-2", 50),
+        ])
+    }
+
+    func testStaleCursor409RestartsPageSequenceAndKeepsLoadMoreActive() async {
+        let oldOne = BudgetFixtures.transaction("old-1")
+        let newOne = BudgetFixtures.transaction("new-1")
+        let newTwo = BudgetFixtures.transaction("new-2")
+        let newThree = BudgetFixtures.transaction("new-3")
+        actor RestartState {
+            var sawStale = false
+            func markStale() { sawStale = true }
+        }
+        let state = RestartState()
+        let restartMock = MockBudgetAPI(transactions: { _, _, _, cursor, _ in
+            switch cursor {
+            case nil:
+                if await state.sawStale {
+                    return BudgetFixtures.page([newOne, newTwo], nextCursor: "fresh-cursor-2", total: 3)
+                }
+                return BudgetFixtures.page([oldOne], nextCursor: "stale-cursor-1", total: 3)
+            case "stale-cursor-1":
+                await state.markStale()
+                throw BudgetError.staleCursor
+            case "fresh-cursor-2":
+                return BudgetFixtures.page([newThree], nextCursor: nil, total: 3)
+            default:
+                XCTFail("Unexpected cursor \(String(describing: cursor))")
+                return BudgetFixtures.page()
+            }
+        })
+        let restartStore = store(restartMock)
+        await restartStore.load()
+        XCTAssertEqual(restartStore.nextCursor, "stale-cursor-1")
+
+        await restartStore.loadMore()
+
+        XCTAssertEqual(restartStore.state, .loaded)
+        XCTAssertFalse(restartStore.isLoadingMore)
+        XCTAssertEqual(restartStore.transactions, [newOne, newTwo])
+        XCTAssertEqual(restartStore.nextCursor, "fresh-cursor-2")
+        XCTAssertEqual(restartStore.filteredTotal, 3)
+
+        await restartStore.loadMore()
+
+        XCTAssertEqual(restartStore.state, .loaded)
+        XCTAssertFalse(restartStore.isLoadingMore)
+        XCTAssertEqual(restartStore.transactions, [newOne, newTwo, newThree])
+        XCTAssertNil(restartStore.nextCursor)
+    }
+
+    func testDenial401And403ClearAllStoreDataAndCancelPendingWork() async throws {
+        for denialError in [BudgetError.unauthorized, BudgetError.forbidden] {
+            let expectedState: BudgetStore.State = denialError == .forbidden ? .forbidden : .unauthorized
+            let mock = MockBudgetAPI(transactions: { _, _, _, cursor, _ in
+                if cursor == nil {
+                    return BudgetFixtures.page([BudgetFixtures.transaction("one")], nextCursor: "page-2", total: 2)
+                }
+                throw denialError
+            })
+            let store = store(mock)
+            await store.load()
+            await store.selectCategory("groceries")
+            XCTAssertNotNil(store.overview)
+            XCTAssertFalse(store.transactions.isEmpty)
+            XCTAssertEqual(store.nextCursor, "page-2")
+            XCTAssertEqual(store.categoryID, "groceries")
+
+            // Denial on pagination must wipe all stored data and move into denial state.
+            await store.loadMore()
+
+            XCTAssertEqual(store.state, expectedState)
+            XCTAssertTrue(store.isDenied)
+            XCTAssertEqual(store.failure, denialError)
+            XCTAssertNil(store.overview)
+            XCTAssertTrue(store.transactions.isEmpty)
+            XCTAssertEqual(store.filteredTotal, 0)
+            XCTAssertNil(store.nextCursor)
+            XCTAssertNil(store.dataAsOf)
+            XCTAssertTrue(store.availableCurrencies.isEmpty)
+            XCTAssertNil(store.currency)
+            XCTAssertNil(store.categoryID)
+            XCTAssertFalse(store.isLoadingMore)
+
+            // Denial during refresh after overview was already populated must wipe all cached data too.
+            actor RefreshStage {
+                var failTransactions = false
+                func arm() { failTransactions = true }
+            }
+            let stage = RefreshStage()
+            let refreshMock = MockBudgetAPI(
+                monthly: { period, _ in BudgetFixtures.monthly(period: period) },
+                transactions: { _, _, _, _, _ in
+                    if await stage.failTransactions { throw denialError }
+                    return BudgetFixtures.page([BudgetFixtures.transaction("tx")], nextCursor: "c1", total: 2)
+                }
+            )
+            let refreshStore = self.store(refreshMock)
+            await refreshStore.load()
+            XCTAssertNotNil(refreshStore.overview)
+            XCTAssertEqual(refreshStore.transactions.count, 1)
+            XCTAssertEqual(refreshStore.nextCursor, "c1")
+
+            await stage.arm()
+            await refreshStore.refresh()
+
+            XCTAssertEqual(refreshStore.state, expectedState)
+            XCTAssertTrue(refreshStore.isDenied)
+            XCTAssertNil(refreshStore.overview)
+            XCTAssertTrue(refreshStore.transactions.isEmpty)
+            XCTAssertNil(refreshStore.nextCursor)
+            XCTAssertNil(refreshStore.dataAsOf)
+            XCTAssertTrue(refreshStore.availableCurrencies.isEmpty)
+            XCTAssertNil(refreshStore.currency)
+            XCTAssertNil(refreshStore.categoryID)
+        }
+    }
+
+    func testDenialCancelsInFlightWork() async throws {
+        for denialError in [BudgetError.unauthorized, BudgetError.forbidden] {
+            actor CancelTracker {
+                var wasCancelled = false
+                func mark() { wasCancelled = true }
+            }
+            let tracker = CancelTracker()
+            let gate = BudgetResponseGate()
+            let mock = MockBudgetAPI(monthly: { period, _ in
+                if period == "2026-11" {
+                    await gate.wait()
+                    if Task.isCancelled { await tracker.mark() }
+                }
+                if period == "2026-10" {
+                    throw denialError
+                }
+                return BudgetFixtures.monthly(period: period)
+            })
+            let store = store(mock)
+            let pending = Task { await store.load() }
+            try await waitUntil("held load") { await gate.isWaiting }
+
+            await store.previousMonth()
+            await gate.release()
+            await pending.value
+
+            let cancelled = await tracker.wasCancelled
+            XCTAssertTrue(cancelled)
+            XCTAssertEqual(store.state, denialError == .forbidden ? .forbidden : .unauthorized)
+            XCTAssertNil(store.overview)
+            XCTAssertTrue(store.transactions.isEmpty)
+            XCTAssertNil(store.nextCursor)
+        }
+    }
+
+    func testClearIsTerminalSoQueuedViewActionsCannotRestartStore() async {
+        let mock = MockBudgetAPI(transactions: { _, _, _, _, _ in
+            BudgetFixtures.page([BudgetFixtures.transaction("one")], nextCursor: "page-2", total: 2)
+        })
+        let store = store(mock)
+        await store.load()
+        let countAtClear = await mock.calls.count
+
+        store.clear()
+
+        await store.load()
+        await store.refresh()
+        await store.previousMonth()
+        await store.nextMonth()
+        await store.selectCurrency("EUR")
+        await store.selectCategory("groceries")
+        await store.loadMore()
+
+        let countAfter = await mock.calls.count
+        XCTAssertEqual(countAfter, countAtClear)
+        XCTAssertTrue(store.isCleared)
+        XCTAssertNil(store.overview)
+        XCTAssertTrue(store.transactions.isEmpty)
+        XCTAssertNil(store.nextCursor)
+    }
+
+    func testSignOutUsesSamePathToClearBudgetStore() async throws {
+        let mock = MockHestiaAPI()
+        let app = AppState(
+            api: mock,
+            receiptPairing: ReceiptPairing(store: MemoryDeviceTokenStore()),
+            events: { AsyncStream { $0.finish() } }
+        )
+        app.nativeBudgetEnabled = true
+        await mock.setWhoami(role: "admin")
+        await app.connect()
+
+        let store = try XCTUnwrap(app.makeBudgetStore(now: now))
+        await store.load()
+        XCTAssertEqual(store.state, .loaded)
+        XCTAssertNotNil(store.overview)
+
+        await app.signOut()
+
+        XCTAssertTrue(store.isCleared)
+        XCTAssertNil(store.overview)
+        XCTAssertTrue(store.transactions.isEmpty)
+        XCTAssertNil(store.nextCursor)
+        await store.load()
+        XCTAssertNil(store.overview)
+    }
+
+    func testPeriodAndNavigationWithTimezoneEastOfWarsaw() async throws {
+        let previousTZ = TimeZone.ReferenceType.default
+        TimeZone.ReferenceType.default = try XCTUnwrap(TimeZone(identifier: "Asia/Tokyo"))
+        defer { TimeZone.ReferenceType.default = previousTZ }
+
+        // 2026-11-30 22:30 UTC is 2026-11-30 23:30 in Europe/Warsaw, but 2026-12-01 07:30 in Asia/Tokyo.
+        let instant = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-30T22:30:00Z"))
+        XCTAssertEqual(Calendar.current.component(.month, from: instant), 12)
+
+        let mock = MockBudgetAPI()
+        let store = BudgetStore(api: mock, now: instant)
+        XCTAssertEqual(store.period, "2026-11")
+        XCTAssertFalse(store.canGoNext)
+
+        await store.load()
+        await store.nextMonth()
+        let callsAfterBlockedNext = await mock.calls
+        XCTAssertEqual(store.period, "2026-11")
+        XCTAssertEqual(callsAfterBlockedNext.filter { if case .monthly = $0 { return true }; return false }.count, 1)
+
+        await store.previousMonth()
+        XCTAssertEqual(store.period, "2026-10")
+        XCTAssertTrue(store.canGoNext)
+
+        await store.nextMonth()
+        XCTAssertEqual(store.period, "2026-11")
+        XCTAssertFalse(store.canGoNext)
+    }
+
+    func testPeriodAndNavigationWithBuddhistDeviceCalendarAndServerCurrentMonth() async throws {
+        var buddhist = Calendar(identifier: .buddhist)
+        buddhist.timeZone = try XCTUnwrap(TimeZone(identifier: "Asia/Bangkok"))
+        // Year 2569 in Buddhist calendar == 2026 Gregorian.
+        let janDate = try XCTUnwrap(buddhist.date(from: DateComponents(year: 2569, month: 1, day: 15, hour: 12)))
+
+        let mock = MockBudgetAPI(monthly: { period, currency in
+            BudgetFixtures.monthly(period: period, currentMonth: "2026-01", currency: currency ?? "PLN")
+        })
+        let store = BudgetStore(api: mock, now: janDate)
+        XCTAssertEqual(store.period, "2026-01")
+        XCTAssertFalse(store.canGoNext)
+
+        // Month title must always format the Warsaw Gregorian month regardless of Buddhist locale or west timezone.
+        let previousTZ = TimeZone.ReferenceType.default
+        TimeZone.ReferenceType.default = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        defer { TimeZone.ReferenceType.default = previousTZ }
+        let title = BudgetStore.monthTitle(for: store.monthDate, locale: Locale(identifier: "en_US@calendar=buddhist"))
+        XCTAssertEqual(title, "January 2026")
+
+        await store.load()
+        await store.previousMonth()
+        XCTAssertEqual(store.period, "2025-12")
+        XCTAssertTrue(store.canGoNext)
+
+        await store.nextMonth()
+        XCTAssertEqual(store.period, "2026-01")
+        XCTAssertFalse(store.canGoNext)
+
+        // Server's current_month caps forward navigation even when device clock is ahead.
+        let serverAheadOrBehindMock = MockBudgetAPI(monthly: { period, currency in
+            BudgetFixtures.monthly(period: period, currentMonth: "2026-10", currency: currency ?? "PLN")
+        })
+        let cappedStore = BudgetStore(api: serverAheadOrBehindMock, now: now)
+        await cappedStore.previousMonth()
+        XCTAssertEqual(cappedStore.period, "2026-10")
+        XCTAssertEqual(cappedStore.serverCurrentMonth, "2026-10")
+        XCTAssertFalse(cappedStore.canGoNext)
+        let beforeBlocked = await serverAheadOrBehindMock.calls.count
+        await cappedStore.nextMonth()
+        let afterBlocked = await serverAheadOrBehindMock.calls.count
+        XCTAssertEqual(afterBlocked, beforeBlocked)
+    }
 }
 
 @MainActor
 final class BudgetClientTests: XCTestCase {
-    private func pairedClient(_ transport: any ClientTransport) -> APIClient {
+    private func pairedClient(
+        _ transport: any ClientTransport,
+        budgetEnabled: @escaping @Sendable () -> Bool = { true }
+    ) -> APIClient {
         let store = MemoryDeviceTokenStore(.init(server: AppConfig.serverURL, credential: fakeDeviceToken))
-        return APIClient(transport: transport, receiptPairing: ReceiptPairing(store: store), sessionToken: { "session-token" })
+        return APIClient(
+            transport: transport,
+            receiptPairing: ReceiptPairing(store: store),
+            sessionToken: { "session-token" },
+            budgetEnabled: budgetEnabled
+        )
     }
 
     func testMonthlyWireRequestHasPathQueryAndDeviceBearer() async throws {
@@ -474,6 +885,144 @@ final class BudgetClientTests: XCTestCase {
             XCTFail("Expected forbidden")
         } catch {
             XCTAssertEqual(error as? BudgetError, .forbidden)
+        }
+    }
+
+    func testStaleCursor409WireResponseMapsToStaleCursor() async {
+        let api = pairedClient(StubTransport { _ in
+            (409, Data(#"{"ok":false,"error":"budget_analytics_stale_cursor"}"#.utf8))
+        })
+        do {
+            _ = try await api.transactions(
+                period: "2026-11", currency: "PLN", categoryID: nil, cursor: "c1", limit: 50
+            )
+            XCTFail("Expected staleCursor")
+        } catch {
+            XCTAssertEqual(error as? BudgetError, .staleCursor)
+        }
+    }
+
+    func testDispatchGateBlocksAllBudgetMethodsByDefaultAndWhenDisabled() async throws {
+        let store = MemoryDeviceTokenStore(.init(server: AppConfig.serverURL, credential: fakeDeviceToken))
+        let transport = CapturingTransport(status: 200, body: BudgetMappingTests.monthlyJSON)
+        // Default budgetEnabled must be { false } (production stays off).
+        let defaultClient = APIClient(
+            transport: transport,
+            receiptPairing: ReceiptPairing(store: store),
+            sessionToken: { "session-token" }
+        )
+        let disabledClient = pairedClient(transport, budgetEnabled: { false })
+
+        for api in [defaultClient, disabledClient] {
+            do {
+                _ = try await api.monthlyBudget(period: "2026-11", currency: "PLN")
+                XCTFail("Expected forbidden")
+            } catch {
+                XCTAssertEqual(error as? BudgetError, .forbidden)
+            }
+            do {
+                _ = try await api.transactions(period: "2026-11", currency: "PLN", categoryID: nil, cursor: nil, limit: 50)
+                XCTFail("Expected forbidden")
+            } catch {
+                XCTAssertEqual(error as? BudgetError, .forbidden)
+            }
+            do {
+                _ = try await api.status()
+                XCTFail("Expected forbidden")
+            } catch {
+                XCTAssertEqual(error as? BudgetError, .forbidden)
+            }
+            XCTAssertNil(transport.last)
+        }
+
+        final class GateBox: @unchecked Sendable {
+            private let lock = NSLock()
+            private var enabled = false
+            func set(_ value: Bool) { lock.withLock { enabled = value } }
+            func get() -> Bool { lock.withLock { enabled } }
+        }
+        let gate = GateBox()
+        let dynamicClient = pairedClient(transport, budgetEnabled: { gate.get() })
+        gate.set(true)
+        _ = try await dynamicClient.monthlyBudget(period: "2026-11", currency: "PLN")
+        XCTAssertNotNil(transport.last)
+
+        let transportAfter = CapturingTransport(status: 200, body: BudgetMappingTests.monthlyJSON)
+        let gatedAgain = pairedClient(transportAfter, budgetEnabled: { gate.get() })
+        gate.set(false)
+        do {
+            _ = try await gatedAgain.status()
+            XCTFail("Expected forbidden")
+        } catch {
+            XCTAssertEqual(error as? BudgetError, .forbidden)
+        }
+        XCTAssertNil(transportAfter.last)
+    }
+
+    func testBudget401And403DoNotTouchReceiptPairingOrSession() async throws {
+        let deviceStore = MemoryDeviceTokenStore(.init(server: AppConfig.serverURL, credential: fakeDeviceToken))
+        let pairing = ReceiptPairing(store: deviceStore)
+        final class BoolBox: @unchecked Sendable {
+            private let lock = NSLock()
+            private var value = false
+            var flag: Bool { lock.withLock { value } }
+            func set() { lock.withLock { value = true } }
+        }
+        let sessionCleared = BoolBox()
+
+        let mockHestia = MockHestiaAPI()
+        await mockHestia.setWhoami(role: "admin")
+        await mockHestia.setDiscovery(.init(
+            devices: .init(additionalProperties: [:]),
+            globals: .init(cribTemp: 21, outdoorHumidity: 50, outdoorTemp: 10),
+            irButtons: [],
+            klima: .init(file: "k.ir", powerOn: .init(additionalProperties: ["cool": [18, 19, 20]]), presets: ["off"]),
+            klimaState: .init(mode: "cool", power: false, temp: 20),
+            mode: "standalone",
+            ruleVocab: .init(cmpOps: [], conditionTypes: [], frameActionOps: [], modes: [],
+                             presenceEvents: [], stateFields: .init(), sunEvents: [], triggerTypes: []),
+            summary: .init(confirmed: 0, total: 0, unknown: 0),
+            targetMode: "standalone"
+        ))
+        let app = AppState(
+            api: mockHestia,
+            receiptPairing: pairing,
+            events: { AsyncStream { $0.finish() } }
+        )
+        await app.connect()
+        XCTAssertEqual(app.phase, .ready)
+        XCTAssertEqual(pairing.status, .paired)
+
+        for (status, body) in [
+            (401, #"{"error":{"code":"device_token_expired"}}"#),
+            (403, #"{"ok":false,"error":"budget_forbidden"}"#),
+        ] {
+            let api = APIClient(
+                transport: CapturingTransport(status: status, body: body),
+                receiptPairing: pairing,
+                sessionToken: { "session-token" },
+                clearToken: { sessionCleared.set() },
+                budgetEnabled: { true }
+            )
+            let expected: BudgetError = status == 401 ? .unauthorized : .forbidden
+            let calls: [@Sendable () async throws -> Void] = [
+                { _ = try await api.monthlyBudget(period: "2026-11", currency: nil) },
+                { _ = try await api.transactions(period: "2026-11", currency: "PLN", categoryID: nil, cursor: nil, limit: 50) },
+                { _ = try await api.status() },
+            ]
+            for call in calls {
+                do {
+                    try await call()
+                    XCTFail("Expected \(expected)")
+                } catch {
+                    XCTAssertEqual(error as? BudgetError, expected)
+                }
+            }
+            XCTAssertEqual(pairing.status, .paired)
+            XCTAssertEqual(deviceStore.load()?.credential, fakeDeviceToken)
+            XCTAssertFalse(sessionCleared.flag)
+            XCTAssertEqual(app.phase, .ready)
+            XCTAssertEqual(app.whoami?.user, "u")
         }
     }
 

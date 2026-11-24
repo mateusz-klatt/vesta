@@ -79,6 +79,7 @@ actor APIClient: HestiaAPI {
     private let auth: BearerAuthMiddleware
     private let saveToken: @Sendable (String) -> Void
     private let clearToken: @Sendable () -> Void
+    let budgetEnabled: @Sendable () -> Bool
     /// Bumped by ``logout()``. A login whose response lands after a logout
     /// started must not store its token, or a signed-out app wakes up signed in.
     private var authEpoch = 0
@@ -93,10 +94,12 @@ actor APIClient: HestiaAPI {
          receiptPairing: ReceiptPairing? = nil,
          sessionToken: @escaping @Sendable () -> String? = { TokenStore.load() },
          saveToken: @escaping @Sendable (String) -> Void = { TokenStore.save($0) },
-         clearToken: @escaping @Sendable () -> Void = { TokenStore.clear() }) {
+         clearToken: @escaping @Sendable () -> Void = { TokenStore.clear() },
+         budgetEnabled: @escaping @Sendable () -> Bool = { false }) {
         self.transport = transport
         self.saveToken = saveToken
         self.clearToken = clearToken
+        self.budgetEnabled = budgetEnabled
         auth = BearerAuthMiddleware(token: sessionToken, receiptPairing: receiptPairing)
         serverURL = AppConfig.serverURL
         client = APIClient.make(serverURL, transport, auth)

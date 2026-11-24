@@ -293,6 +293,42 @@ final class HTTPSessionTests: XCTestCase {
             XCTAssertEqual(result?.url, follows ? redirect.url : nil, "\(path) → \(location)")
         }
     }
+
+    func testBudgetRedirectsAreRejectedInBothDirections() async throws {
+        let session = HTTPSession.shared
+        let delegate = try XCTUnwrap(session.delegate as? HestiaRedirectDelegate)
+        let origin = "https://hestia.example"
+        let cases = [
+            // Non-budget request redirected into /api/budget or /api/budget/*
+            ("/api/discovery", "\(origin)/api/budget", false),
+            ("/api/discovery", "\(origin)/api/budget/", false),
+            ("/api/discovery", "\(origin)/api/budget/analytics/monthly-budget", false),
+            ("/api/discovery", "\(origin)/api/budget/analytics/transactions", false),
+            ("/api/discovery", "\(origin)/api/budget/status", false),
+            ("/api/discovery", "\(origin)/api/budget/receipts/parse-text", false),
+            ("/api/discovery", "\(origin)/api/other/../budget/status", false),
+            // Budget request redirected out of its allowlist (or anywhere else)
+            ("/api/budget", "\(origin)/api/discovery", false),
+            ("/api/budget/", "\(origin)/api/discovery", false),
+            ("/api/budget/analytics/monthly-budget", "\(origin)/api/discovery", false),
+            ("/api/budget/analytics/transactions", "\(origin)/api/events", false),
+            ("/api/budget/status", "\(origin)/api/budget/analytics/monthly-budget", false),
+            // Prefix boundary: /api/budgeting is not /api/budget or /api/budget/*
+            ("/api/discovery", "\(origin)/api/budgeting", true),
+        ]
+        for (path, location, follows) in cases {
+            let url = try XCTUnwrap(URL(string: origin + path))
+            let task = session.dataTask(with: url)
+            defer { task.cancel() }
+            let response = try XCTUnwrap(HTTPURLResponse(
+                url: url, statusCode: 307, httpVersion: nil, headerFields: ["Location": location]
+            ))
+            let redirect = URLRequest(url: try XCTUnwrap(URL(string: location)))
+            let result = await delegate.urlSession(session, task: task, willPerformHTTPRedirection: response,
+                                                   newRequest: redirect)
+            XCTAssertEqual(result?.url, follows ? redirect.url : nil, "\(path) → \(location)")
+        }
+    }
 }
 
 final class TokenStoreTests: XCTestCase {

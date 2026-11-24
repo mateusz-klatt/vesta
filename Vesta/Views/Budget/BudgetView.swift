@@ -4,6 +4,7 @@ struct BudgetView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.locale) private var locale
     let store: BudgetStore
+    var onClose: () -> Void = {}
     @State private var shownCategory: BudgetCategory?
 
     var body: some View {
@@ -14,18 +15,29 @@ struct BudgetView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("Done") { dismiss() }
+                        Button("Done") {
+                            onClose()
+                            store.clear()
+                            dismiss()
+                        }
                     }
                     if store.isRefreshing {
                         ToolbarItem(placement: .primaryAction) { ProgressView() }
                     }
                 }
                 .task { await store.load() }
+                .onChange(of: store.isDenied) { _, denied in
+                    if denied { shownCategory = nil }
+                }
                 .navigationDestination(item: $shownCategory) { category in
                     BudgetCategoryTransactionsView(store: store, category: category)
                 }
         }
         .privacySensitive()
+        .onDisappear {
+            onClose()
+            store.clear()
+        }
     }
 
     @ViewBuilder private var content: some View {
@@ -40,6 +52,8 @@ struct BudgetView: View {
             }
         case .unavailable:
             errorView(store.failure ?? .unavailable)
+        case .unauthorized:
+            errorView(store.failure ?? .unauthorized)
         case .forbidden:
             errorView(.forbidden)
         case .failed:
@@ -90,13 +104,17 @@ struct BudgetView: View {
                 Text("No categories").foregroundStyle(Theme.textSecondary)
             }
             ForEach(overview.categories) { category in
-                Button {
-                    shownCategory = category
-                    Task { await store.selectCategory(category.id) }
-                } label: {
+                if category.isOneOff {
                     BudgetCategoryRow(category: category, currency: overview.currency)
+                } else {
+                    Button {
+                        shownCategory = category
+                        Task { await store.selectCategory(category.id) }
+                    } label: {
+                        BudgetCategoryRow(category: category, currency: overview.currency)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -104,17 +122,28 @@ struct BudgetView: View {
     }
 
     private func errorView(_ error: BudgetError) -> some View {
+        BudgetErrorView(error: error) { Task { await store.load() } }
+    }
+}
+
+private struct BudgetErrorView: View {
+    let error: BudgetError
+    let retry: () -> Void
+
+    private var isDenied: Bool { error == .forbidden || error == .unauthorized }
+
+    var body: some View {
         ContentUnavailableView {
             Label {
                 Text(error.title)
             } icon: {
-                Image(systemName: error == .forbidden ? "lock.fill" : "exclamationmark.triangle")
+                Image(systemName: isDenied ? "lock.fill" : "exclamationmark.triangle")
             }
         } description: {
             Text(error.message)
         } actions: {
-            if error != .forbidden {
-                Button("Try again") { Task { await store.load() } }
+            if !isDenied {
+                Button("Try again", action: retry)
             }
         }
     }
@@ -130,7 +159,7 @@ private struct BudgetMonthSwitcher: View {
                 Image(systemName: "chevron.left")
             }
             .accessibilityLabel("Previous month")
-            Text(store.monthDate.formatted(.dateTime.month(.wide).year().locale(locale)))
+            Text(verbatim: BudgetStore.monthTitle(for: store.monthDate, locale: locale))
                 .font(.title2.weight(.semibold))
                 .frame(maxWidth: .infinity)
             Button { Task { await store.nextMonth() } } label: {
@@ -245,9 +274,11 @@ private struct BudgetCategoryRow: View {
                 }
                 .foregroundStyle(Theme.textPrimary)
                 Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(Theme.textSecondary)
+                if !category.isOneOff {
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                }
             }
             HStack {
                 Text(verbatim: category.netSpending.formatted(.currency(code: currency).locale(locale)))
@@ -304,15 +335,28 @@ private struct BudgetCategoryTransactionsView: View {
     let category: BudgetCategory
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 12) {
-                if store.isLoading && store.transactions.isEmpty {
-                    ProgressView().frame(maxWidth: .infinity)
-                } else {
-                    BudgetTransactionRows(store: store)
+        Group {
+            switch store.state {
+            case .unauthorized:
+                BudgetErrorView(error: store.failure ?? .unauthorized) { Task { await store.load() } }
+            case .forbidden:
+                BudgetErrorView(error: .forbidden) { Task { await store.load() } }
+            case .unavailable:
+                BudgetErrorView(error: store.failure ?? .unavailable) { Task { await store.load() } }
+            case .failed:
+                BudgetErrorView(error: store.failure ?? .failed) { Task { await store.load() } }
+            case .loading, .loaded:
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        if store.isLoading && store.transactions.isEmpty {
+                            ProgressView().frame(maxWidth: .infinity)
+                        } else {
+                            BudgetTransactionRows(store: store)
+                        }
+                    }
+                    .padding()
                 }
             }
-            .padding()
         }
         .background(Theme.background)
         .navigationTitle(category.name.map { Text(verbatim: $0) } ?? Text("Uncategorised"))
@@ -337,7 +381,7 @@ private struct BudgetTransactionRows: View {
                 if store.isLoadingMore { ProgressView() }
                 else { Text("Load more") }
             }
-            .disabled(store.isLoadingMore)
+            .disabled(store.isLoading || store.isLoadingMore)
             .frame(maxWidth: .infinity)
         }
     }

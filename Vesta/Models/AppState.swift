@@ -50,6 +50,7 @@ final class AppState {
     /// The logout (and unpair) a backend change runs. A login waits for it, or
     /// that deferred logout would cancel the new session's login.
     private var resetTask: Task<Void, Never>?
+    private weak var activeBudgetStore: BudgetStore?
 
     private var allDevices: [IdentifiedDevice] { rooms.flatMap(\.devices) }
     var isReadOnly: Bool { Control.isReadOnly(role: whoami?.role) }
@@ -65,6 +66,19 @@ final class AppState {
     var budgetAPI: (any BudgetAPI)? {
         guard nativeBudgetEnabled, Control.canAddReceipts(role: whoami?.role) else { return nil }
         return api as? any BudgetAPI
+    }
+
+    func makeBudgetStore(now: Date = Date()) -> BudgetStore? {
+        guard let api = budgetAPI else { return nil }
+        closeBudget()
+        let store = BudgetStore(api: api, now: now)
+        activeBudgetStore = store
+        return store
+    }
+
+    func closeBudget() {
+        activeBudgetStore?.clear()
+        activeBudgetStore = nil
     }
     var hasLights: Bool { allDevices.contains { $0.device._type == "light" } }
     var hasBlinds: Bool { allDevices.contains { $0.device._type == "blind" } }
@@ -140,6 +154,7 @@ final class AppState {
     func saveAndConnect(_ raw: String) -> Bool {
         guard let url = BackendURLStore.canonicalize(raw) else { return false }
         sessionGeneration += 1
+        closeBudget()
         let changed = url != AppConfig.serverURL
         BackendURLStore.shared.saveOverride(url)
         backendURLString = url.absoluteString
@@ -194,6 +209,7 @@ final class AppState {
 
     func signOut() async {
         sessionGeneration += 1
+        closeBudget()
         eventTask?.cancel()
         whoami = nil
         try? await receiptPairing.unpair()
