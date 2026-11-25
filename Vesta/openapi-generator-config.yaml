@@ -7,3 +7,7 @@ generate:
   - client
 accessModifier: internal
 namingStrategy: idiomatic
+typeOverrides:
+  schemas:
+    # The generator drops recurrence_id's required anyOf with a null branch.
+    CalendarExpandedInstance: CalendarExpandedInstanceWire

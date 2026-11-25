@@ -18,20 +18,25 @@ final class AgendaStore {
     private(set) var state: State = .idle
     var selectedGroup: String?
     private(set) var groups: [String] = []
+    private(set) var isDiscarded = false
 
     private let api: any CalendarAPI
     private let calendar: Calendar
     private let now: @MainActor () -> Date
+    private let onForbidden: @MainActor () -> Void
     private var generation = 0
 
     init(api: any CalendarAPI, calendar: Calendar = .current,
-         now: @escaping @MainActor () -> Date = { Date() }) {
+         now: @escaping @MainActor () -> Date = { Date() },
+         onForbidden: @escaping @MainActor () -> Void = {}) {
         self.api = api
         self.calendar = calendar
         self.now = now
+        self.onForbidden = onForbidden
     }
 
     func load() async {
+        guard !isDiscarded else { return }
         generation += 1
         let generation = generation
         // Pull-to-refresh keeps the current list on screen while it reloads.
@@ -40,8 +45,8 @@ final class AgendaStore {
         let to = calendar.date(byAdding: .day, value: Self.windowDays, to: from)!
         let group = selectedGroup
         do {
-            let page = try await api.agenda(from: from, to: to, group: group)
-            guard generation == self.generation else { return }
+            let page = try await api.agenda(from: from, to: to, group: group, timeZone: calendar.timeZone)
+            guard !isDiscarded, generation == self.generation else { return }
             groups = page.groups
             guard page.enabled else {
                 state = .disabled
@@ -52,12 +57,26 @@ final class AgendaStore {
             )
             state = .loaded(sections: sections, truncated: page.truncated)
         } catch {
-            guard generation == self.generation else { return }
-            switch CalendarError.wrap(error) {
+            guard !isDiscarded else { return }
+            let error = CalendarError.wrap(error)
+            // A denial applies to the whole agenda, even if the requested group changed.
+            guard generation == self.generation || error == .forbidden else { return }
+            switch error {
+            case .forbidden:
+                discard()
+                onForbidden()
             case .unavailable: state = .unavailable
             case .failed(let message): state = .failed(message)
             }
         }
+    }
+
+    func discard() {
+        guard !isDiscarded else { return }
+        isDiscarded = true
+        state = .idle
+        groups = []
+        selectedGroup = nil
     }
 
     func refresh() async {

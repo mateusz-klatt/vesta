@@ -1,4 +1,5 @@
 import Foundation
+import HTTPTypes
 import XCTest
 @testable import Vesta
 
@@ -76,6 +77,7 @@ final class AgendaTimeParsingTests: XCTestCase {
         }
         XCTAssertNil(AgendaTime(dateTime: "2026-01-02T03:04:05"))
         XCTAssertNil(AgendaTime(dateTime: "2026-01-02T03:04:05", timeZone: "Not/AZone"))
+        XCTAssertNil(AgendaTime(dateTime: "2026-01-02T03:04:05+02:60", timeZone: "Europe/Warsaw"))
         XCTAssertNil(AgendaTime(dateTime: "2026-03-29T02:30:00", timeZone: "Europe/Warsaw"))
     }
 
@@ -203,6 +205,7 @@ private actor MockCalendarAPI: CalendarAPI {
         let from: Date
         let to: Date
         let group: String?
+        let timeZone: TimeZone
     }
 
     private let result: Result<AgendaPage, CalendarError>
@@ -212,19 +215,20 @@ private actor MockCalendarAPI: CalendarAPI {
         self.result = result
     }
 
-    func agenda(from: Date, to: Date, group: String?) async throws -> AgendaPage {
-        calls.append(Call(from: from, to: to, group: group))
+    func agenda(from: Date, to: Date, group: String?, timeZone: TimeZone) async throws -> AgendaPage {
+        calls.append(Call(from: from, to: to, group: group, timeZone: timeZone))
         return try result.get()
     }
 }
 
 private actor PausedCalendarAPI: CalendarAPI {
     private(set) var calls: [MockCalendarAPI.Call] = []
-    private var pending: [CheckedContinuation<AgendaPage, Never>] = []
+    private var pending: [CheckedContinuation<Result<AgendaPage, CalendarError>, Never>] = []
 
-    func agenda(from: Date, to: Date, group: String?) async throws -> AgendaPage {
-        calls.append(MockCalendarAPI.Call(from: from, to: to, group: group))
-        return await withCheckedContinuation { pending.append($0) }
+    func agenda(from: Date, to: Date, group: String?, timeZone: TimeZone) async throws -> AgendaPage {
+        calls.append(MockCalendarAPI.Call(from: from, to: to, group: group, timeZone: timeZone))
+        let result = await withCheckedContinuation { pending.append($0) }
+        return try result.get()
     }
 
     func waitForCalls(_ count: Int) async {
@@ -232,7 +236,11 @@ private actor PausedCalendarAPI: CalendarAPI {
     }
 
     func resumeNext(with page: AgendaPage) {
-        pending.removeFirst().resume(returning: page)
+        pending.removeFirst().resume(returning: .success(page))
+    }
+
+    func failNext(with error: CalendarError) {
+        pending.removeFirst().resume(returning: .failure(error))
     }
 }
 
@@ -259,6 +267,7 @@ final class AgendaStoreTests: XCTestCase {
         XCTAssertEqual(calls.count, 1)
         XCTAssertEqual(calls.first?.from, day)
         XCTAssertEqual(calls.first?.to, warsawCalendar().date(byAdding: .day, value: 30, to: day))
+        XCTAssertEqual(calls.first?.timeZone, warsawCalendar().timeZone)
         XCTAssertNil(calls.first?.group)
     }
 
@@ -332,5 +341,311 @@ final class AgendaStoreTests: XCTestCase {
         let calls = await api.calls
         XCTAssertEqual(calls.count, 2)
         XCTAssertEqual(calls.map(\.group), ["family", "family"])
+    }
+}
+
+@MainActor
+final class CalendarClientTests: XCTestCase {
+    private static let instancesJSON = """
+    {
+      "enabled": true,
+      "groups": [{"id": "shared home"}, {"id": "work"}],
+      "instances": [
+        {
+          "instance_id": "day",
+          "event_id": "day",
+          "revision": 1,
+          "group": "shared home",
+          "summary": "All-day event",
+          "location": "",
+          "start": {"date": "2026-11-24"},
+          "end": {"date": "2026-11-25"},
+          "all_day": true,
+          "status": "confirmed",
+          "recurrence_id": null
+        },
+        {
+          "instance_id": "series/2026-11-25T08:00:00Z",
+          "event_id": "series",
+          "revision": 2,
+          "group": "shared home",
+          "summary": "Moved occurrence",
+          "location": "Meeting room",
+          "start": {"dateTime": "2026-11-25T11:00:00+01:00"},
+          "end": {"dateTime": "2026-11-25T12:00:00+01:00"},
+          "all_day": false,
+          "status": "tentative",
+          "recurrence_id": {"dateTime": "2026-11-25T08:00:00Z"}
+        },
+        {
+          "instance_id": "local",
+          "event_id": "local",
+          "revision": 1,
+          "group": "shared home",
+          "summary": "Named time zone",
+          "location": "",
+          "start": {"dateTime": "2026-11-26T11:00:00", "timeZone": "Europe/Warsaw"},
+          "end": {"dateTime": "2026-11-26T12:00:00", "timeZone": "Europe/Warsaw"},
+          "all_day": false,
+          "status": "confirmed",
+          "recurrence_id": null
+        },
+        {
+          "instance_id": "invalid",
+          "event_id": "invalid",
+          "revision": 1,
+          "group": "shared home",
+          "summary": "Invalid time",
+          "location": "",
+          "start": {"date": "2026-11-27"},
+          "end": {"date": "2026-11-31"},
+          "all_day": true,
+          "status": "confirmed",
+          "recurrence_id": null
+        }
+      ],
+      "truncated": true
+    }
+    """
+
+    private func agenda(_ api: APIClient, group: String? = nil) async throws -> AgendaPage {
+        try await api.agenda(
+            from: localDay(2026, 11, 24), to: localDay(2026, 12, 24),
+            group: group, timeZone: warsawCalendar().timeZone
+        )
+    }
+
+    func testWireRequestUsesLocalDatesTimeZoneGroupAndSessionBearer() async throws {
+        let transport = CapturingTransport(status: 200, body: Self.instancesJSON)
+        let sessionCredential = UUID().uuidString
+        let pairing = ReceiptPairing(store: MemoryDeviceTokenStore(.init(
+            server: AppConfig.serverURL, credential: fakeDeviceToken
+        )))
+        let api = APIClient(transport: transport, receiptPairing: pairing, sessionToken: { sessionCredential })
+
+        _ = try await agenda(api, group: "shared home")
+
+        let request = try XCTUnwrap(transport.last?.request)
+        let components = try XCTUnwrap(URLComponents(string: request.path ?? ""))
+        XCTAssertEqual(request.method, .get)
+        XCTAssertEqual(components.path, "/api/calendars/instances")
+        XCTAssertEqual(Set(components.queryItems ?? []), [
+            URLQueryItem(name: "from", value: "2026-11-24"),
+            URLQueryItem(name: "to", value: "2026-12-24"),
+            URLQueryItem(name: "tz", value: "Europe/Warsaw"),
+            URLQueryItem(name: "group", value: "shared home"),
+        ])
+        XCTAssertEqual(request.headerFields[.authorization], "Bearer \(sessionCredential)")
+    }
+
+    func testDecodesInstancesAndSkipsAnInvalidTime() async throws {
+        let transport = CapturingTransport(status: 200, body: Self.instancesJSON)
+        let page = try await agenda(APIClient(transport: transport, sessionToken: { nil }))
+
+        XCTAssertTrue(page.enabled)
+        XCTAssertTrue(page.truncated)
+        XCTAssertEqual(page.groups, ["shared home", "work"])
+        XCTAssertEqual(page.occurrences.map(\.id), ["day", "series/2026-11-25T08:00:00Z", "local"])
+        let allDay = try XCTUnwrap(page.occurrences.first(where: { $0.id == "day" }))
+        XCTAssertEqual(allDay.start, .allDay(year: 2026, month: 11, day: 24))
+        XCTAssertEqual(allDay.end, .allDay(year: 2026, month: 11, day: 25))
+        XCTAssertTrue(allDay.allDay)
+        XCTAssertNil(allDay.recurrenceID)
+
+        let moved = try XCTUnwrap(page.occurrences.first(where: { $0.eventID == "series" }))
+        XCTAssertEqual(moved.recurrenceID, "2026-11-25T08:00:00Z")
+        XCTAssertEqual(moved.start, AgendaTime(dateTime: "2026-11-25T10:00:00Z"))
+        XCTAssertEqual(moved.end, AgendaTime(dateTime: "2026-11-25T11:00:00Z"))
+        XCTAssertFalse(moved.allDay)
+        XCTAssertEqual(moved.status, .tentative)
+        XCTAssertEqual(moved.location, "Meeting room")
+        XCTAssertEqual(moved.summary, "Moved occurrence")
+
+        let local = try XCTUnwrap(page.occurrences.first(where: { $0.id == "local" }))
+        XCTAssertEqual(local.start, AgendaTime(dateTime: "2026-11-26T10:00:00Z"))
+        XCTAssertEqual(local.end, AgendaTime(dateTime: "2026-11-26T11:00:00Z"))
+    }
+
+    func testDecodesDisabledFeedAndOmitsGroupByDefault() async throws {
+        let transport = CapturingTransport(status: 200, body: """
+        {"enabled": false, "groups": [], "instances": [], "truncated": false}
+        """)
+        let page = try await agenda(APIClient(transport: transport, sessionToken: { nil }))
+
+        XCTAssertEqual(page, AgendaPage(enabled: false))
+        let components = try XCTUnwrap(URLComponents(string: transport.last?.request.path ?? ""))
+        XCTAssertFalse(components.queryItems?.contains(where: { $0.name == "group" }) ?? true)
+    }
+
+    func testForbiddenResponseWithEmptyBodyMapsToForbidden() async {
+        let api = APIClient(transport: StubTransport { _ in (403, nil) }, sessionToken: { nil })
+        do {
+            _ = try await agenda(api)
+            XCTFail("Expected forbidden")
+        } catch {
+            XCTAssertEqual(error as? CalendarError, .forbidden)
+        }
+    }
+
+    func testServiceUnavailableResponseMapsToUnavailable() async {
+        let transport = CapturingTransport(status: 503, body: #"{"error": "invalid_calendar_configuration"}"#)
+        let api = APIClient(transport: transport, sessionToken: { nil })
+        do {
+            _ = try await agenda(api)
+            XCTFail("Expected unavailable")
+        } catch {
+            XCTAssertEqual(error as? CalendarError, .unavailable)
+        }
+    }
+}
+
+extension MockHestiaAPI: CalendarAPI {
+    func agenda(from: Date, to: Date, group: String?, timeZone: TimeZone) async throws -> AgendaPage {
+        guard let calendarStub else { return AgendaPage(enabled: true) }
+        return try await calendarStub.agenda(from: from, to: to, group: group, timeZone: timeZone)
+    }
+}
+
+@MainActor
+final class CalendarAccessTests: XCTestCase {
+    private let grant = Capabilities(installation: [.calendarView])
+
+    private func makeApp(_ mock: MockHestiaAPI) -> AppState {
+        AppState(
+            api: mock, receiptPairing: ReceiptPairing(store: MemoryDeviceTokenStore()),
+            events: { AsyncStream { $0.finish() } }
+        )
+    }
+
+    func testCalendarAPIIsHiddenByDefaultWithCalendarViewGrant() async {
+        let mock = MockHestiaAPI()
+        await mock.setCapabilities(grant)
+        let app = makeApp(mock)
+        await app.connect()
+
+        XCTAssertTrue(grant.canViewCalendar)
+        XCTAssertNil(app.calendarAPI)
+        XCTAssertNil(app.makeAgendaStore())
+    }
+
+    func testCalendarAPIRequiresViewGrantWhenFeatureIsEnabled() async {
+        let mock = MockHestiaAPI()
+        let app = makeApp(mock)
+        app.nativeCalendarEnabled = true
+        XCTAssertNil(app.calendarAPI)
+        await mock.setCapabilities(Capabilities(installation: [.calendarEdit]))
+        await app.connect()
+        XCTAssertNil(app.calendarAPI)
+
+        await mock.setCapabilities(grant)
+        await app.refresh()
+        XCTAssertNotNil(app.calendarAPI)
+        XCTAssertNotNil(app.makeAgendaStore())
+        XCTAssertTrue(Capabilities(isAuthOff: true).canViewCalendar)
+    }
+
+    func testForbiddenClearsStoreAndRefreshesCapabilitiesOnce() async throws {
+        let mock = MockHestiaAPI()
+        let calendar = PausedCalendarAPI()
+        await mock.setCapabilities(grant)
+        await mock.setCalendarStub(calendar)
+        let app = makeApp(mock)
+        app.nativeCalendarEnabled = true
+        await app.connect()
+
+        let store = try XCTUnwrap(app.makeAgendaStore())
+        let firstLoad = Task { await store.load() }
+        await calendar.waitForCalls(1)
+        await calendar.resumeNext(with: AgendaPage(enabled: true, groups: ["home"]))
+        await firstLoad.value
+        XCTAssertEqual(store.groups, ["home"])
+        store.selectedGroup = "home"
+
+        let updated = Capabilities(installation: [.calendarView, .calendarEdit])
+        await mock.setCapabilities(updated)
+        let refresh = Task { await store.refresh() }
+        await calendar.waitForCalls(2)
+        await calendar.failNext(with: .forbidden)
+        await refresh.value
+
+        XCTAssertTrue(store.isDiscarded)
+        XCTAssertEqual(store.state, .idle)
+        XCTAssertTrue(store.groups.isEmpty)
+        XCTAssertNil(store.selectedGroup)
+        await store.load()
+        await store.refresh()
+        try await waitUntil("the Calendar denial's capability refresh") { app.capabilities == updated }
+        let calendarCalls = await calendar.calls.count
+        let sessionCalls = await mock.calls
+        XCTAssertEqual(calendarCalls, 2)
+        XCTAssertEqual(sessionCalls, [.capabilities, .capabilities])
+        XCTAssertEqual(app.phase, .ready)
+    }
+
+    func testClosingAgendaDiscardsALateResponse() async throws {
+        let mock = MockHestiaAPI()
+        let calendar = PausedCalendarAPI()
+        await mock.setCapabilities(grant)
+        await mock.setCalendarStub(calendar)
+        let app = makeApp(mock)
+        app.nativeCalendarEnabled = true
+        await app.connect()
+
+        let store = try XCTUnwrap(app.makeAgendaStore())
+        let load = Task { await store.load() }
+        await calendar.waitForCalls(1)
+        app.closeAgenda()
+        await calendar.resumeNext(with: AgendaPage(enabled: true, groups: ["late"], truncated: true))
+        await load.value
+
+        XCTAssertTrue(store.isDiscarded)
+        XCTAssertEqual(store.state, .idle)
+        XCTAssertTrue(store.groups.isEmpty)
+    }
+
+    func testStoreIsDiscardedWhenFeatureOrPermissionIsWithdrawn() async throws {
+        let mock = MockHestiaAPI()
+        await mock.setCapabilities(grant)
+        await mock.setCalendarStub(MockCalendarAPI(result: .success(AgendaPage(enabled: true, groups: ["home"]))))
+        let app = makeApp(mock)
+        app.nativeCalendarEnabled = true
+        await app.connect()
+
+        let featureStore = try XCTUnwrap(app.makeAgendaStore())
+        await featureStore.load()
+        XCTAssertEqual(featureStore.groups, ["home"])
+        app.nativeCalendarEnabled = false
+        XCTAssertTrue(featureStore.isDiscarded)
+        XCTAssertTrue(featureStore.groups.isEmpty)
+        XCTAssertNil(app.calendarAPI)
+
+        app.nativeCalendarEnabled = true
+        let permissionStore = try XCTUnwrap(app.makeAgendaStore())
+        await permissionStore.load()
+        XCTAssertEqual(permissionStore.groups, ["home"])
+        await mock.setCapabilities(Capabilities())
+        await app.refresh()
+        XCTAssertTrue(permissionStore.isDiscarded)
+        XCTAssertTrue(permissionStore.groups.isEmpty)
+        XCTAssertNil(app.calendarAPI)
+    }
+
+    func testSigningOutDiscardsAgenda() async throws {
+        let mock = MockHestiaAPI()
+        await mock.setCapabilities(grant)
+        await mock.setCalendarStub(MockCalendarAPI(result: .success(AgendaPage(enabled: true, groups: ["home"]))))
+        let app = makeApp(mock)
+        app.nativeCalendarEnabled = true
+        await app.connect()
+
+        let store = try XCTUnwrap(app.makeAgendaStore())
+        await store.load()
+        XCTAssertEqual(store.groups, ["home"])
+        await app.signOut()
+
+        XCTAssertTrue(store.isDiscarded)
+        XCTAssertEqual(store.state, .idle)
+        XCTAssertTrue(store.groups.isEmpty)
+        XCTAssertNil(app.calendarAPI)
     }
 }

@@ -17,6 +17,7 @@ actor MockHestiaAPI: HestiaAPI, ReceiptsAPI {
     }
 
     private(set) var calls: [Call] = []
+    private(set) var calendarStub: (any CalendarAPI)?
     private var whoamiResult = Components.Schemas.WhoAmI(role: "operator", user: "u")
     private var capabilitiesResult: Result<Capabilities, APIError>?
     private var holdCapabilities = false
@@ -48,6 +49,7 @@ actor MockHestiaAPI: HestiaAPI, ReceiptsAPI {
     }
     func setCapabilities(_ capabilities: Capabilities) { capabilitiesResult = .success(capabilities) }
     func setCapabilitiesError(_ error: APIError) { capabilitiesResult = .failure(error) }
+    func setCalendarStub(_ calendar: any CalendarAPI) { calendarStub = calendar }
     func setHoldCapabilities() { holdCapabilities = true }
     var isCapabilitiesHeld: Bool { capabilitiesGate != nil }
     func releaseCapabilities() {

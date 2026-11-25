@@ -4,6 +4,7 @@ import SwiftUI
 /// Devices briefly highlight on live events.
 struct HomeView: View {
     @Environment(AppState.self) private var app
+    @Environment(\.calendar) private var calendar
     @State private var showSettings = false
     @State private var pairingPresentation = ReceiptPairingPresentation()
     @State private var receiptFlow: (flow: ReceiptFlow, accessGeneration: Int)?
@@ -67,9 +68,9 @@ struct HomeView: View {
                         .disabled(app.receiptPairing.isBusy)
                     }
                 }
-                if let api = app.calendarAPI {
+                if app.calendarAPI != nil {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button { agendaStore = AgendaStore(api: api) } label: {
+                        Button { agendaStore = app.makeAgendaStore(calendar: calendar) } label: {
                             Image(systemName: "calendar")
                         }
                         .accessibilityLabel("Calendar")
@@ -82,8 +83,10 @@ struct HomeView: View {
             }
             .sheet(isPresented: $showSettings) { SettingsView().appLanguage(app.appLanguage) }
             .receiptPairingSheet($pairingPresentation, app: app)
-            .sheet(isPresented: Binding(get: { agendaStore != nil }, set: { if !$0 { agendaStore = nil } })) {
-                if let agendaStore { AgendaView(store: agendaStore).appLanguage(app.appLanguage) }
+            .sheet(isPresented: Binding(get: { agendaStore != nil }, set: { if !$0 { closeAgenda() } })) {
+                if let agendaStore {
+                    AgendaView(store: agendaStore, onClose: closeAgenda).appLanguage(app.appLanguage)
+                }
             }
             .sheet(isPresented: Binding(get: { receiptFlow != nil }, set: { if !$0 { closeReceipt() } })) {
                 if let receiptFlow { ReceiptScanView(flow: receiptFlow.flow).appLanguage(app.appLanguage) }
@@ -96,10 +99,22 @@ struct HomeView: View {
             .onChange(of: app.budgetAPI == nil) { _, signedOut in
                 if signedOut { closeBudget() }
             }
-            .onChange(of: app.phase) { _, phase in
-                if phase != .ready { closeBudget() }
+            .onChange(of: app.calendarAPI == nil) { _, unavailable in
+                if unavailable { closeAgenda() }
             }
-            .onDisappear { closeBudget() }
+            .onChange(of: agendaStore?.isDiscarded) { _, discarded in
+                if discarded == true { closeAgenda() }
+            }
+            .onChange(of: app.phase) { _, phase in
+                if phase != .ready {
+                    closeBudget()
+                    closeAgenda()
+                }
+            }
+            .onDisappear {
+                closeBudget()
+                closeAgenda()
+            }
             .onChange(of: app.receiptAccessGeneration) { _, generation in
                 if receiptFlow?.accessGeneration != generation { closeReceipt() }
             }
@@ -124,6 +139,11 @@ struct HomeView: View {
         app.closeBudget()
         budgetStore?.clear()
         budgetStore = nil
+    }
+
+    private func closeAgenda() {
+        app.closeAgenda()
+        agendaStore = nil
     }
 }
 

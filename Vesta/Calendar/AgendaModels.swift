@@ -25,8 +25,10 @@ enum AgendaTime: Hashable, Sendable {
         if match.8 != nil {
             guard let utc = TimeZone(secondsFromGMT: 0) else { return nil }
             zone = utc
-        } else if let sign = match.9, let offsetHour = match.10, let offsetMinute = match.11,
-                  let hours = Int(offsetHour), let minutes = Int(offsetMinute), hours < 24, minutes < 60 {
+        } else if let sign = match.9 {
+            guard let offsetHour = match.10, let offsetMinute = match.11,
+                  let hours = Int(offsetHour), let minutes = Int(offsetMinute), hours < 24, minutes < 60
+            else { return nil }
             let offset = hours * 3_600 + minutes * 60
             guard let parsed = TimeZone(secondsFromGMT: sign == "-" ? -offset : offset) else { return nil }
             zone = parsed
@@ -95,10 +97,10 @@ struct AgendaOccurrence: Identifiable, Hashable, Sendable {
     let allDay: Bool
     let status: Status
 
-    init(eventID: String, recurrenceID: String? = nil, group: String, summary: String,
+    init(id: String? = nil, eventID: String, recurrenceID: String? = nil, group: String, summary: String,
          location: String? = nil, start: AgendaTime, end: AgendaTime, allDay: Bool,
          status: Status = .confirmed) {
-        id = eventID + "\u{1F}" + (recurrenceID ?? start.stableIdentifier)
+        self.id = id ?? (eventID + "\u{1F}" + (recurrenceID ?? start.stableIdentifier))
         self.eventID = eventID
         self.recurrenceID = recurrenceID
         self.group = group

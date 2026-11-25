@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct AgendaView: View {
-    @Environment(\.dismiss) private var dismiss
     @Bindable var store: AgendaStore
+    let onClose: () -> Void
 
     var body: some View {
         NavigationStack {
@@ -30,12 +30,12 @@ struct AgendaView: View {
             .navigationTitle("Agenda")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                if store.groups.count > 1 {
+                if let defaultGroup = store.groups.first, store.groups.count > 1 {
                     ToolbarItem(placement: .topBarLeading) {
                         Menu {
                             Picker("Group", selection: $store.selectedGroup) {
-                                Text("All groups").tag(String?.none)
-                                ForEach(store.groups, id: \.self) { group in
+                                Text(verbatim: defaultGroup).tag(String?.none)
+                                ForEach(store.groups.dropFirst(), id: \.self) { group in
                                     Text(verbatim: group).tag(String?.some(group))
                                 }
                             }
@@ -46,7 +46,7 @@ struct AgendaView: View {
                     }
                 }
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
+                    Button("Done", action: onClose)
                 }
             }
             .task {
