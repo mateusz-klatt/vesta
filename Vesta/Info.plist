@@ -76,7 +76,7 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>Vesta uses the camera to scan a receipt. The text is read on your iPhone; the photo is not saved or uploaded.</string>
+	<string>Vesta uses the camera to scan receipts and sign-in codes. The text is read on your iPhone; the photo is not saved or uploaded.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Vesta connects to the hestia server you enter — on your home network this requires local network access.</string>
 	<key>UILaunchScreen</key>

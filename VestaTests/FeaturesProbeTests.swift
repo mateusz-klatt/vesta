@@ -161,6 +161,30 @@ final class FeaturesProbeTests: XCTestCase {
         XCTAssertEqual(non200, .legacy)
     }
 
+    func testQROriginMatchesCanonicalScanAndRejectsMalformedOrigins() async throws {
+        let dummyCode = String(repeating: "A", count: 19)
+        let rawScan = "hestia-login:\(probeOrigin.absoluteString)#\(dummyCode)"
+        let target = try XCTUnwrap(QRLoginPayload(rawValue: rawScan)).origin
+        let fixtures: [(origin: String, expected: URL?)] = [
+            ("https://HESTIA.EXAMPLE:443", target),
+            ("https://hestia.example/path", nil),
+            ("https://hestia.example/", nil),
+            ("https://hestia.example?next=home", nil),
+            ("https://viewer@hestia.example", nil),
+            ("http://hestia.example", nil),
+            ("https://hestia.example#fragment", nil),
+            ("https://hestia.example:", nil),
+        ]
+        for (origin, expected) in fixtures {
+            let probe = try await decodeFeatures(
+                #"{"auth_contract":2,"features":["capabilities","qr_login"],"qr_origin":"\#(origin)"}"#
+            )
+            XCTAssertTrue(probe.supports(.capabilities))
+            XCTAssertTrue(probe.supports(.qrLogin))
+            XCTAssertEqual(probe.qrOrigin, expected, origin)
+        }
+    }
+
     func testProbeRethrowsURLError() async throws {
         let api = APIClient(transport: StubTransport { _ in throw URLError(.timedOut) })
         do {

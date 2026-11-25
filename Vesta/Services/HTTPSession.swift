@@ -12,7 +12,13 @@ enum HTTPSession {
     static let shared = URLSession(configuration: configuration, delegate: HestiaRedirectDelegate(), delegateQueue: nil)
     // A feature probe stays on the public route and uses no HTTP credentials.
     static let featuresProbe = URLSession(
-        configuration: featuresProbeConfiguration, delegate: FeaturesProbeDelegate(), delegateQueue: nil
+        configuration: featuresProbeConfiguration,
+        delegate: UnauthenticatedAuthDelegate(nonTrustDisposition: .rejectProtectionSpace), delegateQueue: nil
+    )
+    // A redeem sends a single-use code in its body and must never replay it on redirect or challenge.
+    static let qrRedeem = URLSession(
+        configuration: featuresProbeConfiguration,
+        delegate: UnauthenticatedAuthDelegate(nonTrustDisposition: .cancelAuthenticationChallenge), delegateQueue: nil
     )
 
     static var featuresProbeConfiguration: URLSessionConfiguration {
@@ -32,7 +38,13 @@ enum HTTPSession {
     }
 }
 
-final class FeaturesProbeDelegate: NSObject, URLSessionTaskDelegate {
+final class UnauthenticatedAuthDelegate: NSObject, URLSessionTaskDelegate {
+    private let nonTrustDisposition: URLSession.AuthChallengeDisposition
+
+    init(nonTrustDisposition: URLSession.AuthChallengeDisposition) {
+        self.nonTrustDisposition = nonTrustDisposition
+    }
+
     func urlSession(
         _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
         newRequest request: URLRequest
@@ -41,18 +53,18 @@ final class FeaturesProbeDelegate: NSObject, URLSessionTaskDelegate {
     func urlSession(
         _ session: URLSession, didReceive challenge: URLAuthenticationChallenge
     ) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
-        (Self.disposition(for: challenge), nil)
+        (disposition(for: challenge), nil)
     }
 
     func urlSession(
         _ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge
     ) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
-        (Self.disposition(for: challenge), nil)
+        (disposition(for: challenge), nil)
     }
 
-    private static func disposition(for challenge: URLAuthenticationChallenge) -> URLSession.AuthChallengeDisposition {
+    private func disposition(for challenge: URLAuthenticationChallenge) -> URLSession.AuthChallengeDisposition {
         challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust
-            ? .performDefaultHandling : .rejectProtectionSpace
+            ? .performDefaultHandling : nonTrustDisposition
     }
 }
 
