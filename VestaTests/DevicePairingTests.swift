@@ -241,11 +241,14 @@ final class DevicePairingTests: XCTestCase {
         XCTAssertEqual(calls, [.login("owner", "fake-password", ReceiptPairing.deviceName, fakeServer)])
         XCTAssertEqual(pairing.status, .paired)
         XCTAssertEqual(store.load()?.credential, fakeDeviceToken)
+        XCTAssertEqual(store.load()?.provenance, .legacyPasswordLogin)
+        XCTAssertEqual(store.load()?.actor, "owner")
     }
 
     func testLoginSkipsAutoPairingForNonAdminsAndPairedDevices() async throws {
         for (role, stored) in [("operator", nil), ("viewer", nil),
-                               ("admin", StoredReceiptDeviceToken(server: fakeServer, credential: fakeDeviceToken))] {
+                               ("admin", StoredReceiptDeviceToken(server: fakeServer, provenance: .legacyPasswordLogin,
+                                                                 actor: "owner", credential: fakeDeviceToken))] {
             let api = MockDevicePairingAPI()
             let pairing = ReceiptPairing(api: api, store: MemoryDeviceTokenStore(stored), serverURL: { fakeServer })
             let hestia = MockHestiaAPI()
@@ -256,7 +259,26 @@ final class DevicePairingTests: XCTestCase {
 
             let calls = await api.calls
             XCTAssertEqual(calls, [], role)
+            XCTAssertEqual(pairing.credential(for: fakeServer), stored)
         }
+    }
+
+    func testFreshPasswordLoginCannotClaimAnUnverifiedLegacyReceiptCredential() async throws {
+        let api = MockDevicePairingAPI()
+        let legacy = StoredReceiptDeviceToken(server: fakeServer, credential: fakeDeviceToken)
+        let store = MemoryDeviceTokenStore(legacy)
+        let pairing = ReceiptPairing(api: api, store: store, serverURL: { fakeServer })
+        let hestia = MockHestiaAPI()
+        await hestia.setWhoami(role: "admin")
+        let app = AppState(api: hestia, receiptPairing: pairing, events: noEvents)
+
+        await app.login(user: "owner", password: "fake-password")
+
+        XCTAssertNil(pairing.credential(for: fakeServer))
+        XCTAssertEqual(store.load(), legacy)
+        XCTAssertEqual(pairing.status, .notPaired)
+        let calls = await api.calls
+        XCTAssertTrue(calls.isEmpty)
     }
 
     func testFailedAutoPairingLeavesTheCodeFlow() async throws {
@@ -413,6 +435,50 @@ final class DevicePairingTests: XCTestCase {
         XCTAssertNoThrow(try store.clear())
     }
 
+    func testMissingProvenanceDecodesAsLegacyMigrated1xOnActiveAndPendingRecords() throws {
+        struct LegacyRecord: Encodable {
+            let server: URL
+            let credential: ReceiptDeviceToken
+        }
+        let active = LegacyRecord(server: fakeServer, credential: fakeDeviceToken)
+        let olderOrigin = try XCTUnwrap(URL(string: "https://hestia.example:8443"))
+        let pending = LegacyRecord(server: olderOrigin, credential: .init(
+            token: "pending-token", tokenID: "pending-id", expiresAt: .number(1_700_000_000)
+        ))
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        let loaded = try decoder.decode(StoredReceiptDeviceToken.self, from: encoder.encode(active))
+        let revocations = try decoder.decode([StoredReceiptDeviceToken].self, from: encoder.encode([pending]))
+
+        XCTAssertEqual(loaded, .init(server: fakeServer, credential: active.credential))
+        XCTAssertEqual(revocations, [.init(server: olderOrigin, credential: pending.credential)])
+        for record in [loaded] + revocations {
+            XCTAssertEqual(record.provenance, .legacyMigrated1x)
+            XCTAssertNil(record.actor)
+            XCTAssertNil(record.owner)
+            XCTAssertNil(record.ownerKey)
+            XCTAssertNil(record.sessionCommitID)
+        }
+    }
+
+    func testLegacyReceiptScopeWriteFailureKeepsCredentialAndPendingRevocationsForRetry() throws {
+        let legacy = StoredReceiptDeviceToken(server: fakeServer, credential: fakeDeviceToken)
+        let pending = StoredReceiptDeviceToken(server: try XCTUnwrap(URL(string: "https://hestia.example:8443")),
+            credential: .init(token: "pending-token", tokenID: "pending-id", expiresAt: .number(1_700_000_000)))
+        let store = MemoryDeviceTokenStore(legacy)
+        store.savePendingRevocations([pending])
+        let pairing = ReceiptPairing(store: store, serverURL: { fakeServer })
+        store.failNextSave()
+
+        XCTAssertThrowsError(try pairing.bindLegacyCredential(origin: fakeServer, actor: "owner"))
+        XCTAssertEqual(store.load(), legacy)
+        XCTAssertEqual(store.pending, [pending])
+
+        try pairing.bindLegacyCredential(origin: fakeServer, actor: "owner")
+        XCTAssertEqual(store.load(), legacy.withScope(actor: "owner"))
+        XCTAssertEqual(store.pending, [pending])
+    }
+
     func testPairPersistsAndRestoresCredentialOnlyForItsServer() async throws {
         let api = MockDevicePairingAPI()
         let store = MemoryDeviceTokenStore()
@@ -424,6 +490,9 @@ final class DevicePairingTests: XCTestCase {
         let calls = await api.calls
         XCTAssertEqual(calls, [.redeem(code, "iPhone", fakeServer)])
         XCTAssertEqual(pairing.status, .paired)
+        XCTAssertEqual(store.load()?.provenance, .legacyCodeRedeem)
+        XCTAssertNil(store.load()?.actor)
+        XCTAssertNil(store.load()?.owner)
         let restored = ReceiptPairing(api: api, store: store, serverURL: { fakeServer })
         XCTAssertEqual(restored.status, .paired)
         XCTAssertEqual(restored.credential(for: fakeServer)?.credential, fakeDeviceToken)
@@ -433,6 +502,45 @@ final class DevicePairingTests: XCTestCase {
         XCTAssertEqual(other.status, .notPaired)
         XCTAssertNil(other.credential(for: otherServer))
         XCTAssertNil(other.credential(for: fakeServer))
+    }
+
+    func testCodeRedeemKeepsUnverifiedIdentityAcrossRelaunchAndRejectsSameOriginAccountSwitch() async throws {
+        let suite = "device-pairing-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let backend = BackendURLStore(userDefaults: defaults)
+        let keychain = TestSessionKeychain()
+        let session = CredentialSessionStore(backendURLStore: backend, keychain: keychain)
+        let old = try session.commitAuthoritative(origin: fakeServer, actor: "first", token: "old-session")
+        let store = MemoryDeviceTokenStore()
+        let pairing = ReceiptPairing(api: MockDevicePairingAPI(), store: store, serverURL: { fakeServer })
+        pairing.bindSessionStore(session)
+        try await pairing.pair(code: try XCTUnwrap(ReceiptPairingCode("ABCD2345")), deviceName: "iPhone")
+
+        let original = try XCTUnwrap(store.load())
+        XCTAssertEqual(original.provenance, .legacyCodeRedeem)
+        XCTAssertEqual(original.sessionCommitID, old.commitID)
+        XCTAssertNil(original.actor)
+        XCTAssertNil(original.owner)
+
+        let restartedStore = CredentialSessionStore(backendURLStore: backend, keychain: keychain)
+        _ = try restartedStore.bootstrap()
+        let roundTrip = try JSONDecoder().decode(StoredReceiptDeviceToken.self, from: JSONEncoder().encode(original))
+        let restoredDeviceStore = MemoryDeviceTokenStore(roundTrip)
+        let restored = ReceiptPairing(store: restoredDeviceStore, serverURL: { fakeServer })
+        restored.bindSessionStore(restartedStore)
+        XCTAssertEqual(restored.credential(for: fakeServer), original)
+
+        let renewed = try restartedStore.commitAuthoritative(origin: fakeServer, actor: "first", token: "renewed-session")
+        try restored.retainCodeCredential(from: old, to: renewed)
+        XCTAssertEqual(restored.credential(for: fakeServer)?.sessionCommitID, renewed.commitID)
+        XCTAssertNil(restored.credential(for: fakeServer)?.actor)
+
+        let switched = try restartedStore.commitAuthoritative(origin: fakeServer, actor: "second", token: "new-session")
+        try restored.retainCodeCredential(from: renewed, to: switched)
+        XCTAssertNil(restored.credential(for: fakeServer, session: switched))
+        XCTAssertNil(restored.credential(for: fakeServer, session: renewed))
+        XCTAssertEqual(restoredDeviceStore.load()?.credential, original.credential)
     }
 
     func testUnpairRevokesAndClearsEvenWhenRevokeFails() async throws {
@@ -465,12 +573,18 @@ final class DevicePairingTests: XCTestCase {
         XCTAssertEqual(pairing.revocationNotice?.key, "Couldn't reach hestia. Remove this iPhone in hestia's device list.")
     }
 
-    func testSignOutRevokesAndClearsEvenWhenOffline() async {
+    func testSignOutRevokesAndClearsEvenWhenOffline() async throws {
         let api = MockDevicePairingAPI(failRevoke: true)
         let store = MemoryDeviceTokenStore(.init(server: fakeServer, credential: fakeDeviceToken))
         let pairing = ReceiptPairing(api: api, store: store, serverURL: { fakeServer })
         let hestia = MockHestiaAPI()
-        let app = AppState(api: hestia, receiptPairing: pairing)
+        let suite = "device-pairing-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let session = CredentialSessionStore(backendURLStore: BackendURLStore(userDefaults: defaults),
+                                             keychain: TestSessionKeychain())
+        try session.commitAuthoritative(origin: fakeServer, actor: "owner", token: "old-session")
+        let app = AppState(api: hestia, receiptPairing: pairing, sessionStore: session, events: noEvents)
 
         await app.signOut()
         let calls = await api.calls
@@ -487,7 +601,10 @@ final class DevicePairingTests: XCTestCase {
         let api = MockDevicePairingAPI(holdRedeem: true)
         let store = MemoryDeviceTokenStore()
         let pairing = ReceiptPairing(api: api, store: store, serverURL: { fakeServer })
-        let app = AppState(api: MockHestiaAPI(), receiptPairing: pairing)
+        let hestia = MockHestiaAPI()
+        await hestia.setAuthOff()
+        let app = AppState(api: hestia, receiptPairing: pairing, events: noEvents)
+        await app.connect()
         let code = try XCTUnwrap(ReceiptPairingCode("ABCD2345"))
         let redeem = Task { try await pairing.pair(code: code, deviceName: "iPhone") }
         while await api.calls.isEmpty { await Task.yield() }
@@ -526,6 +643,52 @@ final class DevicePairingTests: XCTestCase {
         XCTAssertEqual(try store.loadPendingRevocations(), [pending])
         try store.removePendingRevocation(pending)
         XCTAssertTrue(try store.loadPendingRevocations().isEmpty)
+    }
+
+    func testDetachingKeepsTheFullPendingQueueUntilTheDetachedCredentialIsRevoked() async throws {
+        let active = StoredReceiptDeviceToken(server: fakeServer, credential: fakeDeviceToken)
+        let pending = (0..<5).map { index in
+            StoredReceiptDeviceToken(server: fakeServer, credential: .init(
+                token: "pending-token-\(index)", tokenID: "pending-id-\(index)", expiresAt: .string("expiry")
+            ))
+        }
+        let store = MemoryDeviceTokenStore(active)
+        store.savePendingRevocations(pending)
+        let pairing = ReceiptPairing(api: MockDevicePairingAPI(), store: store, serverURL: { fakeServer })
+
+        let detached = try XCTUnwrap(pairing.detachActive(try pairing.currentActiveToken()))
+        XCTAssertNil(store.load())
+        XCTAssertEqual(store.pending, pending + [active])
+
+        try await pairing.revokeDetached(detached)
+        XCTAssertEqual(store.pending, pending)
+    }
+
+    func testManagedPairingRequiresAPublishedSessionAndKeepsStableDeviceIDOnReplacement() async throws {
+        let suite = "device-pairing-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let session = CredentialSessionStore(backendURLStore: BackendURLStore(userDefaults: defaults),
+                                             keychain: TestSessionKeychain())
+        let old = StoredReceiptDeviceToken(server: fakeServer, provenance: .legacyPasswordLogin, actor: "first",
+            credential: .init(token: "retired-device-token", tokenID: fakeDeviceToken.tokenID, expiresAt: .string("expiry")))
+        let api = MockDevicePairingAPI()
+        let store = MemoryDeviceTokenStore(old)
+        let pairing = ReceiptPairing(api: api, store: store, serverURL: { fakeServer })
+        pairing.bindSessionStore(session)
+        let code = try XCTUnwrap(ReceiptPairingCode("ABCD2345"))
+
+        try await pairing.pair(code: code, deviceName: "iPhone")
+        let signedOutCalls = await api.calls
+        XCTAssertTrue(signedOutCalls.isEmpty)
+        XCTAssertEqual(store.load(), old)
+
+        try session.commitAuthoritative(origin: fakeServer, actor: "second", token: "session-token")
+        try await pairing.pair(code: code, deviceName: "iPhone")
+        let calls = await api.calls
+        XCTAssertEqual(calls, [.redeem(code, "iPhone", fakeServer)])
+        XCTAssertEqual(pairing.credential(for: fakeServer)?.credential, fakeDeviceToken)
+        XCTAssertTrue(store.pending.isEmpty)
     }
 
     func testRefreshRetriesAndClearsPendingRevocationOnTerminalResults() async throws {
@@ -646,7 +809,10 @@ final class DevicePairingTests: XCTestCase {
         let api = MockDevicePairingAPI(failRevoke: true, holdRedeem: true)
         let store = MemoryDeviceTokenStore()
         let pairing = ReceiptPairing(api: api, store: store, serverURL: { fakeServer })
-        let app = AppState(api: MockHestiaAPI(), receiptPairing: pairing)
+        let hestia = MockHestiaAPI()
+        await hestia.setAuthOff()
+        let app = AppState(api: hestia, receiptPairing: pairing, events: noEvents)
+        await app.connect()
         let code = try XCTUnwrap(ReceiptPairingCode("ABCD2345"))
         let redeem = Task { try await pairing.pair(code: code, deviceName: "iPhone") }
         while await api.calls.isEmpty { await Task.yield() }
@@ -659,7 +825,8 @@ final class DevicePairingTests: XCTestCase {
         } catch is CancellationError {}
 
         XCTAssertNil(store.load())
-        XCTAssertEqual(store.pending, [.init(server: fakeServer, credential: fakeDeviceToken)])
+        XCTAssertEqual(store.pending, [.init(server: fakeServer, provenance: .legacyCodeRedeem,
+                                              credential: fakeDeviceToken)])
         XCTAssertEqual(pairing.status, .notPaired)
         XCTAssertNotNil(pairing.revocationNotice)
     }
@@ -677,7 +844,8 @@ final class DevicePairingTests: XCTestCase {
         } catch DevicePairingError.storage {}
 
         XCTAssertNil(store.load())
-        XCTAssertEqual(store.pending, [.init(server: fakeServer, credential: fakeDeviceToken)])
+        XCTAssertEqual(store.pending, [.init(server: fakeServer, provenance: .legacyCodeRedeem,
+                                              credential: fakeDeviceToken)])
         XCTAssertEqual(pairing.status, .notPaired)
         XCTAssertNotNil(pairing.revocationNotice)
     }

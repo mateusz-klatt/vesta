@@ -3,7 +3,7 @@ import OpenAPIRuntime
 /// The bearer middleware maps receipt HTTP errors before generated decoding.
 extension APIClient: ReceiptsAPI {
     func parseReceiptText(_ text: String, source: ReceiptSourceKind) async throws -> ReceiptParseResult {
-        refresh()
+        let client = requestClient()
         do {
             let body = Components.Schemas.BudgetReceiptParseTextRequest(sourceKind: source, text: text)
             return try await client.parseBudgetReceiptText(.init(body: .json(body))).ok.body.json
@@ -11,14 +11,14 @@ extension APIClient: ReceiptsAPI {
     }
 
     func confirmReceipt(_ request: ReceiptConfirmRequest) async throws -> ReceiptDetail {
-        refresh()
+        let client = requestClient()
         do {
             return try await client.confirmBudgetReceipt(.init(body: .json(request))).ok.body.json.receipt
         } catch { throw ReceiptError.wrap(error) }
     }
 
     func deleteReceipt(id: String, expectedVersion: Int) async throws {
-        refresh()
+        let client = requestClient()
         do {
             let input = Operations.DeleteBudgetReceipt.Input(
                 body: .json(.init(expectedVersion: expectedVersion, receiptId: id))

@@ -398,31 +398,35 @@ final class HTTPSessionTests: XCTestCase {
 }
 
 final class TokenStoreTests: XCTestCase {
-    override func tearDown() { TokenStore.clear(); super.tearDown() }
-
-    func testRoundTrip() {
-        TokenStore.clear()
-        XCTAssertNil(TokenStore.load())
-        TokenStore.save("abc123")
-        XCTAssertEqual(TokenStore.load(), "abc123")
-        TokenStore.save("def456")          // overwrite
-        XCTAssertEqual(TokenStore.load(), "def456")
-        TokenStore.clear()
-        XCTAssertNil(TokenStore.load())
+    func testRoundTrip() throws {
+        let keychain = SystemSessionKeychain()
+        try keychain.delete(.legacy)
+        defer { try? keychain.delete(.legacy) }
+        XCTAssertNil(try keychain.read(.legacy))
+        let first = Data("abc123".utf8)
+        try keychain.write(first, to: .legacy)
+        XCTAssertEqual(try keychain.read(.legacy), first)
+        let replacement = Data("def456".utf8)
+        try keychain.write(replacement, to: .legacy)
+        XCTAssertEqual(try keychain.read(.legacy), replacement)
+        try keychain.delete(.legacy)
+        XCTAssertNil(try keychain.read(.legacy))
     }
 }
 
 final class BearerAuthMiddlewareTests: XCTestCase {
+    private let origin = URL(string: "https://hestia.example")!
+
     private func request() -> HTTPRequest {
-        HTTPRequest(method: .get, scheme: "https", authority: "host", path: "/x")
+        HTTPRequest(method: .get, scheme: "https", authority: "hestia.example", path: "/x")
     }
 
     // `next` is @Sendable, so echo the request's auth header into the response
     // instead of capturing it, then assert on the response.
     func testAddsAuthorizationWhenTokenPresent() async throws {
-        let middleware = BearerAuthMiddleware(token: { "tok" })
+        let middleware = BearerAuthMiddleware(session: BoundSession(origin: origin, actor: nil, token: "tok"))
         let (response, _) = try await middleware.intercept(
-            request(), body: nil, baseURL: URL(string: "https://host")!, operationID: "op"
+            request(), body: nil, baseURL: origin, operationID: "op"
         ) { req, _, _ in
             var resp = HTTPResponse(status: .ok)
             if let auth = req.headerFields[.authorization] { resp.headerFields[.authorization] = auth }
@@ -432,9 +436,9 @@ final class BearerAuthMiddlewareTests: XCTestCase {
     }
 
     func testNoHeaderWhenTokenAbsent() async throws {
-        let middleware = BearerAuthMiddleware(token: { nil })
+        let middleware = BearerAuthMiddleware()
         let (response, _) = try await middleware.intercept(
-            request(), body: nil, baseURL: URL(string: "https://host")!, operationID: "op"
+            request(), body: nil, baseURL: origin, operationID: "op"
         ) { req, _, _ in
             var resp = HTTPResponse(status: .ok)
             if let auth = req.headerFields[.authorization] { resp.headerFields[.authorization] = auth }

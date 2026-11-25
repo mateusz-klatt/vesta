@@ -1,21 +1,36 @@
 import Foundation
 import os
 
+struct OverrideRecord: Codable, Equatable, Sendable {
+    let urlString: String
+    let sessionCommitID: UUID?
+}
+
+enum OriginMatcher {
+    static func matches(_ lhs: URL, _ rhs: URL) -> Bool {
+        guard lhs.user == nil, lhs.password == nil, rhs.user == nil, rhs.password == nil,
+              let scheme = lhs.scheme?.lowercased(), scheme == "https" || scheme == "http",
+              scheme == rhs.scheme?.lowercased(),
+              let host = lhs.host?.lowercased(), !host.isEmpty, host == rhs.host?.lowercased()
+        else { return false }
+
+        let defaultPort = scheme == "https" ? 443 : 80
+        return (lhs.port ?? defaultPort) == (rhs.port ?? defaultPort)
+    }
+}
+
 /// Persistent runtime override for the hestia backend base URL.
 ///
-/// Vesta has no hard-coded server: the user enters one in ``ConnectView`` and
-/// can change it later. The effective URL resolves as `override ?? bundled`,
-/// where `bundled` is the ``Configuration.plist`` `BaseURL` and `override` is a
-/// validated string in `UserDefaults`. ``AppConfig/serverURL`` reads through
-/// this store so the API client and event stream pick up a change on their next
-/// URL evaluation.
+/// The effective URL is the saved override or the `Configuration.plist`
+/// default. A signed-in override carries the commit ID of its Keychain record
+/// so startup can reconcile an interrupted publication.
 ///
 /// Concurrency: `@unchecked Sendable`; mutable state lives behind an
 /// `OSAllocatedUnfairLock` so the synchronous getter is callable from
 /// `@Sendable` contexts without hopping actors.
 ///
 /// Trust boundary: persisted strings are re-validated via ``canonicalize(_:)``
-/// on load; a corrupted entry is cleared and the bundled default takes over.
+/// on load; a corrupted entry is ignored and the bundled default takes over.
 final class BackendURLStore: @unchecked Sendable {
 
     static let shared = BackendURLStore(userDefaults: .standard)
@@ -30,9 +45,9 @@ final class BackendURLStore: @unchecked Sendable {
                                        category: "BackendURLStore")
 
     private struct State: Sendable {
-        var bundledBaseURL: URL
-        var override: URL?
-        var effective: URL { override ?? bundledBaseURL }
+        let bundledBaseURL: URL
+        var override: (url: URL, record: OverrideRecord)?
+        var effective: URL { override?.url ?? bundledBaseURL }
     }
 
     private let userDefaults: UserDefaults
@@ -52,17 +67,26 @@ final class BackendURLStore: @unchecked Sendable {
 
     func hasOverride() -> Bool { lock.withLock { $0.override != nil } }
 
+    func loadOverrideRecord() -> OverrideRecord? { lock.withLock { $0.override?.record } }
+
     /// Persist a canonicalized override. Callers MUST pass a value that came
     /// from ``canonicalize(_:)``.
-    func saveOverride(_ url: URL) {
-        lock.withLock { $0.override = url }
-        userDefaults.set(url.absoluteString, forKey: Self.userDefaultsKey)
+    func saveOverride(_ url: URL, sessionCommitID: UUID? = nil) {
+        let record = OverrideRecord(urlString: url.absoluteString, sessionCommitID: sessionCommitID)
+        lock.withLock {
+            var value = ["urlString": record.urlString]
+            value["sessionCommitID"] = sessionCommitID?.uuidString
+            userDefaults.set(value, forKey: Self.userDefaultsKey)
+            $0.override = (url, record)
+        }
     }
 
     /// Drop any override and revert to the bundled default. Idempotent.
     func clearOverride() {
-        lock.withLock { $0.override = nil }
-        userDefaults.removeObject(forKey: Self.userDefaultsKey)
+        lock.withLock {
+            userDefaults.removeObject(forKey: Self.userDefaultsKey)
+            $0.override = nil
+        }
     }
 
     /// Canonicalize raw user input into an origin-only backend base URL.
@@ -126,13 +150,23 @@ final class BackendURLStore: @unchecked Sendable {
         return baseURL
     }
 
-    private static func loadValidatedOverride(from defaults: UserDefaults) -> URL? {
-        guard let raw = defaults.string(forKey: userDefaultsKey) else { return nil }
-        guard let canonical = canonicalize(raw) else {
-            logger.warning("Persisted backend URL failed re-validation; clearing.")
-            defaults.removeObject(forKey: userDefaultsKey)
+    private static func loadValidatedOverride(from defaults: UserDefaults) -> (URL, OverrideRecord)? {
+        guard let value = defaults.object(forKey: userDefaultsKey) else { return nil }
+        let raw: String
+        let sessionCommitID: UUID?
+        if let legacy = value as? String {
+            raw = legacy
+            sessionCommitID = nil
+        } else if let record = value as? [String: String], let urlString = record["urlString"] {
+            raw = urlString
+            sessionCommitID = record["sessionCommitID"].flatMap(UUID.init(uuidString:))
+        } else {
             return nil
         }
-        return canonical
+        guard let canonical = canonicalize(raw) else {
+            logger.warning("Persisted backend URL failed re-validation.")
+            return nil
+        }
+        return (canonical, OverrideRecord(urlString: canonical.absoluteString, sessionCommitID: sessionCommitID))
     }
 }

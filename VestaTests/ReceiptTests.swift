@@ -687,10 +687,12 @@ final class ReceiptsClientTests: XCTestCase {
     }
 
     func testOnlyReceiptOperationsSendTheDeviceToken() async throws {
-        let store = MemoryDeviceTokenStore(.init(server: AppConfig.serverURL, credential: fakeDeviceToken))
+        let store = MemoryDeviceTokenStore(.init(
+            server: AppConfig.serverURL, provenance: .legacyPasswordLogin, actor: "u", credential: fakeDeviceToken
+        ))
         let transport = CapturingTransport(status: 400, body: #"{"error":{"code":"budget_auth_ambiguous"}}"#)
         let api = APIClient(transport: transport, receiptPairing: ReceiptPairing(store: store),
-                            sessionToken: { "fake-session-token" })
+                            sessionStore: try testCredentialSessionStore(token: "fake-session-token"))
 
         await assertReceiptError(try await api.parseReceiptText("x", source: .paste), .ambiguousAuth)
         assertBearer(transport, path: "/api/budget/receipts/parse-text", bearer: "fake-device-token")
@@ -724,7 +726,8 @@ final class ReceiptsClientTests: XCTestCase {
         ]
         let server = AppConfig.serverURL
         let store = MemoryDeviceTokenStore(.init(server: server, credential: fakeDeviceToken))
-        let middleware = BearerAuthMiddleware(token: { "fake-session-token" }, receiptPairing: ReceiptPairing(store: store))
+        let session = BoundSession(origin: server, actor: nil, token: "fake-session-token")
+        let middleware = BearerAuthMiddleware(session: session, receiptPairing: ReceiptPairing(store: store))
 
         for (operation, suffix) in operations {
             let path = "/api/budget/receipts/\(suffix)"
@@ -740,7 +743,8 @@ final class ReceiptsClientTests: XCTestCase {
     func testRedeemAndOtherBudgetRoutesNeverGetTheLoginBearer() async throws {
         let server = AppConfig.serverURL
         let store = MemoryDeviceTokenStore(.init(server: server, credential: fakeDeviceToken))
-        let middleware = BearerAuthMiddleware(token: { "fake-session-token" }, receiptPairing: ReceiptPairing(store: store))
+        let session = BoundSession(origin: server, actor: nil, token: "fake-session-token")
+        let middleware = BearerAuthMiddleware(session: session, receiptPairing: ReceiptPairing(store: store))
         let routes = [
             ("redeemBudgetReceiptDevice", "/api/budget/receipts/device-token/redeem"),
             ("futureBudgetOperation", "/api/budget/future"),
@@ -759,10 +763,10 @@ final class ReceiptsClientTests: XCTestCase {
         }
     }
 
-    func testUnpairedReceiptsNeverFallBackToTheSessionToken() async {
+    func testUnpairedReceiptsNeverFallBackToTheSessionToken() async throws {
         let transport = CapturingTransport(status: 403, body: "")
         let api = APIClient(transport: transport, receiptPairing: ReceiptPairing(store: MemoryDeviceTokenStore()),
-                            sessionToken: { "fake-session-token" })
+                            sessionStore: try testCredentialSessionStore(token: "fake-session-token"))
         await assertReceiptError(try await api.parseReceiptText("x", source: .paste), .pairAgain)
         XCTAssertNil(transport.last)
     }

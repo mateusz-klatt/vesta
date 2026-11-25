@@ -77,65 +77,49 @@ enum APIError: LocalizedError, Equatable {
 }
 
 /// Typed hestia client built on the generated `Client` (from `Vesta/openapi.json`).
-/// Auth is a bearer token: ``login(user:password:)`` requests `bearer: true`,
-/// stores the token in the Keychain, and ``BearerAuthMiddleware`` uses it for
-/// session operations. Receipt operations use a separate device credential.
+/// Each generated client holds the origin and credentials captured for one request.
 actor APIClient: HestiaAPI {
-    private var serverURL: URL
-    private(set) var client: Client
+    private let backendURLStore: BackendURLStore
+    private let sessionStore: CredentialSessionStore?
+    private let receiptPairing: ReceiptPairing?
     private let transport: any ClientTransport
     private let probeTransport: any ClientTransport
-    private let auth: BearerAuthMiddleware
-    private let saveToken: @Sendable (String) -> Void
-    private let clearToken: @Sendable () -> Void
     let budgetEnabled: @Sendable () -> Bool
-    /// Bumped by ``logout()``. A login whose response lands after a logout
-    /// started must not store its token, or a signed-out app wakes up signed in.
-    private var authEpoch = 0
-    /// Bumped on every saved token, so a logout still waiting on the server
-    /// doesn't wipe the token of a login that finished in the meantime.
-    private var tokenVersion = 0
 
     // The streaming transport installs its own task delegate. Use the session's
     // redirect delegate for generated REST requests.
     init(transport: (any ClientTransport)? = nil,
          receiptPairing: ReceiptPairing? = nil,
-         sessionToken: @escaping @Sendable () -> String? = { TokenStore.load() },
-         saveToken: @escaping @Sendable (String) -> Void = { TokenStore.save($0) },
-         clearToken: @escaping @Sendable () -> Void = { TokenStore.clear() },
+         sessionStore: CredentialSessionStore? = nil,
          budgetEnabled: @escaping @Sendable () -> Bool = { false }) {
-        let restTransport = transport ?? URLSessionTransport(
+        self.transport = transport ?? URLSessionTransport(
             configuration: .init(session: HTTPSession.shared, httpBodyProcessingMode: .buffered))
-        self.transport = restTransport
         probeTransport = transport ?? URLSessionTransport(
             configuration: .init(session: HTTPSession.featuresProbe, httpBodyProcessingMode: .buffered))
-        self.saveToken = saveToken
-        self.clearToken = clearToken
+        backendURLStore = sessionStore?.backendURLStore ?? .shared
+        self.sessionStore = sessionStore
+        self.receiptPairing = receiptPairing
         self.budgetEnabled = budgetEnabled
-        auth = BearerAuthMiddleware(token: sessionToken, receiptPairing: receiptPairing, budgetEnabled: budgetEnabled)
-        serverURL = AppConfig.serverURL
-        client = APIClient.make(serverURL, restTransport, auth)
     }
 
-    private static func make(_ url: URL, _ transport: any ClientTransport, _ auth: BearerAuthMiddleware) -> Client {
+    private func makeClient(on origin: URL, session: BoundSession?) -> Client {
         Client(
-            serverURL: url,
+            serverURL: origin,
             transport: transport,
-            middlewares: [auth, ExplicitNullsMiddleware()]
+            middlewares: [
+                BearerAuthMiddleware(session: session, receiptPairing: receiptPairing, budgetEnabled: budgetEnabled),
+                ExplicitNullsMiddleware(),
+            ]
         )
     }
 
-    func refresh() {
-        let current = AppConfig.serverURL
-        if current != serverURL {
-            serverURL = current
-            client = APIClient.make(current, transport, auth)
-        }
+    func requestClient(on origin: URL? = nil) -> Client {
+        let session = sessionStore?.currentSnapshot()
+        return makeClient(on: origin ?? session?.origin ?? backendURLStore.currentEffectiveURL(), session: session)
     }
 
     func whoami() async throws -> Components.Schemas.WhoAmI {
-        refresh()
-        return try await whoami(using: client)
+        try await whoami(using: requestClient())
     }
 
     private func whoami(using client: Client) async throws -> Components.Schemas.WhoAmI {
@@ -163,14 +147,21 @@ actor APIClient: HestiaAPI {
     }
 
     func capabilities(on origin: URL, features: ServerFeatures) async throws -> Capabilities {
+        try await capabilities(using: requestClient(on: origin), features: features)
+    }
+
+    func verifyLegacySession(_ session: BoundSession, features: ServerFeatures) async throws -> Capabilities {
+        try await capabilities(using: makeClient(on: session.origin, session: session), features: features)
+    }
+
+    private func capabilities(using client: Client, features: ServerFeatures) async throws -> Capabilities {
         try Task.checkCancellation()
-        let boundClient = origin == serverURL ? client : Self.make(origin, transport, auth)
         guard features.supports(.capabilities) else {
-            let identity = try await whoami(using: boundClient)
+            let identity = try await whoami(using: client)
             return Capabilities.fromLegacyRole(role: identity.role, user: identity.user)
         }
         do {
-            switch try await boundClient.meCapabilities(.init()) {
+            switch try await client.meCapabilities(.init()) {
             case .ok(let ok): return try ok.body.json.capabilities
             case .undocumented(let code, _): throw mapStatus(code)
             }
@@ -178,7 +169,7 @@ actor APIClient: HestiaAPI {
     }
 
     func discovery() async throws -> Components.Schemas.Discovery {
-        refresh()
+        let client = requestClient()
         do {
             switch try await client.discovery(.init()) {
             case .ok(let ok): return try ok.body.json
@@ -188,39 +179,20 @@ actor APIClient: HestiaAPI {
     }
 
     @discardableResult
-    func login(user: String, password: String) async throws -> Components.Schemas.LoginSuccess {
-        refresh()
-        let epoch = authEpoch
-        let success: Components.Schemas.LoginSuccess
+    func login(user: String, password: String, on origin: URL) async throws -> Components.Schemas.LoginSuccess {
+        let client = makeClient(on: origin, session: nil)
         do {
             switch try await client.login(.init(body: .json(.init(bearer: true, password: password, user: user)))) {
-            case .ok(let ok): success = try ok.body.json
+            case .ok(let ok): return try ok.body.json
             case .unauthorized: throw APIError.unauthorized
             case .undocumented(let code, _): throw mapStatus(code)
             }
         } catch { throw Self.requestError(error) }
-        // Actor-isolated, so this check and the save can't interleave with logout().
-        guard epoch == authEpoch else { throw CancellationError() }
-        if let token = success.token {
-            saveToken(token)
-            tokenVersion += 1
-        }
-        return success
     }
 
-    func logout() async {
-        authEpoch += 1
-        let version = tokenVersion
-        refresh()
-        _ = try? await client.logout(.init())
-        // A login that began after this logout and already saved its token wins.
-        guard version == tokenVersion else { return }
-        clearToken()
-    }
-
-    func invalidateSession() {
-        authEpoch += 1
-        clearToken()
+    func remoteLogout(token: String, origin: URL) async {
+        let session = BoundSession(origin: origin, actor: nil, token: token)
+        _ = try? await makeClient(on: origin, session: session).logout(.init())
     }
 
     func setSwitch(node: Int, on: Bool, endpoint: Int? = nil) async throws {
@@ -236,7 +208,7 @@ actor APIClient: HestiaAPI {
     /// clients — so this must stay a single server-side call. `value` is the wire
     /// position (0–99) for `blindsSet`; nil for the valueless sweeps.
     func scene(_ op: Components.Schemas.SceneRequest.OpPayload, value: Int?) async throws {
-        refresh()
+        let client = requestClient()
         do {
             let wire = value.map { max(0, min(99, $0)) }
             switch try await client.scene(.init(body: .json(.init(op: op, value: wire)))) {
@@ -257,7 +229,7 @@ actor APIClient: HestiaAPI {
 
     /// Transmit a saved Flipper IR signal — used for the A/C (klima) panel.
     func sendIR(file: String, button: String) async throws {
-        refresh()
+        let client = requestClient()
         do {
             switch try await client.ir(.init(body: .json(.init(button: button, file: file)))) {
             case .ok: return
@@ -269,7 +241,7 @@ actor APIClient: HestiaAPI {
     }
 
     private func sendControl(_ body: Components.Schemas.ControlRequest) async throws {
-        refresh()
+        let client = requestClient()
         do {
             switch try await client.control(.init(body: .json(body))) {
             case .ok: return

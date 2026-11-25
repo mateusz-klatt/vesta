@@ -2,7 +2,7 @@
 extension APIClient: BudgetAPI {
     func monthlyBudget(period: String, currency: String?) async throws -> BudgetMonthly {
         guard budgetEnabled() else { throw BudgetError.forbidden }
-        refresh()
+        let client = requestClient()
         do {
             let input = Operations.GetBudgetAnalyticsMonthlyBudget.Input(
                 query: .init(period: period, currency: currency)
@@ -13,7 +13,7 @@ extension APIClient: BudgetAPI {
 
     func transactions(period: String, currency: String?, categoryID: String?, cursor: String?, limit: Int) async throws -> BudgetTransactionPage {
         guard budgetEnabled() else { throw BudgetError.forbidden }
-        refresh()
+        let client = requestClient()
         do {
             let input = Operations.GetBudgetAnalyticsTransactions.Input(
                 query: .init(
@@ -27,7 +27,7 @@ extension APIClient: BudgetAPI {
 
     func status() async throws -> BudgetStatus {
         guard budgetEnabled() else { throw BudgetError.forbidden }
-        refresh()
+        let client = requestClient()
         do {
             return BudgetStatus(wire: try await client.getBudgetStatus(.init()).ok.body.json)
         } catch { throw BudgetError.wrap(error) }

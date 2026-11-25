@@ -3,7 +3,7 @@ import OpenAPIRuntime
 
 extension APIClient: CalendarAPI {
     func agenda(from: Date, to: Date, group: String?, timeZone: TimeZone) async throws -> AgendaPage {
-        refresh()
+        let client = requestClient()
         let dateFormat = Date.ISO8601FormatStyle(timeZone: timeZone).year().month().day().dateSeparator(.dash)
         let input = Operations.GetCalendarInstances.Input(query: .init(
             from: from.formatted(dateFormat), to: to.formatted(dateFormat), tz: timeZone.identifier, group: group

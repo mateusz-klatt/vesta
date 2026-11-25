@@ -1,9 +1,68 @@
 import Foundation
 import Security
 
+enum DeviceTokenProvenance: String, Codable, Equatable, Sendable {
+    case exchanged, legacyPasswordLogin, legacyCodeRedeem, legacyMigrated1x
+}
+
 struct StoredReceiptDeviceToken: Codable, Equatable, Sendable {
     let server: URL
+    let provenance: DeviceTokenProvenance
+    let actor: String?
+    let owner: String?
+    let ownerKey: String?
+    let issuedPermissions: [String]?
+    let lastUsableCeiling: [String]?
+    // A code redeem supplies no identity. Associate it with the session that
+    // redeemed it without claiming the credential belongs to that actor.
+    let sessionCommitID: UUID?
     let credential: ReceiptDeviceToken
+
+    init(server: URL, provenance: DeviceTokenProvenance = .legacyMigrated1x,
+         actor: String? = nil, owner: String? = nil, ownerKey: String? = nil,
+         issuedPermissions: [String]? = nil, lastUsableCeiling: [String]? = nil,
+         sessionCommitID: UUID? = nil, credential: ReceiptDeviceToken) {
+        self.server = server
+        self.provenance = provenance
+        self.actor = actor
+        self.owner = owner
+        self.ownerKey = ownerKey
+        self.issuedPermissions = issuedPermissions
+        self.lastUsableCeiling = lastUsableCeiling
+        self.sessionCommitID = sessionCommitID
+        self.credential = credential
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case server, provenance, actor, owner, ownerKey, issuedPermissions, lastUsableCeiling, sessionCommitID, credential
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        server = try container.decode(URL.self, forKey: .server)
+        provenance = try container.decodeIfPresent(DeviceTokenProvenance.self, forKey: .provenance) ?? .legacyMigrated1x
+        actor = try container.decodeIfPresent(String.self, forKey: .actor)
+        owner = try container.decodeIfPresent(String.self, forKey: .owner)
+        ownerKey = try container.decodeIfPresent(String.self, forKey: .ownerKey)
+        issuedPermissions = try container.decodeIfPresent([String].self, forKey: .issuedPermissions)
+        lastUsableCeiling = try container.decodeIfPresent([String].self, forKey: .lastUsableCeiling)
+        sessionCommitID = try container.decodeIfPresent(UUID.self, forKey: .sessionCommitID)
+        credential = try container.decode(ReceiptDeviceToken.self, forKey: .credential)
+    }
+
+    func withScope(actor: String?, sessionCommitID: UUID? = nil) -> Self {
+        Self(server: server, provenance: provenance, actor: actor, owner: owner, ownerKey: ownerKey,
+             issuedPermissions: issuedPermissions, lastUsableCeiling: lastUsableCeiling,
+             sessionCommitID: sessionCommitID, credential: credential)
+    }
+
+    func matchesDevice(_ other: Self) -> Bool {
+        OriginMatcher.matches(server, other.server) && credential.tokenID == other.credential.tokenID
+    }
+
+    func matchesBearer(_ other: Self) -> Bool {
+        matchesDevice(other) && credential.token == other.credential.token
+    }
 }
 
 @MainActor
@@ -18,21 +77,19 @@ protocol DeviceTokenStoring {
 private let pendingRevocationLimit = 5
 
 extension DeviceTokenStoring {
-    func addPendingRevocation(_ token: StoredReceiptDeviceToken) throws {
+    func addPendingRevocation(_ token: StoredReceiptDeviceToken, preservingExisting: Bool = false) throws {
         var pending = try loadPendingRevocations()
-        pending.removeAll {
-            $0.server == token.server && $0.credential.tokenID == token.credential.tokenID
-        }
+        if pending.contains(token) { return }
+        pending.removeAll { $0.matchesDevice(token) }
         pending.append(token)
-        try savePendingRevocations(Array(pending.suffix(pendingRevocationLimit)))
+        try savePendingRevocations(preservingExisting ? pending : Array(pending.suffix(pendingRevocationLimit)))
     }
 
     func removePendingRevocation(_ token: StoredReceiptDeviceToken) throws {
         var pending = try loadPendingRevocations()
-        pending.removeAll {
-            $0.server == token.server && $0.credential.tokenID == token.credential.tokenID
-        }
-        try savePendingRevocations(pending)
+        let originalCount = pending.count
+        pending.removeAll { $0.matchesBearer(token) }
+        if pending.count != originalCount { try savePendingRevocations(pending) }
     }
 }
 
@@ -62,14 +119,15 @@ struct KeychainDeviceTokenStore: DeviceTokenStoring {
     }
 
     fileprivate func saveData(_ data: Data, query: [String: Any]) throws {
-        let attributes = [kSecValueData as String: data]
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        ]
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if status == errSecSuccess { return }
         guard status == errSecItemNotFound else { throw DevicePairingError.storage }
 
-        var item = query
-        item[kSecValueData as String] = data
-        item[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        let item = query.merging(attributes) { _, value in value }
         guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else { throw DevicePairingError.storage }
     }
 

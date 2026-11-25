@@ -981,19 +981,21 @@ final class BudgetClientTests: XCTestCase {
     private func pairedClient(
         _ transport: any ClientTransport,
         budgetEnabled: @escaping @Sendable () -> Bool = { true }
-    ) -> APIClient {
-        let store = MemoryDeviceTokenStore(.init(server: AppConfig.serverURL, credential: fakeDeviceToken))
+    ) throws -> APIClient {
+        let store = MemoryDeviceTokenStore(.init(
+            server: AppConfig.serverURL, provenance: .legacyPasswordLogin, actor: "u", credential: fakeDeviceToken
+        ))
         return APIClient(
             transport: transport,
             receiptPairing: ReceiptPairing(store: store),
-            sessionToken: { "session-token" },
+            sessionStore: try testCredentialSessionStore(token: "session-token"),
             budgetEnabled: budgetEnabled
         )
     }
 
     func testMonthlyWireRequestHasPathQueryAndDeviceBearer() async throws {
         let transport = CapturingTransport(status: 200, body: BudgetMappingTests.monthlyJSON)
-        let api = pairedClient(transport)
+        let api = try pairedClient(transport)
 
         _ = try await api.monthlyBudget(period: "2026-11", currency: "EUR")
 
@@ -1008,7 +1010,7 @@ final class BudgetClientTests: XCTestCase {
 
     func testTransactionsWireRequestHasFiltersCursorAndLimit() async throws {
         let transport = CapturingTransport(status: 200, body: BudgetMappingTests.transactionsJSON)
-        let api = pairedClient(transport)
+        let api = try pairedClient(transport)
 
         _ = try await api.transactions(
             period: "2026-10", currency: "PLN", categoryID: "uncategorised",
@@ -1031,7 +1033,7 @@ final class BudgetClientTests: XCTestCase {
 
     func testStatusWireRequestAndErrorMapping() async throws {
         let transport = CapturingTransport(status: 200, body: BudgetMappingTests.statusJSON)
-        let api = pairedClient(transport)
+        let api = try pairedClient(transport)
         _ = try await api.status()
         XCTAssertEqual(transport.last?.request.path, "/api/budget/status")
         XCTAssertEqual(transport.last?.request.headerFields[.authorization], "Bearer \(fakeDeviceToken.token)")
@@ -1043,8 +1045,8 @@ final class BudgetClientTests: XCTestCase {
         XCTAssertEqual(BudgetError.from(status: 500), .failed)
     }
 
-    func testForbiddenResponseWithEmptyBodyIsMapped() async {
-        let api = pairedClient(StubTransport { _ in (403, nil) })
+    func testForbiddenResponseWithEmptyBodyIsMapped() async throws {
+        let api = try pairedClient(StubTransport { _ in (403, nil) })
         do {
             _ = try await api.monthlyBudget(period: "2026-11", currency: nil)
             XCTFail("Expected forbidden")
@@ -1053,8 +1055,8 @@ final class BudgetClientTests: XCTestCase {
         }
     }
 
-    func testStaleCursor409WireResponseMapsToStaleCursor() async {
-        let api = pairedClient(StubTransport { _ in
+    func testStaleCursor409WireResponseMapsToStaleCursor() async throws {
+        let api = try pairedClient(StubTransport { _ in
             (409, Data(#"{"ok":false,"error":"budget_analytics_stale_cursor"}"#.utf8))
         })
         do {
@@ -1074,9 +1076,9 @@ final class BudgetClientTests: XCTestCase {
         let defaultClient = APIClient(
             transport: transport,
             receiptPairing: ReceiptPairing(store: store),
-            sessionToken: { "session-token" }
+            sessionStore: try testCredentialSessionStore(token: "session-token")
         )
-        let disabledClient = pairedClient(transport, budgetEnabled: { false })
+        let disabledClient = try pairedClient(transport, budgetEnabled: { false })
 
         for api in [defaultClient, disabledClient] {
             do {
@@ -1107,13 +1109,13 @@ final class BudgetClientTests: XCTestCase {
             func get() -> Bool { lock.withLock { enabled } }
         }
         let gate = GateBox()
-        let dynamicClient = pairedClient(transport, budgetEnabled: { gate.get() })
+        let dynamicClient = try pairedClient(transport, budgetEnabled: { gate.get() })
         gate.set(true)
         _ = try await dynamicClient.monthlyBudget(period: "2026-11", currency: "PLN")
         XCTAssertNotNil(transport.last)
 
         let transportAfter = CapturingTransport(status: 200, body: BudgetMappingTests.monthlyJSON)
-        let gatedAgain = pairedClient(transportAfter, budgetEnabled: { gate.get() })
+        let gatedAgain = try pairedClient(transportAfter, budgetEnabled: { gate.get() })
         gate.set(false)
         do {
             _ = try await gatedAgain.status()
@@ -1131,13 +1133,13 @@ final class BudgetClientTests: XCTestCase {
         let defaultClient = APIClient(
             transport: transport,
             receiptPairing: ReceiptPairing(store: store),
-            sessionToken: { "session-token" }
+            sessionStore: try testCredentialSessionStore(token: "session-token")
         )
 
         let directCalls: [@Sendable () async throws -> Void] = [
-            { _ = try await defaultClient.client.getBudgetAnalyticsMonthlyBudget(.init()) },
-            { _ = try await defaultClient.client.getBudgetAnalyticsTransactions(.init(query: .init(period: "2026-11"))) },
-            { _ = try await defaultClient.client.getBudgetStatus(.init()) },
+            { _ = try await defaultClient.requestClient().getBudgetAnalyticsMonthlyBudget(.init()) },
+            { _ = try await defaultClient.requestClient().getBudgetAnalyticsTransactions(.init(query: .init(period: "2026-11"))) },
+            { _ = try await defaultClient.requestClient().getBudgetStatus(.init()) },
         ]
         for call in directCalls {
             do {
@@ -1153,15 +1155,12 @@ final class BudgetClientTests: XCTestCase {
     }
 
     func testBudget401And403DoNotTouchReceiptPairingOrSession() async throws {
-        let deviceStore = MemoryDeviceTokenStore(.init(server: AppConfig.serverURL, credential: fakeDeviceToken))
+        let deviceStore = MemoryDeviceTokenStore(.init(
+            server: AppConfig.serverURL, provenance: .legacyPasswordLogin, actor: "u", credential: fakeDeviceToken
+        ))
         let pairing = ReceiptPairing(store: deviceStore)
-        final class BoolBox: @unchecked Sendable {
-            private let lock = NSLock()
-            private var value = false
-            var flag: Bool { lock.withLock { value } }
-            func set() { lock.withLock { value = true } }
-        }
-        let sessionCleared = BoolBox()
+        let sessionStore = try testCredentialSessionStore(token: "session-token")
+        let originalSession = sessionStore.currentSnapshot()
 
         let mockHestia = MockHestiaAPI()
         await mockHestia.setWhoami(role: "admin")
@@ -1180,7 +1179,8 @@ final class BudgetClientTests: XCTestCase {
         let app = AppState(
             api: mockHestia,
             receiptPairing: pairing,
-            events: { AsyncStream { $0.finish() } }
+            sessionStore: sessionStore,
+            events: { _ in AsyncStream { $0.finish() } }
         )
         await app.connect()
         XCTAssertEqual(app.phase, .ready)
@@ -1193,8 +1193,7 @@ final class BudgetClientTests: XCTestCase {
             let api = APIClient(
                 transport: CapturingTransport(status: status, body: body),
                 receiptPairing: pairing,
-                sessionToken: { "session-token" },
-                clearToken: { sessionCleared.set() },
+                sessionStore: sessionStore,
                 budgetEnabled: { true }
             )
             let expected: BudgetError = status == 401 ? .unauthorized : .forbidden
@@ -1213,7 +1212,7 @@ final class BudgetClientTests: XCTestCase {
             }
             XCTAssertEqual(pairing.status, .paired)
             XCTAssertEqual(deviceStore.load()?.credential, fakeDeviceToken)
-            XCTAssertFalse(sessionCleared.flag)
+            XCTAssertEqual(sessionStore.currentSnapshot(), originalSession)
             XCTAssertEqual(app.phase, .ready)
             XCTAssertEqual(app.whoami?.user, "u")
         }
@@ -1297,7 +1296,7 @@ final class BudgetAuthTests: XCTestCase {
         let server = AppConfig.serverURL
         let store = MemoryDeviceTokenStore(.init(server: server, credential: fakeDeviceToken))
         let middleware = BearerAuthMiddleware(
-            token: { "fake-session-token" },
+            session: BoundSession(origin: server, actor: nil, token: "fake-session-token"),
             receiptPairing: ReceiptPairing(store: store),
             budgetEnabled: { true }
         )
@@ -1317,7 +1316,7 @@ final class BudgetAuthTests: XCTestCase {
     func testBudgetReadsWithoutADeviceTokenSendNothing() async throws {
         let server = AppConfig.serverURL
         let middleware = BearerAuthMiddleware(
-            token: { "fake-session-token" },
+            session: BoundSession(origin: server, actor: nil, token: "fake-session-token"),
             receiptPairing: ReceiptPairing(store: MemoryDeviceTokenStore()),
             budgetEnabled: { true }
         )
@@ -1340,7 +1339,7 @@ final class BudgetAuthTests: XCTestCase {
         let server = AppConfig.serverURL
         let store = MemoryDeviceTokenStore(.init(server: server, credential: fakeDeviceToken))
         let middleware = BearerAuthMiddleware(
-            token: { "fake-session-token" },
+            session: BoundSession(origin: server, actor: nil, token: "fake-session-token"),
             receiptPairing: ReceiptPairing(store: store)
         )
         for (operation, path) in operations {

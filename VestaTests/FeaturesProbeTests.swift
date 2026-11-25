@@ -76,7 +76,7 @@ final class FeaturesProbeTests: XCTestCase {
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
         let transport = URLSessionTransport(configuration: .init(session: session, httpBodyProcessingMode: .buffered))
-        let api = APIClient(transport: transport, sessionToken: { "fake-session-token" })
+        let api = APIClient(transport: transport, sessionStore: try await testCredentialSessionStore(origin: probeOrigin, token: "fake-session-token"))
 
         let first = try await api.probeFeatures(on: probeOrigin)
         let second = try await api.probeFeatures(on: probeOrigin)
@@ -95,7 +95,7 @@ final class FeaturesProbeTests: XCTestCase {
                 featuresPath: .init(status),
                 whoamiPath: .init(200, #"{"user":"viewer","role":"viewer"}"#),
             ])
-            let api = APIClient(transport: transport, sessionToken: { "fake-session-token" })
+            let api = APIClient(transport: transport, sessionStore: try await testCredentialSessionStore(origin: probeOrigin, token: "fake-session-token"))
 
             let probe = try await api.probeFeatures(on: probeOrigin)
             XCTAssertEqual(probe, .legacy)
@@ -117,7 +117,7 @@ final class FeaturesProbeTests: XCTestCase {
                 capabilitiesPath: .init(status),
                 whoamiPath: .init(200, #"{"user":"viewer","role":"viewer"}"#),
             ])
-            let api = APIClient(transport: transport, sessionToken: { "fake-session-token" })
+            let api = APIClient(transport: transport, sessionStore: try await testCredentialSessionStore(origin: probeOrigin, token: "fake-session-token"))
 
             let probe = try await api.probeFeatures(on: probeOrigin)
             XCTAssertTrue(probe.supports(.capabilities))
@@ -162,7 +162,7 @@ final class FeaturesProbeTests: XCTestCase {
     }
 
     func testProbeRethrowsURLError() async throws {
-        let api = APIClient(transport: StubTransport { _ in throw URLError(.timedOut) }, sessionToken: { nil })
+        let api = APIClient(transport: StubTransport { _ in throw URLError(.timedOut) })
         do {
             _ = try await api.probeFeatures(on: probeOrigin)
             XCTFail("Expected the network error to escape the probe")
@@ -173,7 +173,7 @@ final class FeaturesProbeTests: XCTestCase {
 
     private func decodeFeatures(_ json: String, status: Int = 200) async throws -> ServerFeatures {
         let transport = AuthContractTransport([featuresPath: .init(status, json)])
-        return try await APIClient(transport: transport, sessionToken: { nil }).probeFeatures(on: probeOrigin)
+        return try await APIClient(transport: transport).probeFeatures(on: probeOrigin)
     }
 }
 
@@ -271,7 +271,7 @@ final class MeCapabilitiesContractTests: XCTestCase {
 
     private func decodeCapabilities(_ json: String) async throws -> Capabilities {
         let transport = AuthContractTransport([capabilitiesPath: .init(200, json)])
-        let api = APIClient(transport: transport, sessionToken: { "fake-session-token" })
+        let api = APIClient(transport: transport, sessionStore: try await testCredentialSessionStore(origin: probeOrigin, token: "fake-session-token"))
         let features = ServerFeatures(authContract: 2, features: [.capabilities], qrOrigin: nil, isLegacy: false)
         return try await api.capabilities(on: probeOrigin, features: features)
     }

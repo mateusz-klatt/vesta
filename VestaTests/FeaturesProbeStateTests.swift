@@ -35,7 +35,6 @@ final class FeaturesProbeStateTests: XCTestCase {
             let app = makeApp(mock)
 
             await app.bootstrap()
-            try await waitUntil("credential invalidation") { await mock.count(.logout) == 1 }
 
             XCTAssertEqual(app.phase, .needsAuth)
             XCTAssertEqual(app.serverFeatures, expandedFeatures)
@@ -46,7 +45,7 @@ final class FeaturesProbeStateTests: XCTestCase {
             let calls = await mock.calls
             XCTAssertEqual(probes, [origin])
             XCTAssertEqual(requests, [.init(origin: origin, features: expandedFeatures)])
-            XCTAssertEqual(calls, [.capabilities, .logout])
+            XCTAssertEqual(calls, [.capabilities])
         }
     }
 
@@ -240,6 +239,6 @@ final class FeaturesProbeStateTests: XCTestCase {
         XCTAssertEqual(app.serverFeatures, modernFeatures)
         XCTAssertNil(app.capabilities)
         let calls = await mock.calls
-        XCTAssertEqual(calls, [.capabilities, .logout])
+        XCTAssertEqual(calls, [.capabilities])
     }
 }
