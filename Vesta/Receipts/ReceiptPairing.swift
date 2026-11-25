@@ -9,6 +9,11 @@ final class ReceiptPairing {
     enum ExchangeReason { case automatic, manual, ceilingExpansion, retired }
     enum TokenRejection { case retired, rollback }
 
+    private enum ExchangeWrite {
+        case replacement(RotationJournalRecord)
+        case quarantine(StoredReceiptDeviceToken)
+    }
+
     private static let failedRevocationNotice: LocalizedStringResource =
         "Couldn't reach hestia. Remove this iPhone in hestia's device list."
     private static let newDeviceNotice: LocalizedStringResource = "This iPhone was paired as a new device."
@@ -39,6 +44,7 @@ final class ReceiptPairing {
     private var exchangeAuthorizationRevision = 0
     private var pairingCancelled = false
     private var detachedRevocations: [StoredReceiptDeviceToken] = []
+    private var pendingExchangeWrites: [ExchangeWrite] = []
 
     init(api: any DevicePairingAPI = GeneratedDevicePairingAPI(),
          store: any DeviceTokenStoring = KeychainDeviceTokenStore(),
@@ -51,10 +57,13 @@ final class ReceiptPairing {
     }
 
     func refreshStatus() {
-        if !isBusy, let session = sessionStore?.currentSnapshot(), supportsExchange(in: session) {
+        if !isBusy {
             do {
-                try reconcileRotation(for: session)
-                try restoreDeviceLimit(for: session)
+                try persistPendingExchangeWrites()
+                if let session = sessionStore?.currentSnapshot(), supportsExchange(in: session) {
+                    try reconcileRotation(for: session)
+                    try restoreDeviceLimit(for: session)
+                }
             } catch {
                 pairingNotice = DevicePairingError.storage.message
             }
@@ -64,6 +73,7 @@ final class ReceiptPairing {
     }
 
     func retryInterruptedDetach() {
+        if !isBusy { try? persistPendingExchangeWrites() }
         schedulePendingRevocationRetry(interruptedOnly: true)
     }
 
@@ -146,7 +156,8 @@ final class ReceiptPairing {
             return token
         }
         if token.provenance == .exchanged {
-            guard let session, supportsExchange(in: session) else { return nil }
+            guard let session, supportsExchange(in: session),
+                  let rollback = try? store.loadRollbackQuarantine(), !rollback.contains(where: token.matchesBearer) else { return nil }
         }
         return isBound(token, to: session) ? token : nil
     }
@@ -197,7 +208,7 @@ final class ReceiptPairing {
     func prepareForLogin(from old: BoundSession?, to new: BoundSession) throws -> StoredReceiptDeviceToken? {
         guard let active = try store.load() else { return nil }
         let alreadyStaged = try store.loadPendingRevocations().contains(where: active.matchesBearer)
-        if alreadyStaged, !isBound(active, to: old), try !protectsFromUse(active) {
+        if alreadyStaged, !isBound(active, to: old), try !isReservedForRotation(active) {
             // Finish a previous reset before the replacement session can make
             // the pending credential usable again (for example for the same actor).
             return try finishActiveDetachment(active)
@@ -245,7 +256,7 @@ final class ReceiptPairing {
         guard let expected, try store.load() == expected else { return nil }
         // A scoped journal already holds this bearer. A session switch must not
         // revoke proof that may be needed to recover a lost exchange response.
-        guard try !protectsFromUse(expected) else { return nil }
+        guard try !isReservedForRotation(expected) else { return nil }
         if expected.provenance == .exchanged, exchangeKnownUnavailable(at: expected.server) {
             try moveToRollbackQuarantine(expected)
             return nil
@@ -272,7 +283,7 @@ final class ReceiptPairing {
         requiresExchangeSignIn = false
         showNewDeviceAlert = false
         do {
-            guard let expected, try !protectsFromUse(expected) else { return nil }
+            guard let expected, try !isReservedForRotation(expected) else { return nil }
             if try store.load() == expected { try store.clear() }
             return expected
         } catch {
@@ -361,7 +372,7 @@ final class ReceiptPairing {
             throw CancellationError()
         }
         do {
-            if let old = try store.load(), !old.matchesDevice(stored), try !protectsFromUse(old) {
+            if let old = try store.load(), !old.matchesDevice(stored), try !isReservedForRotation(old) {
                 if old.provenance == .exchanged, exchangeKnownUnavailable(at: old.server) {
                     try moveToRollbackQuarantine(old)
                 } else {
@@ -391,29 +402,37 @@ final class ReceiptPairing {
         }
     }
 
-    func revokeDetached(_ token: StoredReceiptDeviceToken) async throws {
-        if let active = try? store.load(), active.matchesBearer(token) { return }
-        guard try !protectsFromUse(token) else { return }
+    func revokeDetached(_ token: StoredReceiptDeviceToken, onlyIfPending: Bool = false) async throws {
+        if onlyIfPending, try !store.loadPendingRevocations().contains(where: token.matchesBearer) { return }
+        guard try canRevokeDetached(token), !hasInFlightRevoke(for: token) else { return }
         if token.provenance == .exchanged, exchangeKnownUnavailable(at: token.server) {
             try moveToRollbackQuarantine(token)
-            try store.removePendingRevocation(token)
             updateRevocationNotice()
             return
         }
-        guard !detachedRevocations.contains(where: { $0.matchesBearer(token) }) else { return }
+        // Claim the slot before yielding to the transport. Exchange checks this same claim before sending proof.
         detachedRevocations.append(token)
         defer { detachedRevocations.removeAll { $0 == token } }
         do {
             try await api.revoke(token.credential, server: token.server)
         } catch {
             if !Self.revocationCompleted(error) {
-                try store.addPendingRevocation(token)
+                if try canRevokeDetached(token) { try store.addPendingRevocation(token) }
                 updateRevocationNotice()
                 return
             }
         }
         try store.removePendingRevocation(token)
         updateRevocationNotice()
+    }
+
+    private func canRevokeDetached(_ token: StoredReceiptDeviceToken) throws -> Bool {
+        if let active = try store.load(), active.matchesDevice(token) { return false }
+        return try !isReservedForRotation(token)
+    }
+
+    private func hasInFlightRevoke(for token: StoredReceiptDeviceToken) -> Bool {
+        detachedRevocations.contains(where: token.matchesDevice)
     }
 
     private func schedulePendingRevocationRetry(interruptedOnly: Bool = false) {
@@ -440,7 +459,8 @@ final class ReceiptPairing {
         defer { isRetryingPendingRevocations = false }
         for token in pending {
             do {
-                guard try store.loadPendingRevocations().contains(token), try !protectsFromUse(token) else { continue }
+                guard try store.loadPendingRevocations().contains(where: token.matchesBearer),
+                      try !isReservedForRotation(token), !hasInFlightRevoke(for: token) else { continue }
                 if let active = try store.load(), active.matchesDevice(token) {
                     // A staged detach must leave the old credential alone while its
                     // session is still authoritative (for example after a failed reset).
@@ -448,7 +468,7 @@ final class ReceiptPairing {
                           !isBound(active, to: sessionStore?.currentSnapshot()) else { continue }
                     guard try finishActiveDetachment(active) != nil else { continue }
                 }
-                try await revokeDetached(token)
+                try await revokeDetached(token, onlyIfPending: true)
             } catch {
                 revocationNotice = DevicePairingError.storage.message
                 return
@@ -496,6 +516,7 @@ extension ReceiptPairing {
                                                          capabilities: capabilities)
         guard capabilities.canUseReceipts || budgetEligible else { return }
 
+        try persistPendingExchangeWrites()
         try reconcileRotation(for: session)
         try restoreDeviceLimit(for: session)
         guard deviceLimit == nil || reason == .manual || reason == .retired else { return }
@@ -523,7 +544,9 @@ extension ReceiptPairing {
         } else {
             prior = try store.loadRollbackQuarantine().last { isBound($0, to: session) }
         }
+        if let prior, hasInFlightRevoke(for: prior) { return }
         if journal == nil, let eligibleActive, eligibleActive.provenance == .exchanged, reason == .automatic,
+           try !store.loadRollbackQuarantine().contains(where: eligibleActive.matchesBearer),
            !capabilities.canUseReceipts || eligibleActive.issuedPermissions?.contains(Permission.budgetReceiptsAdd.rawValue) == true,
            !budgetEligible || eligibleActive.issuedPermissions?.contains(Permission.budgetView.rawValue) == true { return }
         if journal == nil, reason == .ceilingExpansion {
@@ -581,9 +604,10 @@ extension ReceiptPairing {
             }
 
             let replacement = storedExchange(result, server: session.origin)
-            guard isCurrentExchange(session, revision: revision), try store.load() == active else {
-                try saveRotation(record.transitioning(to: .outcomeUnknown))
+            guard isCurrentExchange(session, revision: revision),
+                  try matchesActiveSlot(active, retaining: replacement) else {
                 try quarantineUntrusted(replacement)
+                try saveRotation(record.transitioning(to: .outcomeUnknown))
                 throw CancellationError()
             }
             guard validReplacement(replacement, for: record) else {
@@ -593,7 +617,8 @@ extension ReceiptPairing {
                 throw invalidExchangeResponse()
             }
             let replaced = record.transitioning(to: .replaced, replacement: replacement)
-            try saveRotation(replaced)
+            pendingExchangeWrites.append(.replacement(replaced))
+            try persistPendingExchangeWrites()
             try promoteRotation(replaced)
         } else {
             try await issueFresh(session: session, actor: actor, deviceName: deviceName, isOwner: knownOwner,
@@ -616,7 +641,8 @@ extension ReceiptPairing {
             throw error
         }
         let replacement = storedExchange(result, server: session.origin)
-        guard isCurrentExchange(session, revision: revision), try store.load() == startingActive else {
+        guard isCurrentExchange(session, revision: revision),
+              try matchesActiveSlot(startingActive, retaining: replacement) else {
             try quarantineUntrusted(replacement)
             throw CancellationError()
         }
@@ -640,10 +666,19 @@ extension ReceiptPairing {
         pairingNotice = invalidPrior == nil ? nil : Self.newDeviceNotice
         showNewDeviceAlert = invalidPrior != nil
         try clearDeviceLimit(for: session)
-        if let old, !old.matchesDevice(replacement), try !protectsFromUse(old),
+        if let old, !old.matchesDevice(replacement), try !isReservedForRotation(old),
            invalidPrior != nil || isBound(old, to: session) {
             try store.addPendingRevocation(old, preservingExisting: true)
             try await revokeDetached(old)
+        }
+    }
+
+    private func matchesActiveSlot(_ expected: StoredReceiptDeviceToken?, retaining replacement: StoredReceiptDeviceToken) throws -> Bool {
+        do {
+            return try store.load() == expected
+        } catch {
+            try quarantineUntrusted(replacement)
+            throw error
         }
     }
 
@@ -763,7 +798,8 @@ extension ReceiptPairing {
     }
 
     private func reconcileRotation(for session: BoundSession) throws {
-        guard let record = try matchingRotation(for: session, active: store.load()) else { return }
+        guard let record = try matchingRotation(for: session, active: store.load()),
+              !hasInFlightRevoke(for: record.priorToken) else { return }
         switch record.state {
         case .intent:
             try removeRotation(record)
@@ -780,6 +816,13 @@ extension ReceiptPairing {
     private func protectsFromUse(_ token: StoredReceiptDeviceToken) throws -> Bool {
         try store.loadRotationJournal().contains {
             $0.state != .intent && $0.priorToken.matchesBearer(token) && $0.replacement?.matchesBearer(token) != true
+        }
+    }
+
+    private func isReservedForRotation(_ token: StoredReceiptDeviceToken) throws -> Bool {
+        if try store.loadRollbackQuarantine().contains(where: token.matchesDevice) { return true }
+        return try store.loadRotationJournal().contains {
+            token.matchesDevice($0.priorToken) || $0.replacement.map(token.matchesDevice) == true
         }
     }
 
@@ -811,7 +854,8 @@ extension ReceiptPairing {
     private func removeSupersededRotations(after record: RotationJournalRecord, replacement: StoredReceiptDeviceToken) throws {
         let journal = try store.loadRotationJournal()
         let remaining = journal.filter { candidate in
-            guard candidate.capturedActor == record.capturedActor, OriginMatcher.matches(candidate.server, record.server) else { return true }
+            guard candidate.capturedActor == record.capturedActor, candidate.slotTokenID == record.slotTokenID,
+                  OriginMatcher.matches(candidate.server, record.server) else { return true }
             if candidate.priorToken.matchesBearer(record.priorToken) { return false }
             guard candidate.state == .outcomeUnknown, candidate.matchesPriorScope else { return true }
             let sameLedger = candidate.expectedOwnerKey.map { $0 == replacement.ownerKey } ?? (replacement.actor == replacement.owner)
@@ -820,16 +864,20 @@ extension ReceiptPairing {
         }
         let rollback = try store.loadRollbackQuarantine()
         let retained = rollback.filter { token in
-            guard token.actor == record.capturedActor, OriginMatcher.matches(token.server, record.server),
-                  token.ownerKey == replacement.ownerKey, !token.matchesBearer(replacement) else { return true }
+            guard token.actor == record.capturedActor, token.matchesDevice(replacement),
+                  token.ownerKey == replacement.ownerKey else { return true }
             return remaining.contains { token.matchesBearer($0.priorToken) || $0.replacement.map(token.matchesBearer) == true }
         }
-        // Keep the replaced journal durable until both cleanup writes have succeeded. Recovery can replay either write.
+        // Remove staged duplicates while rollback and journal protection still holds.
+        try store.removePendingRevocation(record.priorToken)
+        for token in rollback where !retained.contains(token) { try store.removePendingRevocation(token) }
+        // Keep the replaced journal durable until recovery can safely replay all cleanup writes.
         if retained != rollback { try store.saveRollbackQuarantine(retained) }
         if remaining != journal { try store.saveRotationJournal(remaining) }
     }
 
     private func discardInvalidPrior(_ record: RotationJournalRecord) throws {
+        try store.removePendingRevocation(record.priorToken)
         if let active = try store.load(), active.matchesBearer(record.priorToken) { try store.clear() }
         try removeRollbackToken(record.priorToken)
         try removeRotation(record)
@@ -843,6 +891,7 @@ extension ReceiptPairing {
             try store.saveRollbackQuarantine(tokens)
         }
         if let active = try store.load(), active.matchesBearer(token) { try store.clear() }
+        try store.removePendingRevocation(token)
     }
 
     private func removeRollbackToken(_ token: StoredReceiptDeviceToken) throws {
@@ -853,10 +902,25 @@ extension ReceiptPairing {
     }
 
     private func quarantineUntrusted(_ token: StoredReceiptDeviceToken) throws {
-        var tokens = try store.loadUntrustedExchangeTokens()
-        if tokens.contains(where: token.matchesBearer) { return }
-        tokens.append(token)
-        try store.saveUntrustedExchangeTokens(tokens)
+        pendingExchangeWrites.append(.quarantine(token))
+        try persistPendingExchangeWrites()
+    }
+
+    /// A returned bearer stays in memory until Keychain accepts its publication or quarantine.
+    private func persistPendingExchangeWrites() throws {
+        while let write = pendingExchangeWrites.first {
+            switch write {
+            case .replacement(let record):
+                try saveRotation(record)
+            case .quarantine(let token):
+                var tokens = try store.loadUntrustedExchangeTokens()
+                if !tokens.contains(where: token.matchesBearer) {
+                    tokens.append(token)
+                    try store.saveUntrustedExchangeTokens(tokens)
+                }
+            }
+            pendingExchangeWrites.removeFirst()
+        }
     }
 
     func handleTokenRejection(_ used: StoredReceiptDeviceToken, status: Int, code: String?) -> TokenRejection? {
