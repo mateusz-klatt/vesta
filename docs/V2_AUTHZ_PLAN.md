@@ -328,7 +328,7 @@ struct StoredReceiptDeviceToken: Codable, Equatable, Sendable {
 
 - **Hestia dependency:** Hestia PR 3 (`features ∋ "qr_login"`, `POST /api/auth/qr-redeem`, `Part A QR sign-in`, `Part C §§3, 5, 6`).
 - **Files:** `Vesta/openapi.json`, `Vesta/Models/QRLoginPayload.swift` *(new)*, `Vesta/Services/QRLoginAPI.swift` *(new)*, `Vesta/Services/APIClient.swift`, `Vesta/Models/AppState.swift`, `Vesta/Views/Components/QRScannerView.swift` *(new)*, `Vesta/Views/Receipts/ReceiptPairingView.swift`, `Vesta/Views/ConnectView.swift`, `Vesta/Info.plist`, `Vesta/InfoPlist.xcstrings`, `Vesta/Localizable.xcstrings`, `project.yml`, `VestaTests/QRLoginTests.swift` *(new)*, `VestaTests/AppStateTests.swift`, `VestaTests/InfraTests.swift`.
-- **OpenAPI subset to pin:** `qrRedeem` (`POST /api/auth/qr-redeem`).
+- **OpenAPI subset:** `redeemQrLoginCode` (`POST /api/auth/qr-redeem`) and its referenced schemas are pinned from hestia 0.54.0 (`0bf8940`). The QR client uses its isolated transport.
 
 ### 7.1 Scanner UI, Raw-Authority Validation & Isolated Transport
 - Shared `QRScannerView` (**VisionKit `DataScannerViewController`**). `ConnectView` shows **Scan a code from Hestia** on `.unconfigured`, and on `.needsAuth` only when `serverFeatures?.supports(.qrLogin) == true`, with camera-denied **Open Settings** CTA and 45-locale strings (`InfoPlist.xcstrings`, `Localizable.xcstrings`).

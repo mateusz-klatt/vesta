@@ -135,6 +135,22 @@ final class QRLoginTests: XCTestCase {
         }
     }
 
+    func testRedeemWireTypesMatchPinnedContractFixtures() throws {
+        let origin = "https://hestia.example"
+        let request = QRLoginRequest(origin: origin, code: fakeQRCode)
+        let requestJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(request))
+        XCTAssertEqual(requestJSON as? [String: String], ["origin": origin, "code": fakeQRCode])
+
+        let decoder = JSONDecoder()
+        let response = try decoder.decode(QRLoginResponse.self, from: Data(MockQRLoginURLProtocol.Reply.success.body.utf8))
+        XCTAssertTrue(response.ok)
+        XCTAssertEqual(response.user, "owner")
+        XCTAssertTrue(response.token == "fake-session-token")
+
+        let error = try decoder.decode(QRLoginErrorResponse.self, from: Data(#"{"error":{"code":"qr_invalid_request"}}"#.utf8))
+        XCTAssertEqual(error.error.code, "qr_invalid_request")
+    }
+
     func testRedeemMapsSanitizedErrorsAndSuccess() async throws {
         let origin = URL(string: "https://hestia.example:8443")!
         let errors: [(Int, String, QRLoginError)] = [
@@ -197,6 +213,56 @@ final class QRLoginTests: XCTestCase {
         XCTAssertEqual(MockQRLoginURLProtocol.requestedPaths(at: origin), ["/api/auth/features", "/api/auth/qr-redeem"])
         XCTAssertEqual(store.currentSnapshot()?.origin, oldOrigin)
         XCTAssertNil(app.serverFeatures)
+    }
+
+    @MainActor
+    func testNewRedeemFailuresPreserveSessionAndPermitLaterAttempts() async throws {
+        let origin = URL(string: "https://hestia.example:15443")!
+        let oldOrigin = URL(string: "https://hestia.example:16443")!
+        let payload = try XCTUnwrap(QRLoginPayload(rawValue: "hestia-login:\(origin.absoluteString)#\(fakeQRCode)"))
+        let errors: [(status: Int, code: String, expected: QRLoginError)] = [
+            (400, "qr_invalid_request", .failed),
+            (408, "request_timeout", .failed),
+            (411, "length_required", .failed),
+            (413, "request_too_large", .failed),
+            (415, "unsupported_media_type", .failed),
+            (503, "auth_bridge_incompatible", .originUnavailable),
+        ]
+        let features = MockQRLoginURLProtocol.Reply(
+            200, #"{"auth_contract":2,"features":["qr_login"],"qr_origin":"\#(origin.absoluteString)"}"#
+        )
+        MockQRLoginURLProtocol.install(errors.flatMap { status, code, _ in [
+            features, .init(status, #"{"error":{"code":"\#(code)"}}"#, headers: ["Retry-After": "60"]),
+        ] }, at: origin)
+        defer { MockQRLoginURLProtocol.remove(at: origin) }
+
+        let probeSession = Self.mockSession(for: HTTPSession.featuresProbe)
+        let redeemSession = Self.mockSession(for: HTTPSession.qrRedeem)
+        defer {
+            probeSession.invalidateAndCancel()
+            redeemSession.invalidateAndCancel()
+        }
+        let store = try testCredentialSessionStore(origin: oldOrigin, token: "fake-old-token")
+        let original = try XCTUnwrap(store.currentSnapshot())
+        let originalOverride = store.backendURLStore.loadOverrideRecord()
+        let transport = URLSessionTransport(configuration: .init(session: probeSession, httpBodyProcessingMode: .buffered))
+        let api = APIClient(transport: transport, sessionStore: store)
+        let redeem = QRLoginAPI(session: redeemSession)
+        let app = AppState(api: api, sessionStore: store, redeemQRLogin: redeem.redeem)
+
+        for (status, _, expected) in errors {
+            do {
+                try await app.signIn(with: payload)
+                XCTFail("Expected QR redeem to fail with HTTP \(status)")
+            } catch {
+                XCTAssertEqual(error as? QRLoginError, expected, "HTTP \(status)")
+            }
+            XCTAssertEqual(store.currentSnapshot(), original, "HTTP \(status)")
+            XCTAssertEqual(store.backendURLStore.loadOverrideRecord(), originalOverride, "HTTP \(status)")
+            XCTAssertNil(app.serverFeatures, "HTTP \(status)")
+        }
+        XCTAssertEqual(MockQRLoginURLProtocol.requestedPaths(at: origin),
+                       errors.flatMap { _ in ["/api/auth/features", "/api/auth/qr-redeem"] })
     }
 
     func testRedeemHonorsRetryAfterSecondsAndHTTPDateWithoutResending() async throws {

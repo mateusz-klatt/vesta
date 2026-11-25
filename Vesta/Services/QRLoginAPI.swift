@@ -1,7 +1,7 @@
 import Foundation
 
-// PROVISIONAL(hestia 0.52.0): Replace these wire types when the redeem schema is pinned.
-private struct QRLoginRequest: Codable {
+// QR redeem stays on the isolated transport. Its wire types match hestia 0.54.0 (0bf8940).
+struct QRLoginRequest: Encodable {
     let origin: String
     let code: String
 }
@@ -12,8 +12,8 @@ struct QRLoginResponse: Codable, Sendable {
     let token: String
 }
 
-private struct QRLoginErrorResponse: Codable {
-    struct Detail: Codable {
+struct QRLoginErrorResponse: Decodable {
+    struct Detail: Decodable {
         let code: String
     }
 
@@ -110,6 +110,8 @@ actor QRLoginAPI {
         switch (http.statusCode, errorCode) {
         case (400, "qr_auth_ambiguous"): throw QRLoginError.ambiguousAuth
         case (400, "qr_origin_mismatch"): throw QRLoginError.originMismatch
+        case (400, "qr_invalid_request"), (408, _), (411, _), (413, _), (415, _):
+            throw QRLoginError.failed
         case (401, "qr_code_invalid"): throw QRLoginError.invalidCode
         case (429, _):
             let receivedAt = monotonicNow()
@@ -119,7 +121,7 @@ actor QRLoginAPI {
                 retryDeadlines[origin] = max(retryDeadlines[origin] ?? receivedAt, deadline)
             }
             throw QRLoginError.rateLimited(retryAfter: delay)
-        case (503, "auth_origin_unavailable"): throw QRLoginError.originUnavailable
+        case (503, _): throw QRLoginError.originUnavailable
         default: throw QRLoginError.failed
         }
     }

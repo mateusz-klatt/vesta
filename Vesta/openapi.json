@@ -135,6 +135,31 @@
         "title": "AuditFeed",
         "type": "object"
       },
+      "AuthError": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/AuthErrorDetail"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "AuthError",
+        "type": "object"
+      },
+      "AuthErrorDetail": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "AuthErrorDetail",
+        "type": "object"
+      },
       "AuthFeatures": {
         "properties": {
           "auth_contract": {
@@ -2352,6 +2377,50 @@
           "can_manage_devices"
         ],
         "title": "OwnBudgetCapabilities",
+        "type": "object"
+      },
+      "QrRedeemRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "pattern": "^[A-Za-z0-9_-]{19}$",
+            "title": "Code",
+            "type": "string"
+          },
+          "origin": {
+            "title": "Origin",
+            "type": "string"
+          }
+        },
+        "required": [
+          "origin",
+          "code"
+        ],
+        "title": "QrRedeemRequest",
+        "type": "object"
+      },
+      "QrRedeemSuccess": {
+        "properties": {
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "user": {
+            "title": "User",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "user",
+          "token"
+        ],
+        "title": "QrRedeemSuccess",
         "type": "object"
       },
       "ResetPasswordRequest": {
@@ -4728,6 +4797,124 @@
         "x-required-role": "public"
       }
     },
+    "/api/auth/qr-redeem": {
+      "post": {
+        "description": "Public but HTTPS-origin-bound. Cookie and Authorization credentials are forbidden; no cookie is set.",
+        "operationId": "redeemQrLoginCode",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QrRedeemRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QrRedeemSuccess"
+                }
+              }
+            },
+            "description": "native session issued"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "invalid JSON (qr_invalid_request), ambiguous credentials, or origin mismatch"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "invalid, expired, consumed, or stale code"
+          },
+          "408": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "request body read timed out"
+          },
+          "411": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "Content-Length is required"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "request body exceeds the byte limit"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "Content-Type must be application/json"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "redemption throttled",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "HTTPS public origin unavailable or incompatible authorization bridge"
+          }
+        },
+        "summary": "Redeem a single-use QR code for a native session",
+        "x-required-permission": "public",
+        "x-required-role": "public"
+      }
+    },
     "/api/automations": {
       "get": {
         "description": "Requires the admin role (rules can carry presence-trigger MACs).",
@@ -5693,6 +5880,7 @@
           }
         },
         "summary": "Concrete calendar occurrences in a half-open date window",
+        "x-required-permission": "calendar.view",
         "x-required-role": "viewer"
       }
     },
