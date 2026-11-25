@@ -38,7 +38,7 @@ final class LiveReceiptsE2ETests: XCTestCase {
         XCTAssertFalse(stored.credential.token.isEmpty)
 
         // 2. parse-text with the device token, then delete the draft.
-        let api = APIClient(receiptPairing: pairing, sessionToken: { nil })
+        let api = APIClient(receiptPairing: pairing)
         let text = """
         SKLEP TESTOWY E2E
         PARAGON FISKALNY

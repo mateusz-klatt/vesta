@@ -141,7 +141,7 @@ struct GeneratedDevicePairingAPI: DevicePairingAPI {
 
     private func makeClient(server: URL, revoking token: ReceiptDeviceToken? = nil) -> Client {
         Client(serverURL: server, configuration: .init(dateTranscoder: PairingDateTranscoder()), transport: transport,
-               middlewares: [BearerAuthMiddleware(token: { nil }, revoking: token)])
+               middlewares: [BearerAuthMiddleware(revoking: token.map { (origin: server, credential: $0) })])
     }
 }
 

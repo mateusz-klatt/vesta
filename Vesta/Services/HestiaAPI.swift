@@ -6,11 +6,11 @@ protocol HestiaAPI: Sendable {
     func whoami() async throws -> Components.Schemas.WhoAmI
     func probeFeatures(on origin: URL) async throws -> ServerFeatures
     func capabilities(on origin: URL, features: ServerFeatures) async throws -> Capabilities
+    func verifyLegacySession(_ session: BoundSession, features: ServerFeatures) async throws -> Capabilities
     func discovery() async throws -> Components.Schemas.Discovery
     @discardableResult
-    func login(user: String, password: String) async throws -> Components.Schemas.LoginSuccess
-    func logout() async
-    func invalidateSession() async
+    func login(user: String, password: String, on origin: URL) async throws -> Components.Schemas.LoginSuccess
+    func remoteLogout(token: String, origin: URL) async
     func setSwitch(node: Int, on: Bool, endpoint: Int?) async throws
     func setCover(node: Int, value: Int) async throws
     /// Run a house-wide scene. `value` is the wire position (0–99) for `blindsSet`
@@ -22,8 +22,6 @@ protocol HestiaAPI: Sendable {
 }
 
 extension HestiaAPI {
-    func invalidateSession() async { await logout() }
-
     /// Convenience for the valueless sweeps (lights on/off, blinds up/down).
     func scene(_ op: Components.Schemas.SceneRequest.OpPayload) async throws {
         try await scene(op, value: nil)

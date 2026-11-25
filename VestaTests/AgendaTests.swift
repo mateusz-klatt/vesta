@@ -536,7 +536,8 @@ final class CalendarClientTests: XCTestCase {
         let pairing = ReceiptPairing(store: MemoryDeviceTokenStore(.init(
             server: AppConfig.serverURL, credential: fakeDeviceToken
         )))
-        let api = APIClient(transport: transport, receiptPairing: pairing, sessionToken: { sessionCredential })
+        let sessionStore = try testCredentialSessionStore(token: sessionCredential)
+        let api = APIClient(transport: transport, receiptPairing: pairing, sessionStore: sessionStore)
 
         _ = try await agenda(api, group: "shared home")
 
@@ -555,7 +556,7 @@ final class CalendarClientTests: XCTestCase {
 
     func testDecodesInstancesAndSkipsAnInvalidTime() async throws {
         let transport = CapturingTransport(status: 200, body: Self.instancesJSON)
-        let page = try await agenda(APIClient(transport: transport, sessionToken: { nil }))
+        let page = try await agenda(APIClient(transport: transport))
 
         XCTAssertTrue(page.enabled)
         XCTAssertTrue(page.truncated)
@@ -607,7 +608,7 @@ final class CalendarClientTests: XCTestCase {
         pageJSON["instances"] = [allDay] + malformed + Array(valid.dropFirst())
         let data = try JSONSerialization.data(withJSONObject: pageJSON)
         let transport = CapturingTransport(status: 200, body: String(decoding: data, as: UTF8.self))
-        let page = try await agenda(APIClient(transport: transport, sessionToken: { nil }))
+        let page = try await agenda(APIClient(transport: transport))
 
         XCTAssertEqual(page.occurrences.map(\.id), ["day", "series/2026-11-25T08:00:00Z", "local"])
         XCTAssertNil(page.occurrences.first?.recurrenceID)
@@ -617,7 +618,7 @@ final class CalendarClientTests: XCTestCase {
         let transport = CapturingTransport(status: 200, body: """
         {"enabled": false, "groups": [], "instances": [], "truncated": false}
         """)
-        let page = try await agenda(APIClient(transport: transport, sessionToken: { nil }))
+        let page = try await agenda(APIClient(transport: transport))
 
         XCTAssertEqual(page, AgendaPage(enabled: false))
         let components = try XCTUnwrap(URLComponents(string: transport.last?.request.path ?? ""))
@@ -625,7 +626,7 @@ final class CalendarClientTests: XCTestCase {
     }
 
     func testForbiddenResponseWithEmptyBodyMapsToForbidden() async {
-        let api = APIClient(transport: StubTransport { _ in (403, nil) }, sessionToken: { nil })
+        let api = APIClient(transport: StubTransport { _ in (403, nil) })
         do {
             _ = try await agenda(api)
             XCTFail("Expected forbidden")
@@ -637,7 +638,7 @@ final class CalendarClientTests: XCTestCase {
     func testUnauthorizedResponseWithEmptyBodyMapsToUnauthorized() async {
         XCTAssertEqual(CalendarError.wrap(APIError.unauthorized), .unauthorized)
         XCTAssertEqual(CalendarError.wrap(APIError.http(401)), .unauthorized)
-        let api = APIClient(transport: StubTransport { _ in (401, nil) }, sessionToken: { nil })
+        let api = APIClient(transport: StubTransport { _ in (401, nil) })
         do {
             _ = try await agenda(api)
             XCTFail("Expected unauthorized")
@@ -649,7 +650,7 @@ final class CalendarClientTests: XCTestCase {
     func testCancelledTransportThrowsCancellationError() async {
         let failures: [any Error] = [CancellationError(), URLError(.cancelled)]
         for failure in failures {
-            let api = APIClient(transport: StubTransport { _ in throw failure }, sessionToken: { nil })
+            let api = APIClient(transport: StubTransport { _ in throw failure })
             do {
                 _ = try await agenda(api)
                 XCTFail("Expected cancellation")
@@ -662,7 +663,7 @@ final class CalendarClientTests: XCTestCase {
 
     func testServiceUnavailableResponseMapsToUnavailable() async {
         let transport = CapturingTransport(status: 503, body: #"{"error": "invalid_calendar_configuration"}"#)
-        let api = APIClient(transport: transport, sessionToken: { nil })
+        let api = APIClient(transport: transport)
         do {
             _ = try await agenda(api)
             XCTFail("Expected unavailable")
@@ -794,7 +795,8 @@ final class CalendarAccessTests: XCTestCase {
         await mock.setFeatures([.capabilities, .calendarInstances])
         await mock.setCapabilities(grant)
         await mock.setCalendarStub(calendar)
-        let app = makeApp(mock)
+        let session = try testCredentialSessionStore(token: "session-token")
+        let app = AppState(api: mock, sessionStore: session, events: { AsyncStream { $0.finish() } })
         await app.connect()
 
         let store = try XCTUnwrap(app.makeAgendaStore())
@@ -818,9 +820,44 @@ final class CalendarAccessTests: XCTestCase {
         XCTAssertEqual(store.state, .idle)
         XCTAssertTrue(store.groups.isEmpty)
         XCTAssertNil(store.selectedGroup)
-        try await waitUntil("Calendar session invalidation") { await mock.count(.logout) == 1 }
+        XCTAssertEqual(try session.bootstrap(), .ready(retryCleanup: false))
+        XCTAssertNil(session.currentSnapshot())
+        XCTAssertNil(session.backendURLStore.loadOverrideRecord()?.sessionCommitID)
         let sessionCalls = await mock.calls
-        XCTAssertEqual(sessionCalls, [.capabilities, .logout])
+        XCTAssertEqual(sessionCalls, [.capabilities])
+    }
+
+    func testLateAgendaDenialsAfterSessionReplacementLeaveNewSessionUntouched() async throws {
+        for error in [CalendarError.forbidden, .unauthorized] {
+            let api = MockHestiaAPI()
+            let calendar = PausedCalendarAPI()
+            await api.setFeatures([.capabilities, .calendarInstances])
+            await api.setCapabilities(grant)
+            await api.setCalendarStub(calendar)
+            let session = try testCredentialSessionStore(token: "original-session")
+            let app = AppState(api: api, sessionStore: session, events: { AsyncStream { $0.finish() } })
+            await app.connect()
+
+            let oldAgenda = try XCTUnwrap(app.makeAgendaStore())
+            let load = Task { await oldAgenda.load() }
+            await calendar.waitForCalls(1)
+
+            await app.signOut()
+            await app.login(user: "new-user", password: "fake-password")
+            let newAgenda = try XCTUnwrap(app.makeAgendaStore())
+            let authenticated = try XCTUnwrap(session.currentSnapshot())
+            let capabilitiesCalls = await api.count(.capabilities)
+
+            await calendar.failNext(with: error)
+            await load.value
+
+            XCTAssertTrue(oldAgenda.isDiscarded)
+            XCTAssertFalse(newAgenda.isDiscarded)
+            XCTAssertEqual(app.phase, .ready)
+            XCTAssertEqual(session.currentSnapshot(), authenticated)
+            let finalCapabilitiesCalls = await api.count(.capabilities)
+            XCTAssertEqual(finalCapabilitiesCalls, capabilitiesCalls)
+        }
     }
 
     func testClosingAgendaDiscardsALateResponse() async throws {

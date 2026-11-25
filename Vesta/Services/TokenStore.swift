@@ -1,50 +1,73 @@
 import Foundation
 import Security
 
-/// Keychain-backed storage for the hestia bearer token issued to native clients
-/// (login with `bearer: true`). One token at a time — cleared on logout or when
-/// the backend changes.
-enum TokenStore {
+enum SessionKeychainAccount: String, Sendable {
+    case legacy = "backend"
+    case authoritative = "backend-session"
+    case legacyMigrated = "backend-legacy-migrated"
+}
+
+enum SessionKeychainError: Error, Equatable {
+    case locked
+    case readFailed
+    case writeFailed
+}
+
+protocol SessionKeychain: Sendable {
+    func read(_ account: SessionKeychainAccount) throws -> Data?
+    func write(_ data: Data, to account: SessionKeychainAccount) throws
+    func delete(_ account: SessionKeychainAccount) throws
+}
+
+struct SystemSessionKeychain: SessionKeychain {
     private static let service = "ie.klatt.vesta.bearer"
-    private static let account = "backend"
 
-    static func save(_ token: String) {
-        let base: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        SecItemDelete(base as CFDictionary)
-        var add = base
-        add[kSecValueData as String] = Data(token.utf8)
-        // Token is read on every request (and the background SSE stream), so a
-        // per-access biometric prompt is the wrong trade-off; restrict to this
-        // device while unlocked (no iCloud/backup migration) instead.
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        SecItemAdd(add as CFDictionary, nil)
-    }
-
-    static func load() -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
+    func read(_ account: SessionKeychainAccount) throws -> Data? {
+        var query = Self.query(account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data
-        else { return nil }
-        return String(data: data, encoding: .utf8)
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecItemNotFound { return nil }
+        if status == errSecInteractionNotAllowed { throw SessionKeychainError.locked }
+        guard status == errSecSuccess, let data = item as? Data else { throw SessionKeychainError.readFailed }
+        return data
     }
 
-    static func clear() {
-        let query: [String: Any] = [
+    func write(_ data: Data, to account: SessionKeychainAccount) throws {
+        let query = Self.query(account)
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        ]
+        // Update the item in place so a failed replacement leaves the previous credential intact.
+        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        guard status == errSecItemNotFound else {
+            try Self.checkWrite(status)
+            return
+        }
+        let item = query.merging(attributes) { _, value in value }
+        let added = SecItemAdd(item as CFDictionary, nil)
+        try Self.checkWrite(added == errSecDuplicateItem
+            ? SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+            : added)
+    }
+
+    func delete(_ account: SessionKeychainAccount) throws {
+        let status = SecItemDelete(Self.query(account) as CFDictionary)
+        if status != errSecItemNotFound { try Self.checkWrite(status) }
+    }
+
+    private static func query(_ account: SessionKeychainAccount) -> [String: Any] {
+        [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
+            kSecAttrAccount as String: account.rawValue,
         ]
-        SecItemDelete(query as CFDictionary)
+    }
+
+    private static func checkWrite(_ status: OSStatus) throws {
+        if status == errSecInteractionNotAllowed { throw SessionKeychainError.locked }
+        guard status == errSecSuccess else { throw SessionKeychainError.writeFailed }
     }
 }

@@ -25,6 +25,8 @@ actor MockHestiaAPI: HestiaAPI, ReceiptsAPI {
     private(set) var calendarStub: (any CalendarAPI)?
     private(set) var probeOrigins: [URL] = []
     private(set) var capabilityRequests: [CapabilityRequest] = []
+    private(set) var legacyVerificationRequests: [BoundSession] = []
+    private(set) var logoutCredentials: [BoundSession] = []
     private var probeResult: Result<ServerFeatures, URLError> = .success(.legacy)
     private var holdProbe = false
     private var probeGate: CheckedContinuation<Void, Never>?
@@ -141,6 +143,10 @@ actor MockHestiaAPI: HestiaAPI, ReceiptsAPI {
         }
         return try result.get()
     }
+    func verifyLegacySession(_ session: BoundSession, features: ServerFeatures) async throws -> Capabilities {
+        legacyVerificationRequests.append(session)
+        return try await capabilities(on: session.origin, features: features)
+    }
     func discovery() async throws -> Components.Schemas.Discovery {
         calls.append(.discovery)
         let result = discoveryResult
@@ -151,15 +157,19 @@ actor MockHestiaAPI: HestiaAPI, ReceiptsAPI {
         return try result.get()
     }
     @discardableResult
-    func login(user: String, password: String) async throws -> Components.Schemas.LoginSuccess {
+    func login(user: String, password: String, on origin: URL) async throws -> Components.Schemas.LoginSuccess {
         calls.append(.login(user, password))
         logoutsFinishedAtLogin = logoutsFinished
-        if holdLogin { await withCheckedContinuation { loginGate = $0 } }
+        if holdLogin {
+            holdLogin = false
+            await withCheckedContinuation { loginGate = $0 }
+        }
         if let loginError { throw loginError }
         return .init(ok: true, token: "t", user: user)
     }
-    func logout() async {
+    func remoteLogout(token: String, origin: URL) async {
         calls.append(.logout)
+        logoutCredentials.append(BoundSession(origin: origin, actor: nil, token: token))
         if holdLogout { await withCheckedContinuation { logoutGate = $0 } }
         logoutsFinished += 1
     }
@@ -190,6 +200,24 @@ actor MockHestiaAPI: HestiaAPI, ReceiptsAPI {
 
     func confirmReceipt(_ request: ReceiptConfirmRequest) async throws -> ReceiptDetail { throw ReceiptError.forbidden }
     func deleteReceipt(id: String, expectedVersion: Int) async throws { throw ReceiptError.forbidden }
+}
+
+extension AppState {
+    convenience init(api: MockHestiaAPI,
+                     receiptPairing: ReceiptPairing? = nil,
+                     sessionStore: CredentialSessionStore? = nil,
+                     events: @escaping @Sendable () -> AsyncStream<EventStream.Event> = { AsyncStream { $0.finish() } },
+                     eventRetryDelay: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
+        let urlStore = BackendURLStore(userDefaults: UserDefaults(suiteName: "AppStateTests.\(UUID())")!)
+        if let origin = receiptPairing?.server, origin != AppConfig.serverURL {
+            urlStore.saveOverride(origin)
+        } else if BackendURLStore.shared.hasOverride() {
+            urlStore.saveOverride(AppConfig.serverURL)
+        }
+        self.init(api: api, receiptPairing: receiptPairing ?? ReceiptPairing(store: MemoryDeviceTokenStore()),
+                  sessionStore: sessionStore ?? CredentialSessionStore(backendURLStore: urlStore, keychain: TestSessionKeychain()),
+                  events: { _ in events() }, eventRetryDelay: eventRetryDelay)
+    }
 }
 
 private final class RecordedEvents: Sendable {
@@ -243,6 +271,28 @@ private actor EventRetryGate {
     func finish() {
         finished = true
         release()
+    }
+}
+
+private actor UpgradePairingAPI: DevicePairingAPI {
+    struct Revocation: Equatable {
+        let token: ReceiptDeviceToken
+        let origin: URL
+    }
+
+    private(set) var revocations: [Revocation] = []
+
+    func login(username: String, password: String, deviceName: String, server: URL) async throws -> ReceiptDeviceToken {
+        throw DevicePairingError.redeemFailed
+    }
+
+    func redeem(code: ReceiptPairingCode, deviceName: String, server: URL) async throws -> ReceiptDeviceToken {
+        throw DevicePairingError.redeemFailed
+    }
+
+    func revoke(_ token: ReceiptDeviceToken, server: URL) async throws {
+        revocations.append(.init(token: token, origin: server))
+        throw URLError(.notConnectedToInternet)
     }
 }
 
@@ -356,16 +406,38 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(app.phase, .needsAuth)
     }
 
-    func testLoginWaitsForTheBackendChangeLogout() async throws {
-        let store = BackendURLStore.shared
-        let previous = store.hasOverride() ? store.currentEffectiveURL() : nil
-        defer { if let previous { store.saveOverride(previous) } else { store.clearOverride() } }
+    func testSupersededPasswordLoginCannotReplaceCommittedSession() async throws {
+        let defaults = UserDefaults(suiteName: "AppStateTests.\(UUID())")!
+        let keychain = TestSessionKeychain()
+        let store = CredentialSessionStore(backendURLStore: BackendURLStore(userDefaults: defaults), keychain: keychain)
+        let mock = MockHestiaAPI()
+        await mock.setCapabilities(Capabilities(user: "second"))
+        await mock.setHoldLogin()
+        let app = AppState(api: mock, sessionStore: store, events: Self.noEvents)
 
+        let first = Task { await app.login(user: "first", password: "fake-password") }
+        try await waitUntil("the first login request") { await mock.count(.login("first", "fake-password")) == 1 }
+        await app.login(user: "second", password: "fake-password")
+        await mock.releaseLogin()
+        await first.value
+
+        XCTAssertEqual(app.phase, .ready)
+        XCTAssertEqual(store.currentSnapshot()?.actor, "second")
+        XCTAssertEqual(keychain.mutations, [.write(.authoritative)])
+    }
+
+    func testLoginWaitsForTheBackendChangeLogout() async throws {
+        let origin = URL(string: "https://hestia.example")!
+        let store = CredentialSessionStore(
+            backendURLStore: BackendURLStore(userDefaults: UserDefaults(suiteName: "AppStateTests.\(UUID())")!),
+            keychain: TestSessionKeychain()
+        )
+        try store.commitAuthoritative(origin: origin, actor: "u", token: "old-token")
         let mock = MockHestiaAPI()
         await mock.setHoldLogout()
-        let app = AppState(api: mock, receiptPairing: ReceiptPairing(store: MemoryDeviceTokenStore()), events: Self.noEvents)
+        let app = AppState(api: mock, sessionStore: store, events: Self.noEvents)
 
-        XCTAssertTrue(app.saveAndConnect(AppConfig.serverURL.absoluteString))
+        XCTAssertTrue(app.saveAndConnect(origin.absoluteString))
         XCTAssertEqual(app.phase, .connecting)
         let login = Task { await app.login(user: "u", password: "fake-password") }
         try await waitUntil("the held logout") { await mock.isLogoutHeld }
@@ -869,11 +941,10 @@ final class AppStateTests: XCTestCase {
             } else {
                 await app.connect()
             }
-            try await waitUntil("the rejected session to be invalidated") { await mock.count(.logout) == 1 }
             try await waitUntil("the event stream to close") { !events.isOpen(1) }
 
             let calls = await mock.calls
-            XCTAssertEqual(Array(calls[before...]), [.capabilities, .logout])
+            XCTAssertEqual(Array(calls[before...]), [.capabilities])
             XCTAssertEqual(app.phase, .needsAuth)
             XCTAssertNil(app.capabilities)
             XCTAssertNil(app.whoami)
@@ -995,7 +1066,8 @@ final class AppStateTests: XCTestCase {
             case .unauthorized:
                 XCTAssertEqual(app.phase, .needsAuth)
                 XCTAssertNil(app.capabilities)
-                try await waitUntil("credential invalidation") { await mock.count(.logout) == 1 }
+                let logouts = await mock.count(.logout)
+                XCTAssertEqual(logouts, 0)
             case .forbidden:
                 XCTAssertEqual(app.phase, .ready)
                 XCTAssertEqual(app.notice, .forbidden)
@@ -1230,7 +1302,8 @@ final class AppStateTests: XCTestCase {
                 XCTAssertEqual(app.notice, .forbidden)
                 XCTAssertNotNil(app.receiptsAPI)
             case .unauthorized:
-                try await waitUntil("credential invalidation") { await mock.count(.logout) == 1 }
+                let logouts = await mock.count(.logout)
+                XCTAssertEqual(logouts, 0)
                 XCTAssertEqual(app.phase, .needsAuth)
                 XCTAssertNil(app.capabilities)
                 XCTAssertNil(app.receiptsAPI)
@@ -1336,13 +1409,133 @@ final class AppStateTests: XCTestCase {
         XCTAssertFalse(calls.contains(.discovery))          // no session → no snapshot/connect
     }
 
-    func testSignOut() async {
+    func testSignOut() async throws {
+        let origin = URL(string: "https://hestia.example")!
+        let store = CredentialSessionStore(
+            backendURLStore: BackendURLStore(userDefaults: UserDefaults(suiteName: "AppStateTests.\(UUID())")!),
+            keychain: TestSessionKeychain()
+        )
+        try store.commitAuthoritative(origin: origin, actor: "u", token: "old-token")
         let mock = MockHestiaAPI()
-        let app = AppState(api: mock)
+        let app = AppState(api: mock, sessionStore: store, events: Self.noEvents)
         await app.signOut()
-        let calls = await mock.calls
-        XCTAssertTrue(calls.contains(.logout))
+        let logoutCredentials = await mock.logoutCredentials
+        XCTAssertEqual(logoutCredentials, [.init(origin: origin, actor: nil, token: "old-token")])
+        XCTAssertNil(store.currentSnapshot())
         XCTAssertNil(app.whoami)
         XCTAssertEqual(app.phase, .needsAuth)
+    }
+
+    func testUpgradePreservesLegacySessionActiveDeviceAndPendingRevocations() async throws {
+        let origin = URL(string: "https://hestia.example")!
+        let previousOrigin = URL(string: "https://hestia.example:8443")!
+        let defaults = UserDefaults(suiteName: "AppStateTests.\(UUID())")!
+        defaults.set(origin.absoluteString, forKey: BackendURLStore.userDefaultsKey)
+        let keychain = TestSessionKeychain()
+        keychain.seed(Data("legacy-token".utf8), for: .legacy)
+        let store = CredentialSessionStore(backendURLStore: BackendURLStore(userDefaults: defaults), keychain: keychain)
+        let active = StoredReceiptDeviceToken(server: origin, credential: fakeDeviceToken)
+        let pending = StoredReceiptDeviceToken(server: previousOrigin, credential: fakeDeviceToken)
+        let deviceStore = MemoryDeviceTokenStore(active)
+        try deviceStore.savePendingRevocations([pending])
+        let pairingAPI = UpgradePairingAPI()
+        let pairing = ReceiptPairing(api: pairingAPI, store: deviceStore, serverURL: { origin })
+        let mock = MockHestiaAPI()
+        await mock.setWhoami(role: "admin")
+        await mock.setDiscovery(makeDiscovery([:]))
+        let app = AppState(api: mock, receiptPairing: pairing, sessionStore: store, events: Self.openForever)
+        defer { app.enterBackground() }
+
+        await app.bootstrap()
+
+        XCTAssertEqual(app.phase, .ready)
+        XCTAssertEqual(app.whoami?.user, "u")
+        let session = try XCTUnwrap(store.currentSnapshot())
+        XCTAssertEqual(session.origin, origin)
+        XCTAssertEqual(session.token, "legacy-token")
+        XCTAssertEqual(session.actor, "u")
+        XCTAssertEqual(store.backendURLStore.loadOverrideRecord()?.sessionCommitID, session.commitID)
+        XCTAssertNil(keychain.storedData(for: .legacy))
+        XCTAssertNotNil(keychain.storedData(for: .legacyMigrated))
+        let verification = await mock.legacyVerificationRequests
+        XCTAssertEqual(verification, [.init(origin: origin, actor: nil, token: "legacy-token")])
+        XCTAssertEqual(pairing.credential(for: origin, session: session)?.credential, active.credential)
+        XCTAssertEqual(deviceStore.load()?.provenance, .legacyMigrated1x)
+        XCTAssertNil(pairing.credential(for: previousOrigin, session: session))
+        try await waitUntil("the saved revocation retry") { await pairingAPI.revocations.count == 1 }
+        let revocations = await pairingAPI.revocations
+        XCTAssertEqual(revocations, [.init(token: pending.credential, origin: previousOrigin)])
+        XCTAssertEqual(deviceStore.pending, [pending])
+    }
+
+    func testLockedKeychainLaunchChangesNothingAndRetriesOnForeground() async throws {
+        let origin = URL(string: "https://hestia.example")!
+        let defaults = UserDefaults(suiteName: "AppStateTests.\(UUID())")!
+        defaults.set(origin.absoluteString, forKey: BackendURLStore.userDefaultsKey)
+        let keychain = TestSessionKeychain()
+        let token = Data("legacy-token".utf8)
+        keychain.seed(token, for: .legacy)
+        keychain.setLocked(true)
+        let store = CredentialSessionStore(backendURLStore: BackendURLStore(userDefaults: defaults), keychain: keychain)
+        let active = StoredReceiptDeviceToken(server: origin, credential: fakeDeviceToken)
+        let deviceStore = MemoryDeviceTokenStore(active)
+        let pending = StoredReceiptDeviceToken(server: URL(string: "https://hestia.example:8443")!, credential: fakeDeviceToken)
+        try deviceStore.savePendingRevocations([pending])
+        let pairingAPI = UpgradePairingAPI()
+        let pairing = ReceiptPairing(api: pairingAPI, store: deviceStore, serverURL: { origin })
+        let mock = MockHestiaAPI()
+        await mock.setCapabilities(Capabilities(user: "u"))
+        let app = AppState(api: mock, receiptPairing: pairing, sessionStore: store, events: Self.noEvents)
+
+        await app.bootstrap()
+
+        XCTAssertNotNil(app.sessionStorageError)
+        XCTAssertNil(store.currentSnapshot())
+        XCTAssertTrue(keychain.mutations.isEmpty)
+        XCTAssertEqual(keychain.storedData(for: .legacy), token)
+        XCTAssertNil(keychain.storedData(for: .authoritative))
+        XCTAssertNil(keychain.storedData(for: .legacyMigrated))
+        XCTAssertEqual(defaults.string(forKey: BackendURLStore.userDefaultsKey), origin.absoluteString)
+        XCTAssertEqual(deviceStore.load(), active)
+        XCTAssertEqual(deviceStore.pending, [pending])
+        let initialRevocations = await pairingAPI.revocations
+        XCTAssertTrue(initialRevocations.isEmpty)
+        let initialProbes = await mock.probeOrigins
+        XCTAssertTrue(initialProbes.isEmpty)
+
+        keychain.setLocked(false)
+        app.enterForeground()
+        try await waitUntil("the deferred session to finish migrating") { app.phase == .ready }
+        XCTAssertNil(app.sessionStorageError)
+        XCTAssertEqual(store.currentSnapshot()?.token, "legacy-token")
+        XCTAssertEqual(deviceStore.load()?.credential, active.credential)
+    }
+
+    func testLaunchWithLinkedOverrideAndAbsentRecordProbesWithoutAuthenticating() async {
+        let origin = URL(string: "https://hestia.example")!
+        let defaults = UserDefaults(suiteName: "AppStateTests.\(UUID())")!
+        let urls = BackendURLStore(userDefaults: defaults)
+        urls.saveOverride(origin, sessionCommitID: UUID())
+        let keychain = TestSessionKeychain()
+        keychain.seed(Data("leftover-token".utf8), for: .legacy)
+        let store = CredentialSessionStore(backendURLStore: urls, keychain: keychain)
+        let mock = MockHestiaAPI()
+        await mock.setFeatures([.capabilities])
+        let app = AppState(api: mock, sessionStore: store, events: Self.noEvents)
+
+        await app.bootstrap()
+
+        XCTAssertEqual(app.phase, .needsAuth)
+        XCTAssertTrue(app.serverFeatures?.supports(.capabilities) == true)
+        XCTAssertNil(store.currentSnapshot())
+        XCTAssertEqual(urls.currentEffectiveURL(), origin)
+        XCTAssertNil(urls.loadOverrideRecord()?.sessionCommitID)
+        XCTAssertNil(keychain.storedData(for: .legacy))
+        let probes = await mock.probeOrigins
+        let requests = await mock.calls
+        let legacyVerifications = await mock.legacyVerificationRequests
+        XCTAssertEqual(probes, [origin])
+        XCTAssertTrue(requests.isEmpty)
+        XCTAssertTrue(legacyVerifications.isEmpty)
     }
 }

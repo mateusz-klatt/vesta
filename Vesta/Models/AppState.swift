@@ -38,7 +38,8 @@ final class AppState {
     private(set) var globals: Globals?
     private(set) var klima: Components.Schemas.Klima?
     private(set) var klimaState: Components.Schemas.KlimaState?
-    var backendURLString: String = AppConfig.serverURL.absoluteString
+    private(set) var backendURLString: String
+    private(set) var sessionStorageError: APIError?
 
     var tempScale: TempScale {
         didSet { UserDefaults.standard.set(tempScale.rawValue, forKey: Self.tempScaleKey) }
@@ -55,8 +56,13 @@ final class AppState {
     private static let languageKey = "vesta.language"
 
     private let api: any HestiaAPI
+    private let sessionStore: CredentialSessionStore
+    private var backendURLStore: BackendURLStore { sessionStore.backendURLStore }
+    private var activeOrigin: URL {
+        sessionStore.currentSnapshot()?.origin ?? backendURLStore.currentEffectiveURL()
+    }
     let receiptPairing: ReceiptPairing
-    private let makeEvents: @Sendable () -> AsyncStream<EventStream.Event>
+    private let makeEvents: @Sendable (SSESessionSnapshot) -> AsyncStream<EventStream.Event>
     private let eventRetryDelay: @Sendable (Duration) async throws -> Void
     private(set) var eventTask: Task<Void, Never>?
     private var eventRunID: UUID?
@@ -64,6 +70,12 @@ final class AppState {
     private var isInForeground = true
     private var lifecycleGeneration = 0
     private var didBootstrap = false
+    private var needsSessionRestore = true
+    private var isRestoringSession = false
+    private var retryMigrationCleanup = false
+    private var rejectedLegacyBearer = false
+    private var retryInvalidation = false
+    private var authAttempt = 0
     /// Bumped on sign-out and backend change so a login still in flight
     /// can't pair against the new session.
     private var sessionGeneration = 0
@@ -72,8 +84,7 @@ final class AppState {
     private var refreshRevision = 0
     private var activeCapabilitiesRefresh: CapabilityRefresh?
     @ObservationIgnored private weak var openReceiptFlow: ReceiptFlow?
-    /// The logout (and unpair) a backend change runs. A login waits for it, or
-    /// that deferred logout would cancel the new session's login.
+    /// A new login waits for cleanup and the current backend switch's connection.
     private var resetTask: Task<Void, Never>?
     private weak var activeBudgetStore: BudgetStore?
     private weak var activeAgendaStore: AgendaStore?
@@ -100,6 +111,17 @@ final class AppState {
         let revision: Int
     }
 
+    private enum SessionRestore {
+        case ready
+        case verifiedLegacy(ServerFeatures, Capabilities)
+        case deferred
+    }
+
+    private struct CleanupSnapshot: Sendable {
+        let oldSession: BoundSession?
+        let detachedDevice: StoredReceiptDeviceToken?
+    }
+
     private struct CapabilityRefresh {
         let source: RefreshSource
         let snapshot: RefreshSnapshot
@@ -119,7 +141,7 @@ final class AppState {
     }
 
     private var currentRefreshSnapshot: RefreshSnapshot {
-        RefreshSnapshot(origin: AppConfig.serverURL, session: sessionGeneration, revision: refreshRevision)
+        RefreshSnapshot(origin: activeOrigin, session: sessionGeneration, revision: refreshRevision)
     }
 
     private func isCurrent(_ snapshot: RefreshSnapshot, phase expectedPhase: Phase) -> Bool {
@@ -182,15 +204,19 @@ final class AppState {
     func makeAgendaStore(calendar: Calendar = .current) -> AgendaStore? {
         guard phase == .ready, let api = calendarAPI else { return nil }
         closeAgenda()
+        let session = sessionGeneration
         let store = AgendaStore(
             api: api, calendar: calendar,
             onForbidden: { [weak self] in
-                guard let self else { return }
+                guard let self, sessionGeneration == session else { return }
                 closeAgenda()
                 // The discarded sheet handles the denial locally. Refresh the shared grants.
                 _ = beginCapabilityRefresh(source: .denial)
             },
-            onUnauthorized: { [weak self] in self?.invalidateSession() }
+            onUnauthorized: { [weak self] in
+                guard let self, sessionGeneration == session else { return }
+                invalidateSession()
+            }
         )
         activeAgendaStore = store
         return store
@@ -204,28 +230,35 @@ final class AppState {
     var hasLights: Bool { allDevices.contains { $0.device._type == "light" } }
     var hasBlinds: Bool { allDevices.contains { $0.device._type == "blind" } }
 
-    func makeReceiptFlow() -> ReceiptFlow? {
+    func makeReceiptFlow(janitor: ReceiptDraftJanitor = .shared) -> ReceiptFlow? {
         guard let api = receiptsAPI else { return nil }
         let session = sessionGeneration
         let access = receiptAccessGeneration
+        let origin = activeOrigin.absoluteString
         let flow = ReceiptFlow(api: api, allowsMatching: { [weak self] in
             guard let self, hasReceiptAccess(session: session, generation: access) else { return false }
             return capabilities?.canMatchReceipts == true
-        })
+        }, janitor: janitor, server: { origin })
         openReceiptFlow = flow
         return flow
     }
 
     init(api: (any HestiaAPI)? = nil,
-         receiptPairing: ReceiptPairing = ReceiptPairing(),
-         events: @escaping @Sendable () -> AsyncStream<EventStream.Event> = { EventStream.changes() },
+         receiptPairing: ReceiptPairing? = nil,
+         sessionStore: CredentialSessionStore = CredentialSessionStore(),
+         events: @escaping @Sendable (SSESessionSnapshot) -> AsyncStream<EventStream.Event> = { EventStream.changes(snapshot: $0) },
          eventRetryDelay: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
+        let backendURLStore = sessionStore.backendURLStore
+        let receiptPairing = receiptPairing ?? ReceiptPairing(serverURL: { backendURLStore.currentEffectiveURL() })
+        self.sessionStore = sessionStore
         self.receiptPairing = receiptPairing
-        self.api = api ?? APIClient(receiptPairing: receiptPairing)
+        self.api = api ?? APIClient(receiptPairing: receiptPairing, sessionStore: sessionStore)
         self.makeEvents = events
         self.eventRetryDelay = eventRetryDelay
+        backendURLString = backendURLStore.currentEffectiveURL().absoluteString
         tempScale = TempScale(rawValue: UserDefaults.standard.string(forKey: Self.tempScaleKey) ?? "C") ?? .celsius
         appLanguage = UserDefaults.standard.string(forKey: Self.languageKey)
+        receiptPairing.bindSessionStore(sessionStore)
     }
 
     // MARK: - Session
@@ -238,22 +271,14 @@ final class AppState {
         #if DEBUG
         // Screenshot/demo bootstrap: `-vesta.url <url> [-vesta.user u -vesta.pass p]`.
         // DEBUG-only — stripped from Release builds.
-        if let url = Self.launchValue("-vesta.url"), let canonical = BackendURLStore.canonicalize(url) {
-            BackendURLStore.shared.saveOverride(canonical)
-            backendURLString = canonical.absoluteString
-            if let user = Self.launchValue("-vesta.user"), let pass = Self.launchValue("-vesta.pass") {
+        if let raw = Self.launchValue("-vesta.url"), BackendURLStore.canonicalize(raw) != nil {
+            if saveAndConnect(raw), let user = Self.launchValue("-vesta.user"), let pass = Self.launchValue("-vesta.pass") {
                 await login(user: user, password: pass)
-            } else {
-                await connect()
             }
             return
         }
         #endif
-        guard BackendURLStore.shared.hasOverride() else {
-            phase = .unconfigured
-            return
-        }
-        await connect()
+        await connect(configuredOnly: true)
     }
 
     #if DEBUG
@@ -264,58 +289,180 @@ final class AppState {
     }
     #endif
 
-    func connect() async {
-        receiptPairing.refreshStatus()
+    func connect() async { await connect(configuredOnly: false) }
+
+    private func connect(configuredOnly: Bool) async {
         guard !Task.isCancelled else { return }
-        prepareInitialAuth()
-        await finishInitialAuth()
+        let generation = sessionGeneration
+        let restored: SessionRestore = needsSessionRestore ? await restoreSession() : .ready
+        guard generation == sessionGeneration, !Task.isCancelled else { return }
+        guard !configuredOnly || backendURLStore.hasOverride() else {
+            if case .ready = restored { phase = .unconfigured }
+            return
+        }
+        switch restored {
+        case .deferred:
+            return
+        case .ready:
+            prepareInitialAuth()
+            await finishInitialAuth()
+        case .verifiedLegacy(let features, let capabilities):
+            prepareInitialAuth(keepingFeatures: false)
+            publishAuthorization(features: features, capabilities: capabilities)
+            await finishInitialAuth(using: currentFence)
+        }
     }
 
-    /// Onboarding / "change backend": validate, persist, then connect.
+    private func restoreSession() async -> SessionRestore {
+        guard !isRestoringSession else { return .deferred }
+        isRestoringSession = true
+        defer { isRestoringSession = false }
+        do {
+            switch try sessionStore.bootstrap() {
+            case .ready(let retryCleanup):
+                finishSessionRestore(retryCleanup: retryCleanup)
+                return .ready
+            case .signedOut(let retryCleanup):
+                finishSessionRestore(retryCleanup: retryCleanup)
+                phase = .needsAuth
+                _ = await refreshCapabilities(source: .foreground)
+                return .deferred
+            case .verifyLegacy(let candidate):
+                return await verifyAndMigrate(candidate)
+            }
+        } catch {
+            reportSessionStorageFailure(error)
+            return .deferred
+        }
+    }
+
+    private func verifyAndMigrate(_ candidate: BoundSession) async -> SessionRestore {
+        let snapshot = currentRefreshSnapshot
+        let attempt = authAttempt
+        var features: ServerFeatures?
+        let resolved: Capabilities
+        do {
+            let probe = try await api.probeFeatures(on: candidate.origin)
+            guard isCurrentRestore(snapshot, attempt: attempt) else { return .deferred }
+            features = probe
+            resolved = try await api.verifyLegacySession(candidate, features: probe)
+        } catch {
+            guard isCurrentRestore(snapshot, attempt: attempt), !APIError.isCancellation(error) else { return .deferred }
+            let failure = APIError.wrap(error)
+            if failure == .unauthorized {
+                // A rejected bearer stays on disk until an explicit reset or successful login.
+                needsSessionRestore = false
+                rejectedLegacyBearer = true
+                publishAuthorization(features: features, capabilities: nil)
+                phase = .needsAuth
+            } else {
+                phase = .failed(failure)
+            }
+            return .deferred
+        }
+        guard isCurrentRestore(snapshot, attempt: attempt), let features else { return .deferred }
+        do {
+            try receiptPairing.bindLegacyCredential(origin: candidate.origin, actor: resolved.user)
+            let retryCleanup = try sessionStore.completeLegacyMigration(candidate, actor: resolved.user)
+            finishSessionRestore(retryCleanup: retryCleanup)
+            return .verifiedLegacy(features, resolved)
+        } catch {
+            reportSessionStorageFailure(error)
+            return .deferred
+        }
+    }
+
+    private func finishSessionRestore(retryCleanup: Bool) {
+        retryMigrationCleanup = retryCleanup
+        needsSessionRestore = false
+        sessionStorageError = nil
+        backendURLString = activeOrigin.absoluteString
+        receiptPairing.retryInterruptedDetach()
+    }
+
+    private func isCurrentRestore(_ snapshot: RefreshSnapshot, attempt: Int) -> Bool {
+        !Task.isCancelled && snapshot == currentRefreshSnapshot && attempt == authAttempt
+    }
+
+    /// Onboarding / "change backend": validate, then clear local credentials before changing origin.
     @discardableResult
     func saveAndConnect(_ raw: String) -> Bool {
+        sessionStorageError = nil
         guard let url = BackendURLStore.canonicalize(raw) else { return false }
-        sessionGeneration += 1
-        let generation = sessionGeneration
-        let changed = url != AppConfig.serverURL
-        BackendURLStore.shared.saveOverride(url)
-        backendURLString = url.absoluteString
-        prepareInitialAuth(keepingFeatures: !changed)
-        let api = self.api
-        let previous = resetTask
-        resetTask = Task {
-            await previous?.value
-            if changed { try? await receiptPairing.unpair() }
-            await api.logout()
-            guard generation == sessionGeneration else { return }
-            await connect()
+        let changed = !OriginMatcher.matches(url, activeOrigin)
+        do {
+            let cleanup = try resetLocalSession(savingOverride: url)
+            let previousOrigin = cleanup.oldSession?.origin
+            prepareInitialAuth(keepingFeatures: !changed && (previousOrigin.map { OriginMatcher.matches($0, url) } ?? true))
+            scheduleCleanup(cleanup, reconnect: true)
+            return true
+        } catch {
+            reportSessionStorageFailure(error)
+            return false
         }
-        return true
     }
 
     func login(user: String, password: String) async {
-        // Captured before waiting, so a sign-out or another backend change
-        // during the wait still supersedes this attempt.
+        sessionStorageError = nil
+        authAttempt += 1
+        let attempt = authAttempt
         let generation = sessionGeneration
+        let origin = activeOrigin
         await resetTask?.value
-        guard generation == sessionGeneration, !Task.isCancelled else { return }
-        sessionGeneration += 1
-        let loginGeneration = sessionGeneration
-        receiptPairing.refreshStatus()
-        let server = receiptPairing.server
-        prepareInitialAuth()
-        let fence = currentFence
+        guard isCurrentLogin(attempt, generation: generation, origin: origin) else { return }
+        let actor: String
+        let token: String
         do {
-            _ = try await api.login(user: user, password: password)
+            let result = try await api.login(user: user, password: password, on: origin)
+            guard result.ok, !result.user.isEmpty,
+                  let receivedToken = result.token, !receivedToken.isEmpty else { throw APIError.unauthorized }
+            actor = result.user
+            token = receivedToken
         } catch {
-            guard isCurrent(fence), !APIError.isCancellation(error) else { return }
-            phase = .failed(APIError.wrap(error))
+            guard isCurrentLogin(attempt, generation: generation, origin: origin), !APIError.isCancellation(error) else { return }
+            if phase == .ready { notice = APIError.wrap(error) } else { phase = .failed(APIError.wrap(error)) }
             return
         }
-        guard isCurrent(fence) else { return }
+        guard isCurrentLogin(attempt, generation: generation, origin: origin) else { return }
+
+        let oldSession = sessionStore.currentSnapshot()
+        var stagedDevice: StoredReceiptDeviceToken?
+        let committed: BoundSession
+        do {
+            committed = try sessionStore.commitAuthoritative(origin: origin, actor: actor, token: token) { replacement in
+                stagedDevice = try receiptPairing.prepareForLogin(from: oldSession, to: replacement)
+            }
+        } catch {
+            reportSessionStorageFailure(error)
+            return
+        }
+        sessionGeneration += 1
+        let committedGeneration = sessionGeneration
+        needsSessionRestore = false
+        retryInvalidation = false
+        if rejectedLegacyBearer {
+            retryMigrationCleanup = sessionStore.retryLegacyMigrationCleanup()
+            rejectedLegacyBearer = false
+        }
+        backendURLString = committed.origin.absoluteString
+        prepareInitialAuth()
+        let detached = stagedDevice.flatMap { receiptPairing.finishStagedDetachment($0) }
+        let logout = oldSession.flatMap { old -> BoundSession? in
+            let sameOrigin = OriginMatcher.matches(old.origin, committed.origin)
+            guard !sameOrigin || (old.actor != committed.actor && old.token != committed.token) else { return nil }
+            return old
+        }
+        let cleanupTask = logout != nil || detached != nil
+            ? scheduleCleanup(.init(oldSession: logout, detachedDevice: detached)) : nil
         await finishInitialAuth()
-        guard loginGeneration == sessionGeneration, !Task.isCancelled else { return }
-        await pairReceiptsAfterLogin(user: user, password: password, server: server)
+        await cleanupTask?.value
+        guard committedGeneration == sessionGeneration, !Task.isCancelled else { return }
+        await pairReceiptsAfterLogin(user: user, password: password, server: committed.origin)
+    }
+
+    private func isCurrentLogin(_ attempt: Int, generation: Int, origin: URL) -> Bool {
+        !Task.isCancelled && attempt == authAttempt && generation == sessionGeneration
+            && OriginMatcher.matches(origin, activeOrigin)
     }
 
     private func prepareInitialAuth(keepingFeatures: Bool = true) {
@@ -324,7 +471,12 @@ final class AppState {
     }
 
     private func finishInitialAuth() async {
-        guard let fence = await refreshCapabilities(source: .initialAuth), isCurrent(fence) else { return }
+        guard let fence = await refreshCapabilities(source: .initialAuth) else { return }
+        await finishInitialAuth(using: fence)
+    }
+
+    private func finishInitialAuth(using fence: Fence) async {
+        guard isCurrent(fence) else { return }
         guard canViewIOC else {
             phase = .ready
             return
@@ -342,26 +494,90 @@ final class AppState {
                                        deviceName: ReceiptPairing.deviceName, server: server)
     }
 
-    func signOut() async {
+    @discardableResult
+    func signOut() async -> Bool {
+        sessionStorageError = nil
+        do {
+            let cleanup = try resetLocalSession()
+            clearAuthorization(keeping: serverFeatures)
+            phase = .needsAuth
+            let task = scheduleCleanup(cleanup)
+            await task.value
+            return true
+        } catch {
+            reportSessionStorageFailure(error)
+            return false
+        }
+    }
+
+    private func resetLocalSession(savingOverride: URL? = nil) throws -> CleanupSnapshot {
+        let originalOrigin = activeOrigin
+        var stagedDevice: StoredReceiptDeviceToken?
+        var preservesOrigin = false
+        let oldSession = try sessionStore.clearAuthoritative(savingOverride: savingOverride) { old in
+            preservesOrigin = savingOverride.map { OriginMatcher.matches($0, old?.origin ?? originalOrigin) } ?? false
+            if preservesOrigin {
+                try receiptPairing.prepareCodeReauthentication(from: old)
+            } else {
+                stagedDevice = try receiptPairing.stageActiveDetachment(receiptPairing.currentActiveToken())
+            }
+        }
         sessionGeneration += 1
+        needsSessionRestore = false
+        retryMigrationCleanup = false
+        rejectedLegacyBearer = false
+        retryInvalidation = false
+        backendURLString = activeOrigin.absoluteString
+        let detachedDevice = preservesOrigin ? nil : receiptPairing.finishStagedDetachment(stagedDevice)
+        return CleanupSnapshot(oldSession: oldSession, detachedDevice: detachedDevice)
+    }
+
+    @discardableResult
+    private func scheduleCleanup(_ snapshot: CleanupSnapshot, reconnect: Bool = false) -> Task<Void, Never> {
+        let previous = resetTask
         let generation = sessionGeneration
-        prepareInitialAuth()
-        try? await receiptPairing.unpair()
-        await api.logout()
-        guard generation == sessionGeneration else { return }
-        phase = .needsAuth
+        let cleanup = Task { [api, receiptPairing] in
+            if let token = snapshot.detachedDevice { try? await receiptPairing.revokeDetached(token) }
+            if let session = snapshot.oldSession { await api.remoteLogout(token: session.token, origin: session.origin) }
+        }
+        resetTask = Task { [weak self] in
+            await previous?.value
+            await cleanup.value
+            guard reconnect, let self, generation == sessionGeneration else { return }
+            await connect()
+        }
+        return cleanup
     }
 
     private func invalidateSession(features: ServerFeatures? = nil) {
+        do {
+            try sessionStore.clearAuthoritative()
+        } catch {
+            sessionStore.discardSnapshot()
+            retryInvalidation = true
+        }
+        needsSessionRestore = false
+        retryMigrationCleanup = false
         sessionGeneration += 1
         clearAuthorization(keeping: features ?? serverFeatures)
         phase = .needsAuth
-        // Login waits for local credential invalidation just as it waits for reset.
-        let api = self.api
-        let previous = resetTask
-        resetTask = Task {
-            await previous?.value
-            await api.invalidateSession()
+        if !retryInvalidation { receiptPairing.retryInterruptedDetach() }
+    }
+
+    private func reportSessionStorageFailure(_ error: any Error) {
+        let failure = APIError.wrap(error)
+        sessionStorageError = failure
+        if phase == .ready { notice = failure } else { phase = .failed(failure) }
+    }
+
+    private func retrySessionPersistence() {
+        if retryInvalidation {
+            do {
+                try sessionStore.clearAuthoritative()
+                retryInvalidation = false
+            } catch { return }
+        } else if retryMigrationCleanup {
+            retryMigrationCleanup = sessionStore.retryLegacyMigrationCleanup()
         }
     }
 
@@ -453,6 +669,8 @@ final class AppState {
             receiptAccessGeneration += 1
         }
         authorization = (features, published)
+        receiptPairing.setUnauthenticatedOrigin(published?.isAuthOff == true ? activeOrigin : nil)
+        if published != nil { receiptPairing.refreshStatus() }
         if calendarAPI == nil { closeAgenda() }
         if budgetAPI == nil { closeBudget() }
         applyIOCGrant(published?.canViewIOC == true)
@@ -485,8 +703,12 @@ final class AppState {
     func enterForeground() {
         isInForeground = true
         lifecycleGeneration += 1
-        // Refreshing pairing status can retry a pending authenticated revocation.
-        if phase != .needsAuth { receiptPairing.refreshStatus() }
+        if didBootstrap, needsSessionRestore {
+            Task { [weak self] in await self?.connect(configuredOnly: true) }
+            return
+        }
+        retrySessionPersistence()
+        if !needsSessionRestore, !retryInvalidation { receiptPairing.retryInterruptedDetach() }
         guard let task = beginCapabilityRefresh(source: .foreground) else { return }
         let lifecycle = lifecycleGeneration
         Task { [weak self] in
@@ -740,7 +962,9 @@ final class AppState {
     /// Returns whether the current IOC subscription may reconnect.
     private func consumeEvents(id: UUID, fence: DiscoveryFence, backoff: inout Duration) async -> Bool {
         guard isCurrentDiscovery(fence), eventRunID == id else { return false }
-        for await event in makeEvents() {
+        let session = sessionStore.currentSnapshot()
+        let snapshot = SSESessionSnapshot(origin: session?.origin ?? activeOrigin, session: session)
+        for await event in makeEvents(snapshot) {
             guard isCurrentDiscovery(fence), eventRunID == id else { return false }
             switch event {
             case .connected:

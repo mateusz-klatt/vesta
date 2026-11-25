@@ -35,8 +35,11 @@ struct SettingsView: View {
                         Text("Enter just the origin, e.g. https://hestia.example (no path).")
                             .font(.footnote).foregroundStyle(.red)
                     }
+                    if let error = app.sessionStorageError {
+                        Text(error.message).font(.footnote).foregroundStyle(.red)
+                    }
                     Button("Save & connect") {
-                        if app.saveAndConnect(urlText) { dismiss() } else { urlInvalid = true }
+                        if app.saveAndConnect(urlText) { dismiss() } else { urlInvalid = app.sessionStorageError == nil }
                     }
                     .disabled(urlText.isEmpty)
                 }
@@ -88,7 +91,7 @@ struct SettingsView: View {
 
                 Section {
                     Button("Sign out", role: .destructive) {
-                        Task { await app.signOut(); dismiss() }
+                        Task { if await app.signOut() { dismiss() } }
                     }
                 }
             }

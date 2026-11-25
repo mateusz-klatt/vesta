@@ -18,9 +18,10 @@ final class EventStreamTests: XCTestCase {
         defer { session.invalidateAndCancel() }
 
         let terminated = expectation(description: "The event stream terminates")
+        let snapshot = SSESessionSnapshot(origin: URL(string: "https://hestia.example")!)
         let read = Task {
             var events: [EventStream.Event] = []
-            for await event in EventStream.changes(session: session) { events.append(event) }
+            for await event in EventStream.changes(snapshot: snapshot, session: session) { events.append(event) }
             terminated.fulfill()
             return events
         }

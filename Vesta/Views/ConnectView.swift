@@ -66,7 +66,7 @@ struct ConnectView: View {
                     .foregroundStyle(.red)
             }
             Button("Save & connect") {
-                urlInvalid = !app.saveAndConnect(urlText)
+                urlInvalid = !app.saveAndConnect(urlText) && app.sessionStorageError == nil
             }
             .disabled(urlText.isEmpty)
         }

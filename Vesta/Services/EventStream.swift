@@ -1,6 +1,20 @@
 import Foundation
 import OSLog
 
+struct SSESessionSnapshot: Sendable {
+    let origin: URL
+    let token: String?
+
+    init(origin: URL, session: BoundSession? = nil) {
+        self.origin = origin
+        if let session, OriginMatcher.matches(origin, session.origin) {
+            token = session.token
+        } else {
+            token = nil
+        }
+    }
+}
+
 /// Consumes hestia's `/api/events` SSE stream. Emits `.connected` once the stream
 /// is live (HTTP 200), then a `.change` per device-state frame. A single call covers
 /// one connection; hestia closes the stream after its max lifetime (it expects
@@ -20,16 +34,16 @@ enum EventStream {
         let node: Int?
     }
 
-    static func changes(session: URLSession = HTTPSession.shared) -> AsyncStream<Event> {
+    static func changes(snapshot: SSESessionSnapshot, session: URLSession = HTTPSession.shared) -> AsyncStream<Event> {
         AsyncStream { continuation in
             let task = Task {
-                let url = AppConfig.serverURL.appendingPathComponent("api/events")
+                let url = snapshot.origin.appendingPathComponent("api/events")
                 var request = URLRequest(url: url)
                 request.setValue(AppConfig.ContentType.eventStream, forHTTPHeaderField: "Accept")
-                if let token = TokenStore.load() {
+                if let token = snapshot.token {
                     request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                 }
-                log.debug("SSE connecting \(url.absoluteString, privacy: .public)")
+                log.debug("SSE connecting")
                 do {
                     let (bytes, response) = try await session.bytes(for: request)
                     let status = (response as? HTTPURLResponse)?.statusCode
@@ -47,11 +61,10 @@ enum EventStream {
                         guard line.hasPrefix("data:") else { continue }   // skip :keepalive comments
                         let json = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
                         let frame = try? JSONDecoder().decode(Frame.self, from: Data(json.utf8))
-                        log.debug("SSE frame \(json, privacy: .public)")
                         continuation.yield(.change(node: frame?.type == "state" ? frame?.node : nil))
                     }
                 } catch {
-                    log.error("SSE error: \(error.localizedDescription, privacy: .public)")
+                    log.error("SSE error: \(error.localizedDescription, privacy: .private)")
                 }
                 log.notice("SSE finished")
                 continuation.finish()

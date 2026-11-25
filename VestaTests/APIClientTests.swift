@@ -20,13 +20,29 @@ struct StubTransport: ClientTransport {
 
 private func json(_ s: String) -> Data { Data(s.utf8) }
 
+@MainActor
+func testCredentialSessionStore(origin: URL = AppConfig.serverURL, token: String) throws -> CredentialSessionStore {
+    let urls = BackendURLStore(userDefaults: UserDefaults(suiteName: "vesta.test.\(UUID())")!)
+    let store = CredentialSessionStore(backendURLStore: urls, keychain: TestSessionKeychain())
+    try store.commitAuthoritative(origin: origin, actor: "u", token: token)
+    return store
+}
+
 /// Holds one operation's response until released; every other operation answers at once.
 private final class HeldTransport: ClientTransport, @unchecked Sendable {
+    struct Call: Equatable, Sendable {
+        let operation: String
+        let origin: URL
+        let authorization: String?
+    }
+
     private let held: String
     private let lock = NSLock()
     private var gate: CheckedContinuation<Void, Never>?
     private var released = false
+    private var recorded: [Call] = []
     var isHolding: Bool { lock.withLock { gate != nil } }
+    var calls: [Call] { lock.withLock { recorded } }
 
     init(holding operationID: String = Operations.Login.id) { held = operationID }
 
@@ -40,10 +56,16 @@ private final class HeldTransport: ClientTransport, @unchecked Sendable {
     }
 
     func send(_ request: HTTPRequest, body: HTTPBody?, baseURL: URL, operationID: String) async throws -> (HTTPResponse, HTTPBody?) {
+        lock.withLock {
+            recorded.append(.init(operation: operationID, origin: baseURL, authorization: request.headerFields[.authorization]))
+        }
         var response = HTTPResponse(status: .ok)
         response.headerFields[.contentType] = "application/json"
-        let reply = operationID == Operations.Login.id
-            ? #"{"ok":true,"token":"late-token","user":"u"}"# : #"{"ok":true}"#
+        let reply = switch operationID {
+        case Operations.Login.id: #"{"ok":true,"token":"new-token","user":"u"}"#
+        case Operations.Whoami.id: #"{"user":"u","role":"admin"}"#
+        default: #"{"ok":true}"#
+        }
         guard operationID == held else { return (response, HTTPBody(reply)) }
         await withCheckedContinuation { continuation in
             let resumeNow: Bool = lock.withLock {
@@ -71,13 +93,8 @@ func waitUntil(isolation: isolated (any Actor)? = #isolation, _ what: String, ti
     }
 }
 
-/// Records what APIClient writes to the session-token store.
-private final class TokenLog: @unchecked Sendable {
-    private let lock = NSLock()
-    private var events: [String] = []
-    var all: [String] { lock.withLock { events } }
-    func record(_ event: String) { lock.withLock { events.append(event) } }
-}
+private let transportOrigin = URL(string: "https://hestia.example")!
+private let otherTransportOrigin = URL(string: "https://hestia.example:8443")!
 
 final class APIClientTests: XCTestCase {
 
@@ -97,7 +114,7 @@ final class APIClientTests: XCTestCase {
         let statuses: [(Int, APIError)] = [(401, .unauthorized), (403, .forbidden)]
         let origin = URL(string: "https://hestia.example")!
         for (status, expected) in statuses {
-            let api = APIClient(transport: StubTransport { _ in (status, nil) }, sessionToken: { nil })
+            let api = APIClient(transport: StubTransport { _ in (status, nil) })
             await XCTAssertThrowsErrorEqual(try await api.capabilities(on: origin, features: .legacy), expected)
             await XCTAssertThrowsErrorEqual(try await api.discovery(), expected)
             await XCTAssertThrowsErrorEqual(try await api.setSwitch(node: 4, on: true), expected)
@@ -111,63 +128,76 @@ final class APIClientTests: XCTestCase {
         await XCTAssertThrowsErrorEqual(try await api.whoami(), APIError.serverNotFound)
     }
 
-    func testLoginStoresToken() async throws {
-        TokenStore.clear()
-        let api = APIClient(transport: StubTransport { _ in (200, json(#"{"ok":true,"token":"tok","user":"u"}"#)) })
-        let success = try await api.login(user: "u", password: "p")
-        XCTAssertEqual(success.token, "tok")
-        XCTAssertEqual(TokenStore.load(), "tok")
-        TokenStore.clear()
+    @MainActor
+    func testLoginReturnsTokenWithoutPublishingOrSendingPreviousBearer() async throws {
+        let store = try testCredentialSessionStore(origin: transportOrigin, token: "previous-token")
+        let previous = store.currentSnapshot()
+        let transport = HeldTransport()
+        transport.release()
+        let api = APIClient(transport: transport, sessionStore: store)
+
+        let success = try await api.login(user: "u", password: "p", on: transportOrigin)
+
+        XCTAssertEqual(success.token, "new-token")
+        XCTAssertEqual(success.user, "u")
+        XCTAssertEqual(store.currentSnapshot(), previous)
+        XCTAssertEqual(transport.calls, [.init(operation: Operations.Login.id, origin: transportOrigin, authorization: nil)])
     }
 
-    func testLogoutDuringLoginDiscardsTheLateToken() async throws {
+    func testRemoteLogoutDuringLoginDoesNotChangeTheResult() async throws {
         let transport = HeldTransport()
-        let log = TokenLog()
-        let api = APIClient(transport: transport, sessionToken: { nil },
-                            saveToken: { log.record("save:\($0)") }, clearToken: { log.record("clear") })
+        let api = APIClient(transport: transport)
 
-        let login = Task { try await api.login(user: "u", password: "p") }
+        let login = Task { try await api.login(user: "u", password: "p", on: transportOrigin) }
+        defer { transport.release() }
         try await waitUntil("the held login") { transport.isHolding }
-        await api.logout()
+        await api.remoteLogout(token: "previous-token", origin: otherTransportOrigin)
         transport.release()
 
-        do {
-            _ = try await login.value
-            XCTFail("A login overtaken by logout must not succeed")
-        } catch is CancellationError {}
-        XCTAssertEqual(log.all, ["clear"])
+        let success = try await login.value
+        XCTAssertEqual(success.token, "new-token")
+        XCTAssertEqual(transport.calls, [
+            .init(operation: Operations.Login.id, origin: transportOrigin, authorization: nil),
+            .init(operation: Operations.Logout.id, origin: otherTransportOrigin, authorization: "Bearer previous-token"),
+        ])
     }
 
-    func testLoginAfterLogoutStoresToken() async throws {
+    @MainActor
+    func testLoginAfterRemoteLogoutLeavesPublishedSessionUntouched() async throws {
         let transport = HeldTransport()
         transport.release()
-        let log = TokenLog()
-        let api = APIClient(transport: transport, sessionToken: { nil },
-                            saveToken: { log.record("save:\($0)") }, clearToken: { log.record("clear") })
+        let store = try testCredentialSessionStore(origin: transportOrigin, token: "previous-token")
+        let previous = store.currentSnapshot()
+        let api = APIClient(transport: transport, sessionStore: store)
 
-        await api.logout()
-        _ = try await api.login(user: "u", password: "p")
-        XCTAssertEqual(log.all, ["clear", "save:late-token"])
+        await api.remoteLogout(token: "detached-token", origin: otherTransportOrigin)
+        let success = try await api.login(user: "u", password: "p", on: transportOrigin)
+        XCTAssertEqual(success.token, "new-token")
+        XCTAssertEqual(store.currentSnapshot(), previous)
     }
 
-    func testLoginDuringSlowLogoutKeepsItsToken() async throws {
+    @MainActor
+    func testSlowRemoteLogoutKeepsAConcurrentlyPublishedSession() async throws {
         let transport = HeldTransport(holding: Operations.Logout.id)
-        let log = TokenLog()
-        let api = APIClient(transport: transport, sessionToken: { nil },
-                            saveToken: { log.record("save:\($0)") }, clearToken: { log.record("clear") })
+        let store = try testCredentialSessionStore(origin: transportOrigin, token: "previous-token")
+        let api = APIClient(transport: transport, sessionStore: store)
 
-        let logout = Task { await api.logout() }
+        let logout = Task { await api.remoteLogout(token: "previous-token", origin: transportOrigin) }
+        defer { transport.release() }
         try await waitUntil("the held logout") { transport.isHolding }
-        _ = try await api.login(user: "u", password: "p")
+        let success = try await api.login(user: "u", password: "p", on: otherTransportOrigin)
+        let published = try store.commitAuthoritative(origin: otherTransportOrigin, actor: success.user, token: XCTUnwrap(success.token))
         transport.release()
         await logout.value
 
-        XCTAssertEqual(log.all, ["save:late-token"])
+        XCTAssertEqual(store.currentSnapshot(), published)
     }
 
     func testLoginBadCredentials() async {
         let api = APIClient(transport: StubTransport { _ in (401, json(#"{"ok":false,"error":"bad"}"#)) })
-        await XCTAssertThrowsErrorEqual(try await api.login(user: "u", password: "x"), APIError.unauthorized)
+        await XCTAssertThrowsErrorEqual(
+            try await api.login(user: "u", password: "x", on: transportOrigin), APIError.unauthorized
+        )
     }
 
     func testControlSucceeds() async throws {
@@ -197,9 +227,67 @@ final class APIClientTests: XCTestCase {
     }
 
     func testLogoutNeverThrows() async {
-        let api = APIClient(transport: StubTransport { _ in (200, nil) })
-        await api.logout()   // must not throw
+        let api = APIClient(transport: StubTransport { _ in throw URLError(.notConnectedToInternet) })
+        await api.remoteLogout(token: "detached-token", origin: transportOrigin)
     }
+
+    @MainActor
+    func testImmutableBoundSessionAndSSESnapshotIgnoreMutatedDefaults() async throws {
+        let urls = BackendURLStore(userDefaults: UserDefaults(suiteName: "vesta.test.\(UUID())")!)
+        let store = CredentialSessionStore(backendURLStore: urls, keychain: TestSessionKeychain())
+        let prior = try store.commitAuthoritative(origin: transportOrigin, actor: "u", token: "previous-token")
+        let transport = HeldTransport(holding: Operations.Whoami.id)
+        let api = APIClient(transport: transport, sessionStore: store)
+
+        // Change the derived URL while the authoritative session still points to the old origin.
+        urls.saveOverride(otherTransportOrigin)
+        let events = SSESessionSnapshot(origin: prior.origin, session: store.currentSnapshot())
+        let mismatched = SSESessionSnapshot(origin: otherTransportOrigin, session: prior)
+        XCTAssertNil(mismatched.token)
+        let first = Task { try await api.whoami() }
+        defer { transport.release() }
+        try await waitUntil("the old session request") { transport.isHolding }
+
+        _ = try store.commitAuthoritative(origin: otherTransportOrigin, actor: "u2", token: "new-token")
+        let configuration = HTTPSession.configuration
+        configuration.protocolClasses = [SnapshotEventURLProtocol.self]
+        let network = URLSession(configuration: configuration)
+        defer { network.invalidateAndCancel() }
+        var received: [EventStream.Event] = []
+        for await event in EventStream.changes(snapshot: events, session: network) {
+            received.append(event)
+        }
+        XCTAssertEqual(received, [.connected])
+
+        transport.release()
+        _ = try await first.value
+        _ = try await api.whoami()
+        _ = try await api.capabilities(on: transportOrigin, features: .legacy)
+        XCTAssertEqual(transport.calls, [
+            .init(operation: Operations.Whoami.id, origin: transportOrigin, authorization: "Bearer previous-token"),
+            .init(operation: Operations.Whoami.id, origin: otherTransportOrigin, authorization: "Bearer new-token"),
+            .init(operation: Operations.Whoami.id, origin: transportOrigin, authorization: nil),
+        ])
+    }
+}
+
+private final class SnapshotEventURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        XCTAssertEqual(request.url, transportOrigin.appendingPathComponent("api/events"))
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer previous-token")
+        guard let url = request.url,
+              let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }
 
 /// Assert an async expression throws a specific `APIError`.

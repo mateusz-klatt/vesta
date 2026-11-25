@@ -6,11 +6,21 @@ import OpenAPIRuntime
 /// device token (hestia authz Part C §11, `budget_native_read`), never the login
 /// bearer or a cookie; other budget routes never receive either credential.
 struct BearerAuthMiddleware: ClientMiddleware {
-    let token: @Sendable () -> String?
-    var receiptPairing: ReceiptPairing?
+    private let session: BoundSession?
+    private let receiptPairing: ReceiptPairing?
     // Unpair can revoke after the active pairing/backend has changed.
-    var revoking: ReceiptDeviceToken?
-    var budgetEnabled: @Sendable () -> Bool = { false }
+    private let revoking: (origin: URL, credential: ReceiptDeviceToken)?
+    private let budgetEnabled: @Sendable () -> Bool
+
+    init(session: BoundSession? = nil,
+         receiptPairing: ReceiptPairing? = nil,
+         revoking: (origin: URL, credential: ReceiptDeviceToken)? = nil,
+         budgetEnabled: @escaping @Sendable () -> Bool = { false }) {
+        self.session = session
+        self.receiptPairing = receiptPairing
+        self.revoking = revoking
+        self.budgetEnabled = budgetEnabled
+    }
 
     private static let receiptOperations: Set<String> = [
         Operations.ParseBudgetReceiptText.id, Operations.ConfirmBudgetReceipt.id,
@@ -41,7 +51,9 @@ struct BearerAuthMiddleware: ClientMiddleware {
             guard budgetEnabled() else { throw BudgetError.forbidden }
             // No device token means no request: the session bearer is refused
             // here by hestia, and sending it would widen its use.
-            guard let device = await receiptPairing?.credential(for: baseURL) else { throw BudgetError.forbidden }
+            guard let device = await receiptPairing?.credential(for: baseURL, session: session) else {
+                throw BudgetError.forbidden
+            }
             request.headerFields[.authorization] = "Bearer \(device.credential.token)"
             let (response, responseBody) = try await next(request, body, baseURL)
             guard response.status.code == 200 else {
@@ -51,11 +63,11 @@ struct BearerAuthMiddleware: ClientMiddleware {
             return (response, responseBody)
         }
         guard requiresDevice || issuesDeviceToken else {
+            request.headerFields[.authorization] = nil
             if let path = request.path, path == "/api/budget" || path.hasPrefix("/api/budget/") {
-                request.headerFields[.authorization] = nil
                 request.headerFields[.cookie] = nil
-            } else if let token = token() {
-                request.headerFields[.authorization] = "Bearer \(token)"
+            } else if let session, OriginMatcher.matches(baseURL, session.origin) {
+                request.headerFields[.authorization] = "Bearer \(session.token)"
             }
             return try await next(request, body, baseURL)
         }
@@ -65,9 +77,12 @@ struct BearerAuthMiddleware: ClientMiddleware {
         var pairedDevice: StoredReceiptDeviceToken?
         if requiresDevice {
             if operationID == Operations.RevokeBudgetReceiptDevice.id, let revoking {
-                request.headerFields[.authorization] = "Bearer \(revoking.token)"
+                guard OriginMatcher.matches(baseURL, revoking.origin) else { throw ReceiptError.pairAgain }
+                request.headerFields[.authorization] = "Bearer \(revoking.credential.token)"
             } else {
-                guard let device = await receiptPairing?.credential(for: baseURL) else { throw ReceiptError.pairAgain }
+                guard let device = await receiptPairing?.credential(for: baseURL, session: session) else {
+                    throw ReceiptError.pairAgain
+                }
                 pairedDevice = device
                 request.headerFields[.authorization] = "Bearer \(device.credential.token)"
             }

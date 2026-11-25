@@ -43,4 +43,29 @@ final class BackendURLStoreTests: XCTestCase {
         XCTAssertNil(BackendURLStore.canonicalize("ftp://hestia.example"))
         XCTAssertNil(BackendURLStore.canonicalize("not a url"))
     }
+
+    func testLegacyOverrideCanBeReadAndThenLinkedToSessionCommit() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "vesta.test.\(UUID())"))
+        let raw = "HTTPS://Hestia.Example/"
+        let origin = try XCTUnwrap(BackendURLStore.canonicalize(raw))
+        defaults.set(raw, forKey: BackendURLStore.userDefaultsKey)
+
+        let store = BackendURLStore(userDefaults: defaults)
+        XCTAssertEqual(store.loadOverrideRecord(), .init(urlString: origin.absoluteString, sessionCommitID: nil))
+        XCTAssertEqual(defaults.string(forKey: BackendURLStore.userDefaultsKey), raw)
+
+        let commit = UUID()
+        store.saveOverride(origin, sessionCommitID: commit)
+        let reloaded = BackendURLStore(userDefaults: defaults)
+        XCTAssertEqual(reloaded.loadOverrideRecord(), .init(urlString: origin.absoluteString, sessionCommitID: commit))
+        XCTAssertEqual(reloaded.currentEffectiveURL(), origin)
+    }
+
+    func testOriginMatcherChecksSchemeHostAndEffectivePort() {
+        let origin = URL(string: "https://hestia.example")!
+        XCTAssertTrue(OriginMatcher.matches(origin, URL(string: "https://HESTIA.EXAMPLE:443/")!))
+        XCTAssertFalse(OriginMatcher.matches(origin, URL(string: "https://hestia.example:8443")!))
+        XCTAssertFalse(OriginMatcher.matches(origin, URL(string: "http://hestia.example:443")!))
+        XCTAssertFalse(OriginMatcher.matches(origin, URL(string: "https://u@hestia.example")!))
+    }
 }
