@@ -100,6 +100,7 @@ private struct AgendaDayHeader: View {
 }
 
 private struct AgendaRow: View {
+    @Environment(\.locale) private var locale
     let occurrence: AgendaOccurrence
 
     var body: some View {
@@ -118,8 +119,8 @@ private struct AgendaRow: View {
                 Group {
                     if occurrence.allDay {
                         Text("All day")
-                    } else if let timeRange {
-                        timeRange
+                    } else if let timeRange = occurrence.timeRange(locale: locale) {
+                        Text(verbatim: timeRange)
                     }
                 }
                 .font(.subheadline)
@@ -140,13 +141,16 @@ private struct AgendaRow: View {
         }
         return Text(verbatim: occurrence.summary)
     }
+}
 
-    private var timeRange: Text? {
-        guard case let .instant(start) = occurrence.start,
-              case let .instant(end) = occurrence.end else { return nil }
-        let from = start.formatted(date: .omitted, time: .shortened)
+extension AgendaOccurrence {
+    func timeRange(locale: Locale) -> String? {
+        guard case let .instant(start) = self.start,
+              case let .instant(end) = self.end else { return nil }
+        let format = Date.FormatStyle(date: .omitted, time: .shortened).locale(locale)
+        let from = start.formatted(format)
         // A zero-length event (a reminder, or no known end) shows just its start.
-        guard end > start else { return Text(verbatim: from) }
-        return Text(verbatim: "\(from) – \(end.formatted(date: .omitted, time: .shortened))")
+        guard end > start else { return from }
+        return "\(from) – \(end.formatted(format))"
     }
 }

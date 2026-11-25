@@ -22,12 +22,42 @@ extension APIClient: CalendarAPI {
             case .serviceUnavailable: throw CalendarError.unavailable
             case .undocumented(let status, _): throw mapStatus(status)
             }
-        } catch let error as ClientError where error.response?.status.code == 503 {
-            // A 503 from an intermediary can have a different body than the API schema.
-            throw CalendarError.unavailable
         } catch {
+            if APIError.isCancellation(error) { throw CancellationError() }
+            // A 503 from an intermediary can have a different body than the API schema.
+            if (error as? ClientError)?.response?.status.code == 503 { throw CalendarError.unavailable }
             throw CalendarError.wrap(error)
         }
+    }
+}
+
+/// Decode the page metadata strictly and recover from malformed individual instances.
+struct CalendarInstancesWire: Codable, Hashable, Sendable {
+    let enabled: Bool
+    let groups: [Components.Schemas.CalendarGroup]
+    let instances: [Components.Schemas.CalendarExpandedInstance]
+    let truncated: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled, groups, instances, truncated
+    }
+
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try values.decode(Bool.self, forKey: .enabled)
+        groups = try values.decode([Components.Schemas.CalendarGroup].self, forKey: .groups)
+        truncated = try values.decode(Bool.self, forKey: .truncated)
+
+        var rows = try values.nestedUnkeyedContainer(forKey: .instances)
+        var instances: [Components.Schemas.CalendarExpandedInstance] = []
+        while !rows.isAtEnd {
+            // Take the row's decoder first so the array advances even if the row fails.
+            let row = try rows.superDecoder()
+            if let instance = try? Components.Schemas.CalendarExpandedInstance(from: row) {
+                instances.append(instance)
+            }
+        }
+        self.instances = instances
     }
 }
 
@@ -43,11 +73,11 @@ struct CalendarExpandedInstanceWire: Codable, Hashable, Sendable {
     private let group: String
     private let summary: String
     private let location: String
-    private let start: CalendarWireTime?
-    private let end: CalendarWireTime?
+    private let start: CalendarWireTime
+    private let end: CalendarWireTime
     private let allDay: Bool
     private let status: Status
-    private let recurrenceId: CalendarWireTime?
+    private let recurrenceId: CalendarWireTime
 
     private enum CodingKeys: String, CodingKey {
         case instanceId = "instance_id"
@@ -60,27 +90,28 @@ struct CalendarExpandedInstanceWire: Codable, Hashable, Sendable {
 
     init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        guard values.contains(.recurrenceId) else {
-            throw DecodingError.keyNotFound(
-                CodingKeys.recurrenceId,
-                .init(codingPath: values.codingPath, debugDescription: "Missing required recurrence_id")
-            )
-        }
         instanceId = try values.decode(String.self, forKey: .instanceId)
         eventId = try values.decode(String.self, forKey: .eventId)
         revision = try values.decode(Int.self, forKey: .revision)
         group = try values.decode(String.self, forKey: .group)
         summary = try values.decode(String.self, forKey: .summary)
         location = try values.decode(String.self, forKey: .location)
-        start = try? values.decode(CalendarWireTime.self, forKey: .start)
-        end = try? values.decode(CalendarWireTime.self, forKey: .end)
+        start = try values.decode(CalendarWireTime.self, forKey: .start)
+        end = try values.decode(CalendarWireTime.self, forKey: .end)
+        if start == .null || end == .null {
+            let key: CodingKeys = start == .null ? .start : .end
+            throw DecodingError.valueNotFound(
+                CalendarWireTime.self,
+                .init(codingPath: values.codingPath + [key], debugDescription: "Expected a calendar date or time")
+            )
+        }
         allDay = try values.decode(Bool.self, forKey: .allDay)
         status = try values.decode(Status.self, forKey: .status)
-        recurrenceId = try? values.decode(CalendarWireTime.self, forKey: .recurrenceId)
+        recurrenceId = try values.decode(CalendarWireTime.self, forKey: .recurrenceId)
     }
 
     var occurrence: AgendaOccurrence? {
-        guard let start = start?.agendaTime, let end = end?.agendaTime, let recurrenceId,
+        guard let start = start.agendaTime, let end = end.agendaTime,
               recurrenceId == .null || recurrenceId.agendaTime != nil else { return nil }
         return AgendaOccurrence(
             id: instanceId, eventID: eventId, recurrenceID: recurrenceId.rawValue,

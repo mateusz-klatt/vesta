@@ -24,30 +24,37 @@ final class AgendaStore {
     private let calendar: Calendar
     private let now: @MainActor () -> Date
     private let onForbidden: @MainActor () -> Void
+    private let onUnauthorized: @MainActor () -> Void
     private var generation = 0
 
     init(api: any CalendarAPI, calendar: Calendar = .current,
          now: @escaping @MainActor () -> Date = { Date() },
-         onForbidden: @escaping @MainActor () -> Void = {}) {
+         onForbidden: @escaping @MainActor () -> Void = {},
+         onUnauthorized: @escaping @MainActor () -> Void = {}) {
         self.api = api
         self.calendar = calendar
         self.now = now
         self.onForbidden = onForbidden
+        self.onUnauthorized = onUnauthorized
     }
 
     func load() async {
-        guard !isDiscarded else { return }
+        guard !isDiscarded, !Task.isCancelled else { return }
+        let from = calendar.startOfDay(for: now())
+        guard let end = calendar.date(byAdding: .day, value: Self.windowDays, to: from) else { return }
+        let to = calendar.startOfDay(for: end)
         generation += 1
         let generation = generation
         // Pull-to-refresh keeps the current list on screen while it reloads.
         if case .loaded = state {} else { state = .loading }
-        let from = calendar.startOfDay(for: now())
-        let to = calendar.date(byAdding: .day, value: Self.windowDays, to: from)!
         let group = selectedGroup
         do {
             let page = try await api.agenda(from: from, to: to, group: group, timeZone: calendar.timeZone)
-            guard !isDiscarded, generation == self.generation else { return }
+            guard !isDiscarded, generation == self.generation, !Task.isCancelled else { return }
             groups = page.groups
+            if let selectedGroup, !groups.contains(selectedGroup) {
+                self.selectedGroup = nil
+            }
             guard page.enabled else {
                 state = .disabled
                 return
@@ -57,11 +64,12 @@ final class AgendaStore {
             )
             state = .loaded(sections: sections, truncated: page.truncated)
         } catch {
-            guard !isDiscarded else { return }
-            let error = CalendarError.wrap(error)
-            // A denial applies to the whole agenda, even if the requested group changed.
-            guard generation == self.generation || error == .forbidden else { return }
-            switch error {
+            guard !isDiscarded, generation == self.generation, !Task.isCancelled,
+                  !APIError.isCancellation(error) else { return }
+            switch CalendarError.wrap(error) {
+            case .unauthorized:
+                discard()
+                onUnauthorized()
             case .forbidden:
                 discard()
                 onForbidden()

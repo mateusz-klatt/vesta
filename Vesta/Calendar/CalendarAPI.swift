@@ -6,6 +6,7 @@ protocol CalendarAPI: Sendable {
 
 enum CalendarError: Error, Equatable {
     case unavailable
+    case unauthorized
     case forbidden
     case failed(String)
 
@@ -13,6 +14,7 @@ enum CalendarError: Error, Equatable {
         if let calendar = error as? CalendarError { return calendar }
         switch APIError.wrap(error) {
         case .http(503): return .unavailable
+        case .unauthorized, .http(401): return .unauthorized
         case .forbidden, .http(403): return .forbidden
         case let apiError: return .failed(apiError.errorDescription ?? apiError.localizedDescription)
         }

@@ -136,7 +136,9 @@ struct AgendaDay: Identifiable, Hashable, Sendable {
     static func sections(for occurrences: [AgendaOccurrence], from: Date, days: Int,
                          calendar: Calendar) -> [AgendaDay] {
         let windowStart = calendar.startOfDay(for: from)
-        guard days > 0, let windowEnd = calendar.date(byAdding: .day, value: days, to: windowStart) else { return [] }
+        guard days > 0, let end = calendar.date(byAdding: .day, value: days, to: windowStart) else { return [] }
+        // Day arithmetic can carry forward a 01:00 start when local midnight is skipped.
+        let windowEnd = calendar.startOfDay(for: end)
         var itemsByDay: [Date: [AgendaOccurrence]] = [:]
 
         func add(_ occurrence: AgendaOccurrence, start: Date, end: Date) {
@@ -154,7 +156,7 @@ struct AgendaDay: Identifiable, Hashable, Sendable {
             while day < clippedEnd {
                 itemsByDay[day, default: []].append(occurrence)
                 guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
-                day = next
+                day = calendar.startOfDay(for: next)
             }
         }
 

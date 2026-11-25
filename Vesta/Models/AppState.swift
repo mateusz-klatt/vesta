@@ -169,12 +169,16 @@ final class AppState {
     func makeAgendaStore(calendar: Calendar = .current) -> AgendaStore? {
         guard phase == .ready, let api = calendarAPI else { return nil }
         closeAgenda()
-        let store = AgendaStore(api: api, calendar: calendar, onForbidden: { [weak self] in
-            guard let self else { return }
-            closeAgenda()
-            // The discarded sheet handles the denial locally. Refresh the shared grants.
-            _ = beginCapabilityRefresh(source: .denial)
-        })
+        let store = AgendaStore(
+            api: api, calendar: calendar,
+            onForbidden: { [weak self] in
+                guard let self else { return }
+                closeAgenda()
+                // The discarded sheet handles the denial locally. Refresh the shared grants.
+                _ = beginCapabilityRefresh(source: .denial)
+            },
+            onUnauthorized: { [weak self] in self?.invalidateSession() }
+        )
         activeAgendaStore = store
         return store
     }
