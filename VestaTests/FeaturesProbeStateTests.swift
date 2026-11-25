@@ -106,6 +106,28 @@ final class FeaturesProbeStateTests: XCTestCase {
         XCTAssertNotNil(app.calendarAPI)
     }
 
+    func testForbiddenCapabilityRefreshPublishesFeatureRemoval() async {
+        let mock = MockHestiaAPI()
+        await mock.setFeatures(expandedFeatures)
+        await mock.setCapabilities(Capabilities(user: "viewer", installation: [.calendarView]))
+        let app = makeApp(mock)
+        await app.connect()
+        XCTAssertEqual(app.serverFeatures, expandedFeatures)
+        XCTAssertNotNil(app.calendarAPI)
+
+        await mock.setFeatures(modernFeatures)
+        await mock.setCapabilitiesError(.forbidden)
+        await app.refresh()
+
+        XCTAssertEqual(app.serverFeatures, modernFeatures)
+        XCTAssertNil(app.capabilities)
+        XCTAssertNil(app.calendarAPI)
+        XCTAssertEqual(app.phase, .ready)
+        XCTAssertEqual(app.notice, .forbidden)
+        let requests = await mock.capabilityRequests
+        XCTAssertEqual(requests.map(\.features), [expandedFeatures, modernFeatures])
+    }
+
     func testProbeTransportErrorFailsInitialConnectAndPreservesReadyAuthorizationDuringPull() async {
         let mock = MockHestiaAPI()
         let app = makeApp(mock)

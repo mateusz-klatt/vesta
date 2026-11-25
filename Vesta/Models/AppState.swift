@@ -434,7 +434,7 @@ final class AppState {
             case .unauthorized:
                 invalidateSession(features: features)
             case .forbidden:
-                publishAuthorization(features: serverFeatures, capabilities: nil)
+                publishAuthorization(features: features, capabilities: nil)
                 if phase == .connecting {
                     phase = .failed(.forbidden)
                 } else {

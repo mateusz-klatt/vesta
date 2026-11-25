@@ -32,7 +32,7 @@ enum HTTPSession {
     }
 }
 
-private final class FeaturesProbeDelegate: NSObject, URLSessionTaskDelegate {
+final class FeaturesProbeDelegate: NSObject, URLSessionTaskDelegate {
     func urlSession(
         _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
         newRequest request: URLRequest

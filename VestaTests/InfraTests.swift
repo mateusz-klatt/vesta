@@ -268,6 +268,58 @@ final class HTTPSessionTests: XCTestCase {
         XCTAssertNil(configuration.urlCache)
     }
 
+    func testFeaturesProbeRejectsRedirects() async throws {
+        let session = HTTPSession.featuresProbe
+        let delegate = try XCTUnwrap(session.delegate as? FeaturesProbeDelegate)
+        let url = try XCTUnwrap(URL(string: "https://hestia.example/api/auth/features"))
+        let task = session.dataTask(with: url)
+        defer { task.cancel() }
+        let location = "https://hestia.example/api/whoami"
+        let response = try XCTUnwrap(HTTPURLResponse(
+            url: url, statusCode: 307, httpVersion: nil, headerFields: ["Location": location]
+        ))
+        let redirect = URLRequest(url: try XCTUnwrap(URL(string: location)))
+        let result = await delegate.urlSession(session, task: task, willPerformHTTPRedirection: response,
+                                               newRequest: redirect)
+        XCTAssertNil(result)
+    }
+
+    func testFeaturesProbeOnlyAllowsDefaultServerTrustHandling() async throws {
+        let session = HTTPSession.featuresProbe
+        let delegate = try XCTUnwrap(session.delegate as? FeaturesProbeDelegate)
+        let url = try XCTUnwrap(URL(string: "https://hestia.example/api/auth/features"))
+        let task = session.dataTask(with: url)
+        defer { task.cancel() }
+
+        let cases: [(String, URLSession.AuthChallengeDisposition)] = [
+            (NSURLAuthenticationMethodHTTPBasic, .rejectProtectionSpace),
+            (NSURLAuthenticationMethodHTTPDigest, .rejectProtectionSpace),
+            (NSURLAuthenticationMethodClientCertificate, .rejectProtectionSpace),
+            (NSURLAuthenticationMethodServerTrust, .performDefaultHandling),
+        ]
+        for (method, expected) in cases {
+            let protectionSpace = URLProtectionSpace(
+                host: "hestia.example", port: 443, protocol: "https", realm: nil, authenticationMethod: method
+            )
+            let challenge = URLAuthenticationChallenge(
+                protectionSpace: protectionSpace, proposedCredential: nil, previousFailureCount: 0,
+                failureResponse: nil, error: nil, sender: ProbeChallengeSender()
+            )
+            let (sessionDisposition, sessionCredential) = await delegate.urlSession(session, didReceive: challenge)
+            let (taskDisposition, taskCredential) = await delegate.urlSession(session, task: task, didReceive: challenge)
+            XCTAssertEqual(sessionDisposition, expected, method)
+            XCTAssertEqual(taskDisposition, expected, method)
+            XCTAssertNil(sessionCredential, method)
+            XCTAssertNil(taskCredential, method)
+        }
+    }
+
+    private final class ProbeChallengeSender: NSObject, URLAuthenticationChallengeSender {
+        func use(_ credential: URLCredential, for challenge: URLAuthenticationChallenge) {}
+        func continueWithoutCredential(for challenge: URLAuthenticationChallenge) {}
+        func cancel(_ challenge: URLAuthenticationChallenge) {}
+    }
+
     func testRedirectsStayOnOriginAndReceiptRequestsNeverRedirect() async throws {
         let session = HTTPSession.shared
         let delegate = try XCTUnwrap(session.delegate as? HestiaRedirectDelegate)
