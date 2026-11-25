@@ -17,15 +17,20 @@ struct QRScannerView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var access: CameraAccess = .checking
 
+    static var isSupported: Bool { DataScannerViewController.isSupported }
+
+    private let fallbackMessage: LocalizedStringResource?
     private let onPayload: @MainActor (String) -> Void
     private let cameraAccess: @MainActor () async -> CameraAccess
     private let makeScanner: @MainActor (@escaping ScanHandler) -> AnyView
 
-    init(onPayload: @escaping @MainActor (String) -> Void,
+    init(fallbackMessage: LocalizedStringResource? = nil,
+         onPayload: @escaping @MainActor (String) -> Void,
          cameraAccess: @escaping @MainActor () async -> CameraAccess = Self.currentCameraAccess,
          makeScanner: @escaping @MainActor (@escaping ScanHandler) -> AnyView = {
              AnyView(VisionKitQRScanner(onResult: $0))
          }) {
+        self.fallbackMessage = fallbackMessage
         self.onPayload = onPayload
         self.cameraAccess = cameraAccess
         self.makeScanner = makeScanner
@@ -47,14 +52,16 @@ struct QRScannerView: View {
                 ContentUnavailableView {
                     Image(systemName: "camera.fill")
                 } description: {
-                    Text("Camera access is off. Allow access in Settings to scan a sign-in code.")
+                    Text(fallbackMessage ?? "Camera access is off. Allow access in Settings to scan a sign-in code.")
                 } actions: {
                     Button("Open Settings") {
                         if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
                     }
                 }
             case .unavailable:
-                ContentUnavailableView("QR scanning is unavailable.", systemImage: "camera.fill")
+                ContentUnavailableView {
+                    Label(fallbackMessage ?? "QR scanning is unavailable.", systemImage: "camera.fill")
+                }
             }
         }
         .task(id: scenePhase) {
@@ -74,7 +81,7 @@ struct QRScannerView: View {
         case .denied:
             return .denied
         case .notDetermined:
-            guard DataScannerViewController.isSupported else { return .unavailable }
+            guard isSupported else { return .unavailable }
             guard await AVCaptureDevice.requestAccess(for: .video) else { return .denied }
         case .authorized:
             break
@@ -83,7 +90,7 @@ struct QRScannerView: View {
         @unknown default:
             return .unavailable
         }
-        return DataScannerViewController.isSupported && DataScannerViewController.isAvailable ? .available : .unavailable
+        return isSupported && DataScannerViewController.isAvailable ? .available : .unavailable
     }
 }
 

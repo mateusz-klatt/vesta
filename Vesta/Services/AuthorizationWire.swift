@@ -31,7 +31,7 @@ struct AuthFeaturesWire: Codable, Hashable, Sendable {
         return ServerFeatures(
             authContract: authContract,
             features: Set(features.compactMap(ServerFeature.init(rawValue:))),
-            qrOrigin: qrOrigin.flatMap { URL(string: $0) },
+            qrOrigin: qrOrigin.flatMap { QRLoginPayload.canonicalOrigin($0[...]) },
             isLegacy: false
         )
     }

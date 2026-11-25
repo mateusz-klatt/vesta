@@ -312,7 +312,11 @@ final class ReceiptPairing {
 
     private func schedulePendingRevocationRetry(interruptedOnly: Bool = false) {
         guard !isRetryingPendingRevocations, !isPairing,
-              var pending = try? store.loadPendingRevocations() else { return }
+              var pending = pendingRevocationsRequiringCleanup() else { return }
+        guard !pending.isEmpty else {
+            revocationNotice = nil
+            return
+        }
         if interruptedOnly {
             guard let active = try? store.load(), sessionStore != nil,
                   !isBound(active, to: sessionStore?.currentSnapshot()) else { return }
@@ -348,8 +352,17 @@ final class ReceiptPairing {
     }
 
     private func updateRevocationNotice() {
-        guard let pending = try? store.loadPendingRevocations() else { return }
+        guard let pending = pendingRevocationsRequiringCleanup() else { return }
         revocationNotice = pending.isEmpty ? nil : Self.failedRevocationNotice
+    }
+
+    private func pendingRevocationsRequiringCleanup() -> [StoredReceiptDeviceToken]? {
+        guard let pending = try? store.loadPendingRevocations() else { return nil }
+        guard !pending.isEmpty, let sessionStore, let active = try? store.load(),
+              isBound(active, to: sessionStore.currentSnapshot()) else { return pending }
+        // Staging is durable before the session write. Until the old binding is
+        // gone, its active credential still belongs to the current session.
+        return pending.filter { !active.matchesBearer($0) }
     }
 
     private static func revocationCompleted(_ error: any Error) -> Bool {

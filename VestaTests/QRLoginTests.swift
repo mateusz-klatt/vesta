@@ -206,6 +206,8 @@ final class QRLoginTests: XCTestCase {
         MockQRLoginURLProtocol.install([
             .init(429, body, headers: ["Retry-After": "30"]),
             .init(429, body, headers: ["Retry-After": "Thu, 01 Jan 1970 00:00:45 GMT"]),
+            .init(429, body, headers: ["Retry-After": "Thursday, 01-Jan-70 00:01:00 GMT"]),
+            .init(429, body, headers: ["Retry-After": "Thu Jan  1 00:01:15 1970"]),
             .success,
         ], at: origin)
         MockQRLoginURLProtocol.install([.success], at: otherOrigin)
@@ -213,24 +215,84 @@ final class QRLoginTests: XCTestCase {
             MockQRLoginURLProtocol.remove(at: origin)
             MockQRLoginURLProtocol.remove(at: otherOrigin)
         }
-        let clock = OSAllocatedUnfairLock(initialState: Date(timeIntervalSince1970: 0))
+        let clock = QRRetryTestClock()
         let session = Self.mockSession(for: HTTPSession.qrRedeem)
         defer { session.invalidateAndCancel() }
-        let api = QRLoginAPI(session: session, now: { clock.withLock { $0 } })
+        let api = clock.makeAPI(session: session)
 
         await assertRedeemFails(api, at: origin, with: .rateLimited(retryAfter: 30))
-        clock.withLock { $0.addTimeInterval(10) }
+        clock.advance(by: 10)
         await assertRedeemFails(api, at: origin, with: .rateLimited(retryAfter: 20))
         XCTAssertEqual(MockQRLoginURLProtocol.requestedPaths(at: origin).count, 1)
         _ = try await api.redeem(origin: otherOrigin, code: fakeQRCode)
 
-        clock.withLock { $0.addTimeInterval(20) }
+        clock.advance(by: 20)
         await assertRedeemFails(api, at: origin, with: .rateLimited(retryAfter: 15))
         await assertRedeemFails(api, at: origin, with: .rateLimited(retryAfter: 15))
         XCTAssertEqual(MockQRLoginURLProtocol.requestedPaths(at: origin).count, 2)
-        clock.withLock { $0.addTimeInterval(15) }
+        clock.advance(by: 15)
+        await assertRedeemFails(api, at: origin, with: .rateLimited(retryAfter: 15))
+        clock.advance(by: 15)
+        await assertRedeemFails(api, at: origin, with: .rateLimited(retryAfter: 15))
+        clock.advance(by: 15)
         _ = try await api.redeem(origin: origin, code: fakeQRCode)
-        XCTAssertEqual(MockQRLoginURLProtocol.requestedPaths(at: origin).count, 3)
+        XCTAssertEqual(MockQRLoginURLProtocol.requestedPaths(at: origin).count, 5)
+    }
+
+    func testRedeemClampsOversizedRetryAfterToFifteenMinutes() async throws {
+        let origin = URL(string: "https://hestia.example:13443")!
+        let body = #"{"error":{"code":"qr_rate_limited"}}"#
+        let headers = [
+            String(UInt64.max),
+            "18446744073709551616", // Valid decimal digits beyond UInt64.
+            "1760000000", // Unix timestamp in seconds.
+            "1760000000000", // Unix timestamp in milliseconds.
+            "Fri, 31 Dec 9999 23:59:59 GMT",
+        ]
+        MockQRLoginURLProtocol.install(headers.flatMap { [
+            .init(429, body, headers: ["Retry-After": $0]), .success,
+        ] }, at: origin)
+        defer { MockQRLoginURLProtocol.remove(at: origin) }
+        let session = Self.mockSession(for: HTTPSession.qrRedeem)
+        defer { session.invalidateAndCancel() }
+        let clock = QRRetryTestClock()
+        let api = clock.makeAPI(session: session)
+
+        for index in headers.indices {
+            await assertRedeemFails(api, at: origin, with: .rateLimited(retryAfter: 900))
+            clock.advance(by: 899)
+            await assertRedeemFails(api, at: origin, with: .rateLimited(retryAfter: 1))
+            XCTAssertEqual(MockQRLoginURLProtocol.requestedPaths(at: origin).count, 2 * index + 1)
+            clock.advance(by: 1)
+            _ = try await api.redeem(origin: origin, code: fakeQRCode)
+        }
+
+        let oversized = QRLoginError.rateLimited(retryAfter: TimeInterval(UInt64.max))
+        let generic = QRLoginError.rateLimited(retryAfter: nil)
+        XCTAssertEqual(oversized.errorDescription, generic.errorDescription)
+    }
+
+    func testRedeemTreatsInvalidOrZeroRetryAfterAsNoCooldown() async throws {
+        let origin = URL(string: "https://hestia.example:14443")!
+        let body = #"{"error":{"code":"qr_rate_limited"}}"#
+        let cases: [(header: String, delay: TimeInterval?)] = [
+            ("Mon, 30 Feb 1970 00:00:30 GMT", nil),
+            ("0", 0),
+            ("-1", nil),
+            ("soon", nil),
+        ]
+        let replies = cases.map { MockQRLoginURLProtocol.Reply(429, body, headers: ["Retry-After": $0.header]) }
+        MockQRLoginURLProtocol.install(replies + [.success], at: origin)
+        defer { MockQRLoginURLProtocol.remove(at: origin) }
+        let session = Self.mockSession(for: HTTPSession.qrRedeem)
+        defer { session.invalidateAndCancel() }
+        let api = QRRetryTestClock().makeAPI(session: session)
+
+        for fixture in cases {
+            await assertRedeemFails(api, at: origin, with: .rateLimited(retryAfter: fixture.delay))
+        }
+        _ = try await api.redeem(origin: origin, code: fakeQRCode)
+        XCTAssertEqual(MockQRLoginURLProtocol.requestedPaths(at: origin).count, cases.count + 1)
     }
 
     func testRedeemRejectsInsecureOrNonOriginURLBeforeSendingCode() async {
@@ -259,6 +321,23 @@ final class QRLoginTests: XCTestCase {
         let configuration = production.configuration
         configuration.protocolClasses = [MockQRLoginURLProtocol.self]
         return URLSession(configuration: configuration, delegate: production.delegate, delegateQueue: nil)
+    }
+}
+
+private final class QRRetryTestClock: Sendable {
+    private let elapsed = OSAllocatedUnfairLock(initialState: TimeInterval.zero)
+    private let start = ContinuousClock.now
+
+    func advance(by seconds: TimeInterval) {
+        elapsed.withLock { $0 += seconds }
+    }
+
+    func makeAPI(session: URLSession) -> QRLoginAPI {
+        QRLoginAPI(session: session, now: {
+            Date(timeIntervalSince1970: self.elapsed.withLock { $0 })
+        }, monotonicNow: {
+            self.start.advanced(by: .seconds(self.elapsed.withLock { $0 }))
+        })
     }
 }
 

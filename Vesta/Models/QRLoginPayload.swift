@@ -41,7 +41,7 @@ struct QRLoginPayload: Equatable, Sendable {
         var canonical = scheme + host.lowercased()
         if !port.isEmpty {
             let digits = port.dropFirst()
-            guard port.first == ":", digits.first != "0", digits.utf8.allSatisfy(isDigit),
+            guard port.first == ":", !digits.isEmpty, digits.first != "0", digits.utf8.allSatisfy(isDigit),
                   let number = UInt16(digits), number > 0 else { return nil }
             if number != 443 { canonical += ":\(number)" }
         }

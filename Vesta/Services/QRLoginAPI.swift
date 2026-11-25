@@ -20,6 +20,9 @@ private struct QRLoginErrorResponse: Codable {
     let error: Detail
 }
 
+// A server can delay QR redemption for at most 15 minutes per response.
+private let maximumQRRetryDelay: TimeInterval = 900
+
 enum QRLoginError: LocalizedError, Equatable, Sendable {
     case unsupported
     case ambiguousAuth
@@ -38,7 +41,7 @@ enum QRLoginError: LocalizedError, Equatable, Sendable {
         case .ambiguousAuth: "Hestia refused the sign-in request."
         case .originMismatch: "This code is for a different server."
         case .invalidCode: "This code is invalid or has expired. Scan a new one."
-        case .rateLimited(let delay?) where delay > 0:
+        case .rateLimited(let delay?) where delay > 0 && delay <= maximumQRRetryDelay:
             "Too many sign-in attempts. Try again in \(Self.localizedDelay(delay, locale: locale))."
         case .rateLimited: "Too many sign-in attempts. Try again later."
         case .originUnavailable: APIError.cannotConnect.message
@@ -55,20 +58,26 @@ enum QRLoginError: LocalizedError, Equatable, Sendable {
 actor QRLoginAPI {
     private let session: URLSession
     private let now: @Sendable () -> Date
-    private var retryDeadlines: [URL: Date] = [:]
+    private let monotonicNow: @Sendable () -> ContinuousClock.Instant
+    private var retryDeadlines: [URL: ContinuousClock.Instant] = [:]
 
-    init(session: URLSession = HTTPSession.qrRedeem, now: @escaping @Sendable () -> Date = { .now }) {
+    init(session: URLSession = HTTPSession.qrRedeem,
+         now: @escaping @Sendable () -> Date = { .now },
+         monotonicNow: @escaping @Sendable () -> ContinuousClock.Instant = { .now }) {
         self.session = session
         self.now = now
+        self.monotonicNow = monotonicNow
     }
 
     func redeem(origin: URL, code: String) async throws -> QRLoginResponse {
         try Task.checkCancellation()
         guard QRLoginPayload.canonicalOrigin(origin.absoluteString[...]) == origin else { throw QRLoginError.originMismatch }
+        let requestedAt = monotonicNow()
+        retryDeadlines = retryDeadlines.filter { $0.value > requestedAt }
         if let deadline = retryDeadlines[origin] {
-            let delay = deadline.timeIntervalSince(now())
-            guard delay <= 0 else { throw QRLoginError.rateLimited(retryAfter: delay) }
-            retryDeadlines[origin] = nil
+            let remaining = requestedAt.duration(to: deadline).components
+            let delay = TimeInterval(remaining.seconds) + TimeInterval(remaining.attoseconds) / 1e18
+            throw QRLoginError.rateLimited(retryAfter: delay)
         }
 
         var request = URLRequest(url: origin.appending(path: "/api/auth/qr-redeem"))
@@ -103,10 +112,11 @@ actor QRLoginAPI {
         case (400, "qr_origin_mismatch"): throw QRLoginError.originMismatch
         case (401, "qr_code_invalid"): throw QRLoginError.invalidCode
         case (429, _):
-            let receivedAt = now()
-            let delay = Self.retryAfter(http.value(forHTTPHeaderField: "Retry-After"), now: receivedAt)
+            let receivedAt = monotonicNow()
+            let delay = Self.retryAfter(http.value(forHTTPHeaderField: "Retry-After"), now: now())
             if let delay, delay > 0 {
-                retryDeadlines[origin] = max(retryDeadlines[origin] ?? receivedAt, receivedAt.addingTimeInterval(delay))
+                let deadline = receivedAt.advanced(by: .seconds(delay))
+                retryDeadlines[origin] = max(retryDeadlines[origin] ?? receivedAt, deadline)
             }
             throw QRLoginError.rateLimited(retryAfter: delay)
         case (503, "auth_origin_unavailable"): throw QRLoginError.originUnavailable
@@ -116,18 +126,29 @@ actor QRLoginAPI {
 
     private static func retryAfter(_ header: String?, now: Date) -> TimeInterval? {
         guard let value = header?.trimmingCharacters(in: .whitespaces), !value.isEmpty else { return nil }
-        if value.utf8.allSatisfy({ (0x30...0x39).contains($0) }), let seconds = UInt64(value) {
-            return TimeInterval(seconds)
+        if value.utf8.allSatisfy({ (0x30...0x39).contains($0) }) {
+            return min(TimeInterval(UInt64(value) ?? .max), maximumQRRetryDelay)
         }
 
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.isLenient = false
         // HTTP-date uses IMF-fixdate and accepts the two historical formats.
-        for format in ["EEE, dd MMM yyyy HH:mm:ss 'GMT'", "EEEE, dd-MMM-yy HH:mm:ss 'GMT'", "EEE MMM d HH:mm:ss yyyy"] {
+        let formats = [
+            "EEE, dd MMM yyyy HH:mm:ss 'GMT'",
+            "EEEE, dd-MMM-yy HH:mm:ss 'GMT'",
+            "EEE MMM dd HH:mm:ss yyyy",
+            "EEE MMM  d HH:mm:ss yyyy",
+            "EEE MMM d HH:mm:ss yyyy",
+        ]
+        for format in formats {
             formatter.dateFormat = format
-            if let date = formatter.date(from: value) { return max(0, date.timeIntervalSince(now)) }
+            // Reject normalized invalid dates and inputs that only parse partially.
+            if let date = formatter.date(from: value), formatter.string(from: date) == value {
+                return min(max(0, date.timeIntervalSince(now)), maximumQRRetryDelay)
+            }
         }
         return nil
     }

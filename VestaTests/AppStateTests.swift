@@ -1847,6 +1847,48 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(fixture.app.phase, .ready)
     }
 
+    func testQRSignOutDuringRedeemCannotCommitLateSuccess() async throws {
+        let payload = try QRFixture.payload()
+        for resetSucceeds in [true, false] {
+            let fixture = try QRFixture(oldOrigin: QRFixture.other)
+            let oldFeatures = ServerFeatures(authContract: 2, features: [.capabilities], qrOrigin: nil, isLegacy: false)
+            let oldCapabilities = Capabilities(user: "qr-user")
+            await fixture.mock.setFeatures(oldFeatures)
+            await fixture.mock.setCapabilities(oldCapabilities)
+            await fixture.app.bootstrap()
+            let previousRecord = fixture.store.backendURLStore.loadOverrideRecord()
+            let previousKeychain = fixture.keychain.storedData(for: .authoritative)
+            let mutationsBeforeSignOut = fixture.keychain.mutations.count
+            if !resetSucceeds { fixture.keychain.failNext(.delete(.authoritative)) }
+            await fixture.permitQR()
+            await fixture.redeem.holdNext()
+
+            let signIn = Task { try await fixture.app.signIn(with: payload) }
+            defer { Task { await fixture.redeem.release() } }
+            try await waitUntil("the QR redeem request") { await fixture.redeem.isHeld }
+            let didReset = await fixture.app.signOut()
+            XCTAssertEqual(didReset, resetSucceeds)
+            let signedOutRecord = fixture.store.backendURLStore.loadOverrideRecord()
+            let mutationsAfterSignOut = fixture.keychain.mutations
+            await fixture.redeem.release()
+            do {
+                try await signIn.value
+                XCTFail("Expected sign-out to cancel the in-flight sign-in")
+            } catch is CancellationError {}
+
+            XCTAssertEqual(fixture.keychain.mutations, mutationsAfterSignOut)
+            XCTAssertEqual(Array(mutationsAfterSignOut.dropFirst(mutationsBeforeSignOut)),
+                           [.delete(.legacy), .delete(.authoritative)])
+            XCTAssertEqual(fixture.store.currentSnapshot(), resetSucceeds ? nil : fixture.previous)
+            XCTAssertEqual(fixture.keychain.storedData(for: .authoritative), resetSucceeds ? nil : previousKeychain)
+            XCTAssertEqual(fixture.store.backendURLStore.loadOverrideRecord(), resetSucceeds ? signedOutRecord : previousRecord)
+            XCTAssertEqual(fixture.app.savedBackendOverride, QRFixture.other)
+            XCTAssertEqual(fixture.app.serverFeatures, oldFeatures)
+            XCTAssertEqual(fixture.app.capabilities, resetSucceeds ? nil : oldCapabilities)
+            XCTAssertEqual(fixture.app.phase, resetSucceeds ? .needsAuth : .ready)
+        }
+    }
+
     func testCompetingPasswordAndQRLoginCommitsLatestWinner() async throws {
         let payload = try QRFixture.payload()
         for qrWins in [true, false] {
@@ -1999,5 +2041,37 @@ final class AppStateTests: XCTestCase {
             XCTAssertEqual(fixture.store.currentSnapshot()?.origin, QRFixture.target)
             XCTAssertEqual(fixture.store.currentSnapshot()?.token, QRFixture.success.token)
         }
+    }
+
+    func testQRFailedAuthoritativeWriteDoesNotWarnAboutStillBoundReceiptDevice() async throws {
+        let fixture = try QRFixture(oldOrigin: QRFixture.other, codePaired: true)
+        await fixture.mock.setCapabilities(Capabilities(user: "qr-user"))
+        await fixture.app.bootstrap()
+        let active = try XCTUnwrap(fixture.devices.load())
+        let pairing = fixture.app.receiptPairing
+        fixture.keychain.failNext(.write(.authoritative))
+        await fixture.permitQR()
+
+        do {
+            try await fixture.app.signIn(with: QRFixture.payload())
+            XCTFail("Expected credential storage to fail")
+        } catch let error as APIError {
+            XCTAssertEqual(error, .credentialStorage)
+        }
+
+        pairing.refreshStatus()
+        XCTAssertNil(pairing.revocationNotice)
+        XCTAssertEqual(pairing.credential(for: QRFixture.other), active)
+        XCTAssertEqual(fixture.devices.pending, [active])
+
+        let detached = StoredReceiptDeviceToken(server: QRFixture.target, credential: fakeDeviceToken)
+        try fixture.devices.savePendingRevocations([active, detached])
+        pairing.refreshStatus()
+        XCTAssertNotNil(pairing.revocationNotice)
+        try await waitUntil("the detached token to be revoked without warning about the active token") {
+            fixture.devices.pending == [active] && pairing.revocationNotice == nil
+        }
+        let revocations = await fixture.pairingAPI.revocations
+        XCTAssertEqual(revocations, [.init(token: fakeDeviceToken, origin: QRFixture.target)])
     }
 }
