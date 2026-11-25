@@ -425,10 +425,12 @@ final class AppState {
         }
         guard isCurrentLogin(attempt, generation: generation, origin: origin) else { return }
 
-        let oldSession = sessionStore.currentSnapshot()
+        let oldSession: BoundSession?
         var stagedDevice: StoredReceiptDeviceToken?
         let committed: BoundSession
         do {
+            if retryInvalidation { try clearInvalidatedSession() }
+            oldSession = sessionStore.currentSnapshot()
             committed = try sessionStore.commitAuthoritative(origin: origin, actor: actor, token: token) { replacement in
                 stagedDevice = try receiptPairing.prepareForLogin(from: oldSession, to: replacement)
             }
@@ -439,7 +441,6 @@ final class AppState {
         sessionGeneration += 1
         let committedGeneration = sessionGeneration
         needsSessionRestore = false
-        retryInvalidation = false
         if rejectedLegacyBearer {
             retryMigrationCleanup = sessionStore.retryLegacyMigrationCleanup()
             rejectedLegacyBearer = false
@@ -551,7 +552,7 @@ final class AppState {
 
     private func invalidateSession(features: ServerFeatures? = nil) {
         do {
-            try sessionStore.clearAuthoritative()
+            try clearInvalidatedSession()
         } catch {
             sessionStore.discardSnapshot()
             retryInvalidation = true
@@ -564,6 +565,13 @@ final class AppState {
         if !retryInvalidation { receiptPairing.retryInterruptedDetach() }
     }
 
+    private func clearInvalidatedSession() throws {
+        try sessionStore.clearAuthoritative { old in
+            try receiptPairing.prepareCodeReauthentication(from: old)
+        }
+        retryInvalidation = false
+    }
+
     private func reportSessionStorageFailure(_ error: any Error) {
         let failure = APIError.wrap(error)
         sessionStorageError = failure
@@ -572,10 +580,7 @@ final class AppState {
 
     private func retrySessionPersistence() {
         if retryInvalidation {
-            do {
-                try sessionStore.clearAuthoritative()
-                retryInvalidation = false
-            } catch { return }
+            try? clearInvalidatedSession()
         } else if retryMigrationCleanup {
             retryMigrationCleanup = sessionStore.retryLegacyMigrationCleanup()
         }
