@@ -27,6 +27,15 @@ home data (devices, rooms, temperatures, etc.) lives on that server, which you o
 the person who set it up control. Vesta sends commands to, and reads status from,
 that server and nowhere else.
 
+## Signing in with a QR code
+
+If your hestia server offers QR sign-in, Vesta can use the camera to scan the
+sign-in code your server shows in its web interface. The camera frames are read
+**only on your device** and are not saved or uploaded. Before contacting a
+server Vesta hasn't used before, it shows you the address from the code and
+asks you to confirm. Only the code is then sent, and only to that server. The
+resulting sign-in token is kept in the device-only iOS Keychain.
+
 ## Receipts (optional)
 
 If your hestia server has its budget module and receipts turned on, an account
