@@ -921,7 +921,7 @@ final class AppState {
             guard let fence = await refresh.task.value, let self, isCurrent(fence),
                   lifecycle == lifecycleGeneration else { return }
             if canViewIOC { startEvents() }
-            try? await exchangeDeviceToken(reason: .automatic)
+            try? await exchangeDeviceToken(reason: .refresh)
         }
     }
 
@@ -937,7 +937,7 @@ final class AppState {
         guard let refresh = beginCapabilityRefresh(source: .userPull), let fence = await refresh.task.value,
               isCurrent(fence), matchesRefresh(refresh.snapshot) else { return }
         if !canViewIOC {
-            try? await exchangeDeviceToken(reason: .automatic)
+            try? await exchangeDeviceToken(reason: .refresh)
             return
         }
         guard await loadDiscovery() == .loaded, isCurrentDiscovery(fence.discovery) else { return }
@@ -950,7 +950,7 @@ final class AppState {
             break
         }
         guard isCurrent(fence), matchesRefresh(refresh.snapshot) else { return }
-        try? await exchangeDeviceToken(reason: .automatic)
+        try? await exchangeDeviceToken(reason: .refresh)
     }
 
     @discardableResult

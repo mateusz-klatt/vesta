@@ -4896,7 +4896,7 @@
                 }
               }
             },
-            "description": "missing, stale, or non-native session"
+            "description": "missing, stale, or non-native session (native_session_required)"
           },
           "403": {
             "content": {
@@ -4908,6 +4908,26 @@
             },
             "description": "no eligible live receipt/device target"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "Budget or receipt support is disabled"
+          },
+          "408": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "request body read timed out"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -4917,6 +4937,46 @@
               }
             },
             "description": "active slot limit or rejected prior_token proof"
+          },
+          "411": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "Content-Length is required"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "request body exceeds the byte limit"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "Content-Type must be application/json"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "incompatible authorization bridge or unavailable device service"
           }
         },
         "summary": "Exchange a v2 native session for a narrowed receipt/device token",

@@ -74,6 +74,20 @@ struct ExchangedDeviceToken: Equatable, Sendable {
 enum DeviceExchangeError: Error, Equatable {
     case http(status: Int, code: String?)
     case invalidSession
+
+    var isRequestRejection: Bool {
+        switch self {
+        case .http(400, _), .http(411, _), .http(413, _), .http(415, _): true
+        default: false
+        }
+    }
+
+    var rejectedBeforeRotation: Bool {
+        switch self {
+        case .invalidSession, .http(401, _), .http(403, "budget_forbidden"), .http(409, "device_token_limit_reached"): true
+        default: isRequestRejection
+        }
+    }
 }
 
 enum DeviceRevocationError: Error, Equatable {

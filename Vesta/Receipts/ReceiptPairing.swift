@@ -6,7 +6,7 @@ import UIKit
 @Observable
 final class ReceiptPairing {
     enum Status { case notPaired, paired, pairAgain }
-    enum ExchangeReason { case automatic, manual, ceilingExpansion, retired }
+    enum ExchangeReason { case automatic, refresh, manual, ceilingExpansion, retired }
     enum TokenRejection { case retired, rollback }
 
     private enum ExchangeWrite {
@@ -41,6 +41,7 @@ final class ReceiptPairing {
     private var publishedFeatures: ServerFeatures?
     private var publishedCapabilities: Capabilities?
     private var rollbackSession: BoundSession?
+    private var rejectedRequestSession: BoundSession?
     private var exchangeAuthorizationRevision = 0
     private var pairingCancelled = false
     private var detachedRevocations: [StoredReceiptDeviceToken] = []
@@ -93,6 +94,7 @@ final class ReceiptPairing {
             requiresExchangeSignIn = false
             showNewDeviceAlert = false
             rollbackSession = nil
+            rejectedRequestSession = nil
             status = .notPaired
         }
         authorizationSession = session
@@ -515,6 +517,8 @@ extension ReceiptPairing {
         let budgetEligible = NativeBudgetGate.isEligible(enabled: nativeBudgetEnabled, features: publishedFeatures,
                                                          capabilities: capabilities)
         guard capabilities.canUseReceipts || budgetEligible else { return }
+        let retryingRejectedRequest = rejectedRequestSession == session
+        if retryingRejectedRequest, reason != .manual, reason != .refresh { return }
 
         try persistPendingExchangeWrites()
         try reconcileRotation(for: session)
@@ -545,7 +549,8 @@ extension ReceiptPairing {
             prior = try store.loadRollbackQuarantine().last { isBound($0, to: session) }
         }
         if let prior, hasInFlightRevoke(for: prior) { return }
-        if journal == nil, let eligibleActive, eligibleActive.provenance == .exchanged, reason == .automatic,
+        if journal == nil, let eligibleActive, eligibleActive.provenance == .exchanged,
+           !retryingRejectedRequest, reason == .automatic || reason == .refresh,
            try !store.loadRollbackQuarantine().contains(where: eligibleActive.matchesBearer),
            !capabilities.canUseReceipts || eligibleActive.issuedPermissions?.contains(Permission.budgetReceiptsAdd.rawValue) == true,
            !budgetEligible || eligibleActive.issuedPermissions?.contains(Permission.budgetView.rawValue) == true { return }
@@ -582,6 +587,7 @@ extension ReceiptPairing {
             }
 
             let result: ExchangedDeviceToken
+            rejectedRequestSession = nil
             do {
                 result = try await api.exchange(session: session, deviceName: deviceName, priorToken: prior.credential)
             } catch {
@@ -597,6 +603,7 @@ extension ReceiptPairing {
                                          invalidPrior: prior, revision: revision, startingActive: store.load())
                     return
                 }
+                recordRequestRejection(error, session: session)
                 try preserveRotation(after: error, record: record, fromUnknown: isRetry)
                 try reportExchangeError(error, session: session, actor: actor, deviceName: deviceName,
                                         prior: prior, isOwner: knownOwner && (prior.owner ?? actor) == actor)
@@ -630,12 +637,14 @@ extension ReceiptPairing {
                             invalidPrior: StoredReceiptDeviceToken?, revision: Int,
                             startingActive: StoredReceiptDeviceToken?) async throws {
         let result: ExchangedDeviceToken
+        rejectedRequestSession = nil
         do {
             result = try await api.exchange(session: session, deviceName: deviceName, priorToken: nil)
         } catch {
             guard isCurrentExchange(session, revision: revision), try store.load() == startingActive else {
                 throw CancellationError()
             }
+            recordRequestRejection(error, session: session)
             try reportExchangeError(error, session: session, actor: actor, deviceName: deviceName,
                                     prior: invalidPrior, isOwner: isOwner)
             throw error
@@ -729,13 +738,19 @@ extension ReceiptPairing {
     }
 
     private func preserveRotation(after error: any Error, record: RotationJournalRecord, fromUnknown: Bool) throws {
-        switch error as? DeviceExchangeError {
-        case .invalidSession, .http(401, _), .http(403, "budget_forbidden"), .http(409, "device_token_limit_reached"):
-            if !fromUnknown { try removeRotation(record) }
-        default:
-            try saveRotation(record.transitioning(to: .outcomeUnknown))
-            status = .pairAgain
+        // A later rejection or transient failure cannot resolve an earlier ambiguous send.
+        guard !fromUnknown else { return }
+        if (error as? DeviceExchangeError)?.rejectedBeforeRotation == true {
+            try removeRotation(record)
+            return
         }
+        // 404, 408 and 503 after send are transient, as are transport failures.
+        try saveRotation(record.transitioning(to: .outcomeUnknown))
+        status = .pairAgain
+    }
+
+    private func recordRequestRejection(_ error: any Error, session: BoundSession) {
+        if (error as? DeviceExchangeError)?.isRequestRejection == true { rejectedRequestSession = session }
     }
 
     private func reportExchangeError(_ error: any Error, session: BoundSession, actor: String, deviceName: String,

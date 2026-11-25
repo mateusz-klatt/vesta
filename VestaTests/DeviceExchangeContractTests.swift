@@ -8,6 +8,16 @@ private let exchangeOrigin = URL(string: "https://hestia.example:8443")!
 private final class DeviceExchangeURLProtocol: URLProtocol, @unchecked Sendable {
     static let ownerKey = String(repeating: "a", count: 43)
     static let nativeSession = "v2.test.session"
+    static let mergedStatusFixtures: [String: (status: Int, code: String)] = [
+        "invalid-request": (400, "fixture_invalid_request"),
+        "native-session-required": (401, "native_session_required"),
+        "support-disabled": (404, "fixture_support_disabled"),
+        "request-timeout": (408, "fixture_request_timeout"),
+        "length-required": (411, "fixture_length_required"),
+        "body-too-large": (413, "fixture_body_too_large"),
+        "media-type": (415, "fixture_media_type"),
+        "incompatible-bridge": (503, "fixture_incompatible_bridge"),
+    ]
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -41,8 +51,13 @@ private final class DeviceExchangeURLProtocol: URLProtocol, @unchecked Sendable 
                 case "empty-denial":
                     (status, json) = (401, "")
                 default:
-                    XCTFail("Unexpected device name")
-                    (status, json) = (400, "")
+                    if let fixture = Self.mergedStatusFixtures[name] {
+                        XCTAssertEqual(body, ["device_name": name, "prior_token": fakeDeviceToken.token])
+                        (status, json) = (fixture.status, #"{"error":{"code":"\#(fixture.code)"}}"#)
+                    } else {
+                        XCTFail("Unexpected device name")
+                        (status, json) = (400, "")
+                    }
                 }
             case "/api/budget/receipts/device-token/revoke":
                 XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(fakeDeviceToken.token)")
@@ -96,7 +111,7 @@ final class DeviceExchangeContractTests: XCTestCase {
         return GeneratedDevicePairingAPI(session: URLSession(configuration: configuration))
     }
 
-    func testExchangeRCWireCarriesPriorProofOnlyForRotation() async throws {
+    func testExchangeWireCarriesPriorProofOnlyForRotation() async throws {
         let api = makeAPI()
         let rotated = try await api.exchange(session: bound, deviceName: "rotate", priorToken: fakeDeviceToken)
         XCTAssertEqual(rotated.credential.tokenID, fakeDeviceToken.tokenID)
@@ -111,7 +126,7 @@ final class DeviceExchangeContractTests: XCTestCase {
         XCTAssertEqual(fresh.credential.tokenID, "new-token-id")
     }
 
-    func testExchangePreservesStatusAndTrustsOnlyRCNestedConflictCodes() async {
+    func testExchangePreservesStatusAndTrustsOnlyNestedConflictCodes() async {
         let api = makeAPI()
         let cases: [(String, DeviceExchangeError)] = [
             ("prior-invalid", .http(status: 409, code: "device_token_prior_invalid")),
@@ -125,6 +140,18 @@ final class DeviceExchangeContractTests: XCTestCase {
                 XCTFail("Expected exchange error for \(name)")
             } catch {
                 XCTAssertEqual(error as? DeviceExchangeError, expected)
+            }
+        }
+    }
+
+    func testExchangePreservesMergedStatusAndNestedAuthError() async {
+        let api = makeAPI()
+        for (name, fixture) in DeviceExchangeURLProtocol.mergedStatusFixtures {
+            do {
+                _ = try await api.exchange(session: bound, deviceName: name, priorToken: fakeDeviceToken)
+                XCTFail("Expected an exchange error for HTTP \(fixture.status)")
+            } catch {
+                XCTAssertEqual(error as? DeviceExchangeError, .http(status: fixture.status, code: fixture.code))
             }
         }
     }
