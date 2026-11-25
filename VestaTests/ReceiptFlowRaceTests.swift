@@ -45,19 +45,19 @@ final class ReceiptFlowRaceTests: XCTestCase {
     }
 
     func testSendWaitsForCleanupThatProcessesNewDraftsAndDropsConflicts() async {
-        let origin = "https://receipts.example"
+        let scope = ReceiptSessionScope.testScope()
         let janitor = ReceiptDraftJanitor()
         let firstAPI = MockReceiptsAPI()
         await firstAPI.holdNextDelete()
         await firstAPI.failDelete(.api(.offline))
-        await janitor.enqueue(id: "old", version: 1, server: origin)
-        let cleanup = Task { await janitor.drain(using: firstAPI, server: origin) }
+        await janitor.enqueue(.init(id: "old", version: 1, scope: scope))
+        let cleanup = Task { await janitor.drain(using: firstAPI, scope: scope, isScopeCurrent: { $0 == scope }) }
         while await firstAPI.calls.isEmpty { await Task.yield() }
-        await janitor.enqueue(id: "late", version: 2, server: origin)
+        await janitor.enqueue(.init(id: "late", version: 2, scope: scope))
 
         let nextAPI = MockReceiptsAPI()
         await nextAPI.failDelete(.versionConflict)
-        let flow = ReceiptFlow(api: nextAPI, janitor: janitor) { origin }
+        let flow = ReceiptFlow(api: nextAPI, janitor: janitor, scope: scope)
         flow.useText("BIEDRONKA")
         let sending = Task { await flow.send() }
         while !flow.isBusy && flow.step == .edit { await Task.yield() }
@@ -73,6 +73,77 @@ final class ReceiptFlowRaceTests: XCTestCase {
         XCTAssertEqual(nextCalls, [.delete("old", 1), .delete("late", 2), .parse("BIEDRONKA")])
         XCTAssertEqual(pending, 0)
     }
+
+    func testInFlightReceiptOpsUseCapturedScopeAfterAccountSwitch() async {
+        let origin = URL(string: "https://hestia.example")!
+        let old = ReceiptSessionScope(origin: origin, actor: "old", ownerKey: "old-ledger", credential: fakeDeviceToken)
+        let new = ReceiptSessionScope(origin: origin, actor: "new", ownerKey: "new-ledger", credential: nil)
+        let session = ActiveReceiptScope(old)
+        let isScopeCurrent: ReceiptScopeValidator = { session.scope == $0 }
+        let janitor = ReceiptDraftJanitor()
+        let api = MockReceiptsAPI()
+        await api.holdNextParse()
+        let scanning = ReceiptFlow(api: api, janitor: janitor, scope: old, isScopeCurrent: isScopeCurrent,
+                                   isCleanupScopeCurrent: isScopeCurrent)
+        scanning.useText("Old receipt")
+        let parsing = Task { await scanning.send() }
+        while await api.calls.isEmpty { await Task.yield() }
+
+        session.scope = new
+        await api.releaseParse()
+        await parsing.value
+        XCTAssertNil(scanning.parsed)
+        XCTAssertEqual(scanning.step, .edit)
+        let waitingForOldScope = await janitor.pendingCount
+        XCTAssertEqual(waitingForOldScope, 1)
+        let newFlow = ReceiptFlow(api: api, janitor: janitor, scope: new, isScopeCurrent: isScopeCurrent,
+                                   isCleanupScopeCurrent: isScopeCurrent)
+        await newFlow.abandon()
+        let callsInNewScope = await api.calls
+        XCTAssertEqual(callsInNewScope, [.parse("Old receipt")])
+
+        session.scope = old
+        await janitor.enqueue(.init(id: "second-old-draft", version: 1, scope: old))
+        await api.holdNextDelete()
+        let cleaning = Task { await janitor.drain(using: api, scope: old, isScopeCurrent: isScopeCurrent) }
+        while await api.calls.count < 2 { await Task.yield() }
+        session.scope = new
+        await api.releaseDelete()
+        await cleaning.value
+        let callsAfterOldDelete = await api.calls
+        XCTAssertEqual(callsAfterOldDelete, [.parse("Old receipt"), .delete(sampleReceiptID, 1)])
+        let stillWaiting = await janitor.pendingCount
+        XCTAssertEqual(stillWaiting, 1)
+        let scopes = await api.scopes
+        XCTAssertTrue(scopes.allSatisfy { $0 == old })
+
+        session.scope = old
+        let confirmAPI = PausedConfirmAPI()
+        let reviewing = ReceiptFlow(api: confirmAPI, janitor: janitor, scope: old, isScopeCurrent: isScopeCurrent,
+                                   isCleanupScopeCurrent: isScopeCurrent)
+        reviewing.useText("Old receipt")
+        await reviewing.send()
+        let saving = Task { await reviewing.confirm() }
+        await confirmAPI.gate.waitUntilPaused()
+        session.scope = new
+        await confirmAPI.gate.resume()
+        await saving.value
+        await reviewing.abandon()
+
+        XCTAssertNil(reviewing.confirmed)
+        XCTAssertNil(reviewing.parsed)
+        XCTAssertNotEqual(reviewing.step, .done)
+        let confirmCalls = await confirmAPI.mock.calls
+        XCTAssertEqual(confirmCalls, [.delete("second-old-draft", 1), .parse("Old receipt"), .confirm("tx1")])
+        let confirmScopes = await confirmAPI.mock.scopes
+        XCTAssertTrue(confirmScopes.allSatisfy { $0 == old })
+    }
+}
+
+@MainActor
+private final class ActiveReceiptScope {
+    var scope: ReceiptSessionScope
+    init(_ scope: ReceiptSessionScope) { self.scope = scope }
 }
 
 private actor OperationGate {
@@ -101,20 +172,20 @@ private struct PausedConfirmAPI: ReceiptsAPI {
     let mock = MockReceiptsAPI()
     let gate = OperationGate()
 
-    func parseReceiptText(_ text: String, source: ReceiptSourceKind) async throws -> ReceiptParseResult {
-        try await mock.parseReceiptText(text, source: source)
+    func parseReceiptText(_ text: String, source: ReceiptSourceKind, scope: ReceiptSessionScope?) async throws -> ReceiptParseResult {
+        try await mock.parseReceiptText(text, source: source, scope: scope)
     }
 
-    func confirmReceipt(_ request: ReceiptConfirmRequest) async throws -> ReceiptDetail {
+    func confirmReceipt(_ request: ReceiptConfirmRequest, scope: ReceiptSessionScope?) async throws -> ReceiptDetail {
+        var receipt = try await mock.confirmReceipt(request, scope: scope)
         await gate.pause()
-        var receipt = try await mock.confirmReceipt(request)
         receipt.status = .confirmed
         receipt.version += 1
         return receipt
     }
 
-    func deleteReceipt(id: String, expectedVersion: Int) async throws {
-        try await mock.deleteReceipt(id: id, expectedVersion: expectedVersion)
+    func deleteReceipt(id: String, expectedVersion: Int, scope: ReceiptSessionScope?) async throws {
+        try await mock.deleteReceipt(id: id, expectedVersion: expectedVersion, scope: scope)
     }
 }
 

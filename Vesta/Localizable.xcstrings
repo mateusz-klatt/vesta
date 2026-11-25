@@ -59052,6 +59052,828 @@
           }
         }
       }
+    },
+    "hestia already has 5 paired devices. Remove one in hestia’s device list.": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لدى hestia بالفعل 5 أجهزة مقترنة. أزل أحدها من قائمة الأجهزة في hestia."
+          }
+        },
+        "bn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia-তে ইতিমধ্যে ৫টি ডিভাইস পেয়ার করা আছে। hestia-র ডিভাইস তালিকা থেকে একটি সরান।"
+          }
+        },
+        "bs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia već ima 5 uparenih uređaja. Uklonite jedan s liste uređaja u hestiji."
+          }
+        },
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia už má 5 spárovaných zařízení. Jedno odeberte ze seznamu zařízení v hestii."
+          }
+        },
+        "da": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia har allerede 5 parrede enheder. Fjern en på enhedslisten i hestia."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In hestia sind bereits 5 Geräte gekoppelt. Entferne eines aus der Geräteliste in hestia."
+          }
+        },
+        "el": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Το hestia έχει ήδη 5 συζευγμένες συσκευές. Αφαιρέστε μία από τη λίστα συσκευών του hestia."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia already has 5 paired devices. Remove one in hestia’s device list."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia ya tiene 5 dispositivos vinculados. Elimina uno de la lista de dispositivos de hestia."
+          }
+        },
+        "fa": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "در hestia از قبل ۵ دستگاه جفت شده‌اند. یکی را از فهرست دستگاه‌های hestia حذف کنید."
+          }
+        },
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestiassa on jo 5 liitettyä laitetta. Poista yksi hestian laiteluettelosta."
+          }
+        },
+        "fil": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "May 5 nakapares na device na sa hestia. Mag-alis ng isa sa listahan ng mga device sa hestia."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia compte déjà 5 appareils jumelés. Supprimez-en un de la liste des appareils dans hestia."
+          }
+        },
+        "ga": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tá 5 ghléas péireáilte le hestia cheana féin. Bain ceann díobh de liosta gléasanna hestia."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "כבר משויכים ל‑hestia חמישה מכשירים. יש להסיר אחד מרשימת המכשירים של hestia."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia से पहले ही 5 डिवाइस पेयर हैं। hestia की डिवाइस सूची से एक हटाएँ।"
+          }
+        },
+        "hr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia već ima 5 uparenih uređaja. Uklonite jedan s popisa uređaja u hestiji."
+          }
+        },
+        "hu": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A hestiához már 5 eszköz van párosítva. Távolíts el egyet a hestia eszközlistájáról."
+          }
+        },
+        "hy": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia-ում արդեն զուգակցված է 5 սարք։ Մեկը հեռացրեք hestia-ի սարքերի ցանկից։"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sudah ada 5 perangkat yang dipasangkan di hestia. Hapus salah satunya dari daftar perangkat hestia."
+          }
+        },
+        "is": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fimm tæki eru þegar pöruð við hestia. Fjarlægðu eitt af tækjalistanum í hestia."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia ha già 5 dispositivi abbinati. Rimuovine uno dall’elenco dei dispositivi in hestia."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia にはすでに5台のデバイスがペアリングされています。hestia のデバイス一覧から1台を削除してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia에 이미 기기 5대가 페어링되어 있습니다. hestia의 기기 목록에서 한 대를 제거하세요."
+          }
+        },
+        "lt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Su „hestia“ jau susieti 5 įrenginiai. Pašalinkite vieną iš „hestia“ įrenginių sąrašo."
+          }
+        },
+        "lv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ar hestia jau ir savienotas pārī 5 ierīces. Noņemiet vienu no hestia ierīču saraksta."
+          }
+        },
+        "ms": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia sudah mempunyai 5 peranti yang dipasangkan. Alih keluar satu daripada senarai peranti hestia."
+          }
+        },
+        "my": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia တွင် ချိတ်ဆက်ထားသော စက် ၅ လုံး ရှိပြီးသားဖြစ်သည်။ hestia ၏ စက်စာရင်းမှ တစ်လုံးကို ဖယ်ရှားပါ။"
+          }
+        },
+        "nb": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia har allerede 5 sammenkoblede enheter. Fjern én fra enhetslisten i hestia."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia heeft al 5 gekoppelde apparaten. Verwijder er één uit de apparatenlijst in hestia."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "W hestii jest już 5 sparowanych urządzeń. Usuń jedno z listy urządzeń w hestii."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Já há 5 dispositivos emparelhados na hestia. Remova um da lista de dispositivos da hestia."
+          }
+        },
+        "ro": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia are deja 5 dispozitive asociate. Elimină unul din lista de dispozitive din hestia."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В hestia уже сопряжено 5 устройств. Удалите одно из списка устройств в hestia."
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia už má 5 spárovaných zariadení. Odstráňte jedno zo zoznamu zariadení v hestii."
+          }
+        },
+        "sq": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia ka tashmë 5 pajisje të çiftuara. Hiq një nga lista e pajisjeve në hestia."
+          }
+        },
+        "sr-Latn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia već ima 5 uparenih uređaja. Uklonite jedan sa liste uređaja u hestiji."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia har redan 5 parkopplade enheter. Ta bort en från enhetslistan i hestia."
+          }
+        },
+        "sw": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia tayari ina vifaa 5 vilivyooanishwa. Ondoa kimoja kwenye orodha ya vifaa vya hestia."
+          }
+        },
+        "th": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia มีอุปกรณ์ที่จับคู่แล้ว 5 เครื่อง ให้นำออกหนึ่งเครื่องจากรายการอุปกรณ์ใน hestia"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia’da zaten 5 eşlenmiş aygıt var. hestia’nın aygıt listesinden birini kaldırın."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "У hestia вже сполучено 5 пристроїв. Видаліть один зі списку пристроїв у hestia."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia đã ghép đôi 5 thiết bị. Hãy xóa một thiết bị trong danh sách thiết bị của hestia."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia 已配对 5 台设备。请在 hestia 的设备列表中移除一台。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia 已配對 5 部裝置。請在 hestia 的裝置清單中移除一部。"
+          }
+        }
+      }
+    },
+    "hestia already has 5 paired devices. Ask the ledger owner to remove one.": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لدى hestia بالفعل 5 أجهزة مقترنة. اطلب من مالك دفتر الحسابات إزالة أحدها."
+          }
+        },
+        "bn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia-তে ইতিমধ্যে ৫টি ডিভাইস পেয়ার করা আছে। হিসাবখাতার মালিককে একটি সরাতে বলুন।"
+          }
+        },
+        "bs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia već ima 5 uparenih uređaja. Zamolite vlasnika glavne knjige da ukloni jedan."
+          }
+        },
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia už má 5 spárovaných zařízení. Požádejte vlastníka účetní knihy, aby jedno odebral."
+          }
+        },
+        "da": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia har allerede 5 parrede enheder. Bed regnskabets ejer om at fjerne en."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In hestia sind bereits 5 Geräte gekoppelt. Bitte die Person, der das Haushaltsbuch gehört, eines zu entfernen."
+          }
+        },
+        "el": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Το hestia έχει ήδη 5 συζευγμένες συσκευές. Ζητήστε από τον κάτοχο του λογιστικού βιβλίου να αφαιρέσει μία."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia already has 5 paired devices. Ask the ledger owner to remove one."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia ya tiene 5 dispositivos vinculados. Pide al propietario del libro de cuentas que elimine uno."
+          }
+        },
+        "fa": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "در hestia از قبل ۵ دستگاه جفت شده‌اند. از مالک دفتر حساب بخواهید یکی را حذف کند."
+          }
+        },
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestiassa on jo 5 liitettyä laitetta. Pyydä tilikirjan omistajaa poistamaan yksi."
+          }
+        },
+        "fil": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "May 5 nakapares na device na sa hestia. Hilingin sa may-ari ng talaan ng pananalapi na mag-alis ng isa."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia compte déjà 5 appareils jumelés. Demandez à la personne qui gère le registre des comptes d’en supprimer un."
+          }
+        },
+        "ga": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tá 5 ghléas péireáilte le hestia cheana féin. Iarr ar úinéir an mhórleabhair ceann díobh a bhaint."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "כבר משויכים ל‑hestia חמישה מכשירים. יש לבקש מבעלי ספר החשבונות להסיר אחד מהם."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia से पहले ही 5 डिवाइस पेयर हैं। खाता-बही के मालिक से एक हटाने को कहें।"
+          }
+        },
+        "hr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia već ima 5 uparenih uređaja. Zamolite vlasnika glavne knjige da ukloni jedan."
+          }
+        },
+        "hu": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A hestiához már 5 eszköz van párosítva. Kérd meg a főkönyv tulajdonosát, hogy távolítson el egyet."
+          }
+        },
+        "hy": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia-ում արդեն զուգակցված է 5 սարք։ Խնդրեք հաշվեմատյանի սեփականատիրոջը հեռացնել դրանցից մեկը։"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sudah ada 5 perangkat yang dipasangkan di hestia. Minta pemilik buku besar untuk menghapus salah satunya."
+          }
+        },
+        "is": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fimm tæki eru þegar pöruð við hestia. Biddu eiganda bókhaldsins að fjarlægja eitt þeirra."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia ha già 5 dispositivi abbinati. Chiedi al proprietario del registro contabile di rimuoverne uno."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia にはすでに5台のデバイスがペアリングされています。家計簿の所有者に1台削除してもらってください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia에 이미 기기 5대가 페어링되어 있습니다. 장부 소유자에게 한 대를 제거해 달라고 요청하세요."
+          }
+        },
+        "lt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Su „hestia“ jau susieti 5 įrenginiai. Paprašykite apskaitos žurnalo savininko pašalinti vieną iš jų."
+          }
+        },
+        "lv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ar hestia jau ir savienotas pārī 5 ierīces. Lūdziet uzskaites žurnāla īpašniekam noņemt vienu no tām."
+          }
+        },
+        "ms": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia sudah mempunyai 5 peranti yang dipasangkan. Minta pemilik lejar mengalih keluar satu peranti."
+          }
+        },
+        "my": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia တွင် ချိတ်ဆက်ထားသော စက် ၅ လုံး ရှိပြီးသားဖြစ်သည်။ စာရင်းစာအုပ်ပိုင်ရှင်ကို တစ်လုံး ဖယ်ရှားပေးရန် တောင်းဆိုပါ။"
+          }
+        },
+        "nb": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia har allerede 5 sammenkoblede enheter. Be eieren av regnskapet om å fjerne én."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia heeft al 5 gekoppelde apparaten. Vraag de eigenaar van het kasboek om er één te verwijderen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "W hestii jest już 5 sparowanych urządzeń. Poproś właściciela księgi budżetowej o usunięcie jednego z nich."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Já há 5 dispositivos emparelhados na hestia. Peça ao proprietário do livro de contas que remova um deles."
+          }
+        },
+        "ro": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia are deja 5 dispozitive asociate. Cere-i proprietarului registrului contabil să elimine unul."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В hestia уже сопряжено 5 устройств. Попросите владельца книги учёта удалить одно из них."
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia už má 5 spárovaných zariadení. Požiadajte vlastníka účtovnej knihy, aby jedno odstránil."
+          }
+        },
+        "sq": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia ka tashmë 5 pajisje të çiftuara. Kërkoji pronarit të librit të llogarive të heqë njërën."
+          }
+        },
+        "sr-Latn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia već ima 5 uparenih uređaja. Zamolite vlasnika glavne knjige da ukloni jedan."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia har redan 5 parkopplade enheter. Be bokföringens ägare att ta bort en."
+          }
+        },
+        "sw": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia tayari ina vifaa 5 vilivyooanishwa. Mwombe mmiliki wa daftari la hesabu aondoe kimoja."
+          }
+        },
+        "th": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia มีอุปกรณ์ที่จับคู่แล้ว 5 เครื่อง ขอให้เจ้าของสมุดบัญชีนำออกหนึ่งเครื่อง"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia’da zaten 5 eşlenmiş aygıt var. Hesap defterinin sahibinden bir aygıtı kaldırmasını isteyin."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "У hestia вже сполучено 5 пристроїв. Попросіть власника книги обліку видалити один із них."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia đã ghép đôi 5 thiết bị. Hãy nhờ chủ sổ kế toán xóa một thiết bị."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia 已配对 5 台设备。请让账本所有者移除一台。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hestia 已配對 5 部裝置。請洽帳本擁有者移除一部。"
+          }
+        }
+      }
+    },
+    "This iPhone was paired as a new device.": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تم إقران هاتف iPhone هذا كجهاز جديد."
+          }
+        },
+        "bn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "এই iPhone-টি নতুন ডিভাইস হিসেবে পেয়ার করা হয়েছে।"
+          }
+        },
+        "bs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ovaj iPhone je uparen kao novi uređaj."
+          }
+        },
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tento iPhone byl spárován jako nové zařízení."
+          }
+        },
+        "da": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Denne iPhone blev parret som en ny enhed."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieses iPhone wurde als neues Gerät gekoppelt."
+          }
+        },
+        "el": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Αυτό το iPhone συζεύχθηκε ως νέα συσκευή."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This iPhone was paired as a new device."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este iPhone se vinculó como un dispositivo nuevo."
+          }
+        },
+        "fa": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "این iPhone به‌عنوان دستگاه جدید جفت شد."
+          }
+        },
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tämä iPhone liitettiin uutena laitteena."
+          }
+        },
+        "fil": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ipinares ang iPhone na ito bilang bagong device."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cet iPhone a été jumelé en tant que nouvel appareil."
+          }
+        },
+        "ga": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Péireáladh an iPhone seo mar ghléas nua."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ה‑iPhone הזה שויך כמכשיר חדש."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "यह iPhone एक नए डिवाइस के रूप में पेयर किया गया।"
+          }
+        },
+        "hr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ovaj je iPhone uparen kao novi uređaj."
+          }
+        },
+        "hu": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ez az iPhone új eszközként lett párosítva."
+          }
+        },
+        "hy": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Այս iPhone-ը զուգակցվել է որպես նոր սարք։"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iPhone ini dipasangkan sebagai perangkat baru."
+          }
+        },
+        "is": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Þessi iPhone var paraður sem nýtt tæki."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Questo iPhone è stato abbinato come nuovo dispositivo."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このiPhoneは新しいデバイスとしてペアリングされました。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 iPhone이 새 기기로 페어링되었습니다."
+          }
+        },
+        "lt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Šis „iPhone“ susietas kaip naujas įrenginys."
+          }
+        },
+        "lv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Šis iPhone tika savienots pārī kā jauna ierīce."
+          }
+        },
+        "ms": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iPhone ini telah dipasangkan sebagai peranti baharu."
+          }
+        },
+        "my": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ဤ iPhone ကို စက်အသစ်အဖြစ် ချိတ်ဆက်ပြီးပါပြီ။"
+          }
+        },
+        "nb": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Denne iPhonen ble sammenkoblet som en ny enhet."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deze iPhone is gekoppeld als nieuw apparaat."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ten iPhone został sparowany jako nowe urządzenie."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este iPhone foi emparelhado como um novo dispositivo."
+          }
+        },
+        "ro": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Acest iPhone a fost asociat ca dispozitiv nou."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Этот iPhone сопряжён как новое устройство."
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tento iPhone bol spárovaný ako nové zariadenie."
+          }
+        },
+        "sq": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ky iPhone u çiftua si pajisje e re."
+          }
+        },
+        "sr-Latn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ovaj iPhone je uparen kao novi uređaj."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Den här iPhonen parkopplades som en ny enhet."
+          }
+        },
+        "sw": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iPhone hii imeoanishwa kama kifaa kipya."
+          }
+        },
+        "th": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "จับคู่ iPhone เครื่องนี้เป็นอุปกรณ์ใหม่แล้ว"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu iPhone yeni bir aygıt olarak eşlendi."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Цей iPhone сполучено як новий пристрій."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iPhone này đã được ghép đôi dưới dạng thiết bị mới."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此 iPhone 已作为新设备配对。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這部 iPhone 已配對為新裝置。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

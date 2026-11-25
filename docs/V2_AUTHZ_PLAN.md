@@ -365,7 +365,9 @@ struct StoredReceiptDeviceToken: Codable, Equatable, Sendable {
 
 - **Hestia dependency:** Hestia PR 3 (`features ∋ "device_exchange"`, `POST /api/auth/device-token`, `Part C §§2–8, 10–11`).
 - **Files:** `Vesta/openapi.json`, `Vesta/Services/DevicePairingAPI.swift`, `Vesta/Services/BearerAuthMiddleware.swift`, `Vesta/Services/ExplicitNullsMiddleware.swift`, `Vesta/Receipts/{ReceiptPairing,ReceiptsAPI,ReceiptFlow}.swift`, `Vesta/Models/AppState.swift`, `Vesta/Views/SettingsView.swift`, `Vesta/Views/Receipts/{ReceiptPairingView,ReceiptScanView}.swift`, `Vesta/Localizable.xcstrings`, `PRIVACY.md`, `VestaTests/{DevicePairingTests,ReceiptTests,ReceiptFlowRaceTests,AppStateTests}.swift`.
-- **OpenAPI subset to pin:** `issueAuthDeviceToken` (`POST /api/auth/device-token`, `scope: "receipts" | "device"`, `owner_key`, `409 device_token_prior_invalid`) and PR 3 capability schemas.
+- **OpenAPI subset:** `exchangeNativeSession` (`POST /api/auth/device-token`, `scope: "receipts" | "device"`, `owner_key`, `409 device_token_prior_invalid`) and its referenced schemas are pinned provisionally from hestia 0.52.0 RC `3880254`.
+
+**Legacy self-owner migration.** Vesta uses a code-redeemed bearer as `prior_token` only when its origin and session commit or verified same-actor handoff match the authoritative session, and current grants qualify for a self-owner credential. Code redeem supplies no actor, so this preserves its unverified provenance until hestia returns a rotation for the same token ID with `actor == owner == session.actor`. A 1.x credential first needs the verified actor binding from V2b. An unattributed 1.x record stays stored without being claimed by a subsequent login. The journal retains the full prior proof across ambiguous outcomes and same-origin reauthentication.
 
 ### 8.1 Split Device-Exchange Decision Table (`Part C §§10–11`, Fixing Blocker 4)
 

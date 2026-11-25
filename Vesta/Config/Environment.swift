@@ -11,6 +11,8 @@ enum AppConfig {
     /// Active hestia origin (scheme + host [+ port]). Always valid.
     static var serverURL: URL { BackendURLStore.shared.currentEffectiveURL() }
 
+    static let nativeBudgetEnabled = false
+
     enum ContentType {
         static let json = "application/json"
         static let eventStream = "text/event-stream"

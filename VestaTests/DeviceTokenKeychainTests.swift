@@ -71,6 +71,27 @@ final class DeviceTokenKeychainTests: XCTestCase {
                        kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String)
     }
 
+    func testRotationJournalUsesDedicatedWhenUnlockedThisDeviceOnlyItem() throws {
+        let keychain = ScriptedKeychain()
+        let store = KeychainDeviceTokenStore(keychain: keychain)
+        keychain.updateStatuses = [errSecItemNotFound]
+        let record = RotationJournalRecord(state: .sent, server: token.server, capturedActor: "owner",
+                                           expectedOwnerKey: nil, slotTokenID: token.credential.tokenID, priorToken: token)
+        try store.saveRotationJournal([record])
+
+        guard case .add(let item) = try XCTUnwrap(keychain.writes.last) else {
+            return XCTFail("Expected a new Keychain item for the rotation journal")
+        }
+        XCTAssertEqual(item[kSecAttrAccount as String] as? String, "receipts-rotation-journal")
+        XCTAssertEqual(item[kSecAttrAccessible as String] as? String,
+                       kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String)
+        keychain.readStatus = errSecSuccess
+        keychain.readData = try XCTUnwrap(item[kSecValueData as String] as? Data)
+        XCTAssertEqual(try store.loadRotationJournal(), [record])
+        keychain.readStatus = errSecInteractionNotAllowed
+        assertStorageError { _ = try store.loadRotationJournal() }
+    }
+
     func testDeviceKeychainRejectsFailedWritesAndDeletesWithoutRemovingTheItem() {
         for status in [errSecInteractionNotAllowed, errSecNotAvailable] {
             let keychain = ScriptedKeychain()
@@ -115,12 +136,13 @@ private final class ScriptedKeychain: DeviceTokenKeychain {
     }
 
     var readStatus = errSecItemNotFound
+    var readData: Data?
     var updateStatuses: [OSStatus] = []
     var addStatus = errSecSuccess
     var deleteStatus = errSecSuccess
     private(set) var writes: [Write] = []
 
-    func copyMatching(_ query: [String: Any]) -> (status: OSStatus, item: CFTypeRef?) { (readStatus, nil) }
+    func copyMatching(_ query: [String: Any]) -> (status: OSStatus, item: CFTypeRef?) { (readStatus, readData as NSData?) }
 
     func update(_ query: [String: Any], attributes: [String: Any]) -> OSStatus {
         writes.append(.update(query, attributes))

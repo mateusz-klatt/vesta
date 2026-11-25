@@ -7,6 +7,29 @@ import UIKit
 @testable import Vesta
 
 private enum BudgetFixtures {
+    static let origin = URL(string: "https://hestia.example")!
+    static let owner = Capabilities(user: "u", ownBudget: .init(
+        permissions: [.budgetView], canView: true, canUseReceipts: false, canManageDevices: true
+    ))
+    static let features = ServerFeatures(authContract: 2, features: [.capabilities, .deviceExchange, .budgetNativeRead],
+                                        qrOrigin: nil, isLegacy: false)
+    static let ownerKey = String(repeating: "a", count: 43)
+
+    static func device(permissions: [Permission] = [.budgetView]) -> StoredReceiptDeviceToken {
+        let issued = permissions.map(\.rawValue)
+        return .init(server: origin, provenance: .exchanged, actor: "u", owner: "u", ownerKey: ownerKey,
+                     issuedPermissions: issued, lastUsableCeiling: issued, deviceScope: .device, credential: fakeDeviceToken)
+    }
+
+    @MainActor
+    static func paired(_ sessionStore: CredentialSessionStore,
+                       device: StoredReceiptDeviceToken = device()) -> ReceiptPairing {
+        let pairing = ReceiptPairing(store: MemoryDeviceTokenStore(device), serverURL: { origin })
+        pairing.bindSessionStore(sessionStore)
+        pairing.setServerFeatures(features, capabilities: owner)
+        return pairing
+    }
+
     static func monthly(
         period: String = "2026-11",
         currentMonth: String? = "2026-11",
@@ -881,12 +904,13 @@ final class BudgetStoreTests: XCTestCase {
         let mock = MockHestiaAPI()
         let app = AppState(
             api: mock,
-            receiptPairing: ReceiptPairing(store: MemoryDeviceTokenStore()),
+            receiptPairing: ReceiptPairing(api: BudgetExchangeStub(), store: MemoryDeviceTokenStore(BudgetFixtures.device())),
+            sessionStore: try testCredentialSessionStore(origin: BudgetFixtures.origin, token: "session-token"),
             events: { AsyncStream { $0.finish() } }
         )
         app.nativeBudgetEnabled = true
-        await mock.setFeatures([.capabilities, .budgetNativeRead])
-        await mock.setWhoami(role: "admin")
+        await mock.setFeatures(BudgetFixtures.features)
+        await mock.setCapabilities(BudgetFixtures.owner)
         await app.connect()
 
         let store = try XCTUnwrap(app.makeBudgetStore(now: now))
@@ -984,13 +1008,11 @@ final class BudgetClientTests: XCTestCase {
         _ transport: any ClientTransport,
         budgetEnabled: @escaping @Sendable () -> Bool = { true }
     ) throws -> APIClient {
-        let store = MemoryDeviceTokenStore(.init(
-            server: AppConfig.serverURL, provenance: .legacyPasswordLogin, actor: "u", credential: fakeDeviceToken
-        ))
+        let sessionStore = try testCredentialSessionStore(origin: BudgetFixtures.origin, token: "session-token")
         return APIClient(
             transport: transport,
-            receiptPairing: ReceiptPairing(store: store),
-            sessionStore: try testCredentialSessionStore(token: "session-token"),
+            receiptPairing: BudgetFixtures.paired(sessionStore),
+            sessionStore: sessionStore,
             budgetEnabled: budgetEnabled
         )
     }
@@ -1157,15 +1179,17 @@ final class BudgetClientTests: XCTestCase {
     }
 
     func testBudget401And403DoNotTouchReceiptPairingOrSession() async throws {
-        let deviceStore = MemoryDeviceTokenStore(.init(
-            server: AppConfig.serverURL, provenance: .legacyPasswordLogin, actor: "u", credential: fakeDeviceToken
-        ))
+        let permissions = Permission.deviceEligibleIDs
+        let deviceStore = MemoryDeviceTokenStore(BudgetFixtures.device(permissions: permissions.sorted { $0.rawValue < $1.rawValue }))
         let pairing = ReceiptPairing(store: deviceStore)
-        let sessionStore = try testCredentialSessionStore(token: "session-token")
+        let sessionStore = try testCredentialSessionStore(origin: BudgetFixtures.origin, token: "session-token")
         let originalSession = sessionStore.currentSnapshot()
 
         let mockHestia = MockHestiaAPI()
-        await mockHestia.setWhoami(role: "admin")
+        await mockHestia.setFeatures(BudgetFixtures.features)
+        await mockHestia.setCapabilities(.init(user: "u", ownBudget: .init(
+            permissions: permissions, canView: true, canUseReceipts: true, canManageDevices: true
+        )))
         await mockHestia.setDiscovery(.init(
             devices: .init(additionalProperties: [:]),
             globals: .init(cribTemp: 21, outdoorHumidity: 50, outdoorTemp: 10),
@@ -1198,7 +1222,7 @@ final class BudgetClientTests: XCTestCase {
                 sessionStore: sessionStore,
                 budgetEnabled: { true }
             )
-            let expected: BudgetError = status == 401 ? .unauthorized : .forbidden
+            let expected: BudgetError = status == 401 ? .expiredDeviceToken : .forbidden
             let calls: [@Sendable () async throws -> Void] = [
                 { _ = try await api.monthlyBudget(period: "2026-11", currency: nil) },
                 { _ = try await api.transactions(period: "2026-11", currency: "PLN", categoryID: nil, cursor: nil, limit: 50) },
@@ -1239,50 +1263,189 @@ extension MockHestiaAPI: BudgetAPI {
     func status() async throws -> BudgetStatus { BudgetFixtures.status }
 }
 
+private actor BudgetExchangeStub: DevicePairingAPI {
+    private(set) var exchangeCount = 0
+
+    func exchange(session: BoundSession, deviceName: String, priorToken: ReceiptDeviceToken?) async throws -> ExchangedDeviceToken {
+        exchangeCount += 1
+        return ExchangedDeviceToken(credential: fakeDeviceToken, scope: .device, actor: "u", owner: "u",
+                                    ownerKey: BudgetFixtures.ownerKey, issuedPermissions: [Permission.budgetView.rawValue])
+    }
+
+    func redeem(code: ReceiptPairingCode, deviceName: String, server: URL) async throws -> ReceiptDeviceToken {
+        throw DevicePairingError.redeemFailed
+    }
+
+    func login(username: String, password: String, deviceName: String, server: URL) async throws -> ReceiptDeviceToken {
+        throw DevicePairingError.redeemFailed
+    }
+
+    func revoke(_ token: ReceiptDeviceToken, server: URL) async throws {}
+}
+
 @MainActor
 final class BudgetGateTests: XCTestCase {
-    private let owner = Capabilities(user: "owner", ownBudget: .init(
-        permissions: [.budgetView], canView: true, canUseReceipts: false, canManageDevices: false
-    ))
+    @MainActor
+    private struct Fixture {
+        let mock = MockHestiaAPI()
+        let exchange = BudgetExchangeStub()
+        let session: CredentialSessionStore
+        let tokens = MemoryDeviceTokenStore()
+        let pairing: ReceiptPairing
+        let app: AppState
+        let transport = CapturingTransport(status: 200, body: BudgetMappingTests.statusJSON)
 
-    private func makeApp(_ mock: MockHestiaAPI) -> AppState {
-        AppState(
-            api: mock,
-            receiptPairing: ReceiptPairing(store: MemoryDeviceTokenStore()),
-            events: { AsyncStream { $0.finish() } }
-        )
+        init() throws {
+            session = try testCredentialSessionStore(origin: BudgetFixtures.origin, token: "v2.test.session")
+            pairing = ReceiptPairing(api: exchange, store: tokens, serverURL: { BudgetFixtures.origin })
+            app = AppState(api: mock, receiptPairing: pairing, sessionStore: session, events: { AsyncStream { $0.finish() } })
+        }
+
+        func client(enabled: Bool = AppConfig.nativeBudgetEnabled) -> APIClient {
+            APIClient(transport: transport, receiptPairing: pairing, sessionStore: session, budgetEnabled: { enabled })
+        }
     }
 
-    func testBudgetAPIStaysOffByDefaultWhenAdvertised() async {
-        let mock = MockHestiaAPI()
-        let app = makeApp(mock)
-        await mock.setFeatures([.capabilities, .budgetNativeRead])
-        await mock.setCapabilities(owner)
-        await app.connect()
+    func testBudgetAPIStaysOffByDefaultWhenAdvertised() async throws {
+        let fixture = try Fixture()
+        await fixture.mock.setFeatures(BudgetFixtures.features)
+        await fixture.mock.setCapabilities(BudgetFixtures.owner)
+        try fixture.tokens.save(BudgetFixtures.device())
+        await fixture.app.connect()
 
-        XCTAssertFalse(app.nativeBudgetEnabled)
-        XCTAssertEqual(app.serverFeatures?.supports(.budgetNativeRead), true)
-        XCTAssertNil(app.budgetAPI)
-        XCTAssertNil(app.makeBudgetStore())
+        XCTAssertFalse(fixture.app.nativeBudgetEnabled)
+        XCTAssertEqual(fixture.app.serverFeatures?.supports(.budgetNativeRead), true)
+        await assertNoBudgetRequests(fixture)
     }
 
-    func testBudgetAPIRequiresServerFeatureAndViewGrantWhenFlagIsEnabled() async {
-        let mock = MockHestiaAPI()
-        let app = makeApp(mock)
-        app.nativeBudgetEnabled = true
-        await mock.setFeatures([.capabilities])
-        await mock.setCapabilities(owner)
-        await app.connect()
-        XCTAssertNil(app.budgetAPI)
+    func testBudgetAPIRequiresServerFeatureAndViewGrantWhenFlagIsEnabled() async throws {
+        let fixture = try Fixture()
+        fixture.app.nativeBudgetEnabled = true
+        try fixture.tokens.save(BudgetFixtures.device())
+        await fixture.mock.setFeatures([.capabilities, .deviceExchange])
+        await fixture.mock.setCapabilities(BudgetFixtures.owner)
+        await fixture.app.connect()
+        XCTAssertNil(fixture.app.budgetAPI)
 
-        await mock.setFeatures([.capabilities, .budgetNativeRead])
-        await mock.setCapabilities(Capabilities(user: "viewer"))
-        await app.refresh()
-        XCTAssertNil(app.budgetAPI)
+        await fixture.mock.setFeatures(BudgetFixtures.features)
+        await fixture.mock.setCapabilities(.init(user: "u"))
+        await fixture.app.refresh()
+        XCTAssertNil(fixture.app.budgetAPI)
 
-        await mock.setCapabilities(owner)
-        await app.refresh()
-        XCTAssertNotNil(app.budgetAPI)
+        await fixture.mock.setCapabilities(BudgetFixtures.owner)
+        await fixture.app.refresh()
+        XCTAssertNotNil(fixture.app.budgetAPI)
+    }
+
+    func testZeroBudgetRequestsOn0460() async throws {
+        let fixture = try Fixture()
+        await fixture.mock.setWhoami(role: "admin")
+        await fixture.app.connect()
+        XCTAssertEqual(fixture.app.serverFeatures, .legacy)
+        await assertNoBudgetRequests(fixture)
+    }
+
+    func testZeroBudgetRequestsOnPR2RollbackDespiteBrowserCanView() async throws {
+        let fixture = try Fixture()
+        try fixture.tokens.save(BudgetFixtures.device())
+        await fixture.mock.setFeatures(BudgetFixtures.features)
+        await fixture.mock.setCapabilities(BudgetFixtures.owner)
+        await fixture.app.connect()
+
+        await fixture.mock.setFeatures([.capabilities])
+        await fixture.app.refresh()
+        XCTAssertEqual(fixture.app.capabilities?.ownBudget?.canView, true)
+        await assertNoBudgetRequests(fixture)
+    }
+
+    func testZeroBudgetRequestsForReceiptOnlyDelegate() async throws {
+        let fixture = try Fixture()
+        await fixture.mock.setFeatures(BudgetFixtures.features)
+        await fixture.mock.setCapabilities(.init(user: "u", delegatedReceipts: .init(permissions: [.budgetReceiptsAdd], canUse: true)))
+        await fixture.app.connect()
+        XCTAssertEqual(fixture.app.capabilities?.canUseReceipts, true)
+        await assertNoBudgetRequests(fixture)
+    }
+
+    func testRevocationOrSwitchTearsDownAndDiscardsLateResponse() async throws {
+        for switchOrigin in [false, true] {
+            let fixture = try Fixture()
+            fixture.app.nativeBudgetEnabled = true
+            try fixture.tokens.save(BudgetFixtures.device())
+            await fixture.mock.setFeatures(BudgetFixtures.features)
+            await fixture.mock.setCapabilities(BudgetFixtures.owner)
+            await fixture.app.connect()
+            let store = try XCTUnwrap(fixture.app.makeBudgetStore())
+            await store.load()
+            XCTAssertNotNil(store.overview)
+
+            let held = BudgetResponseGate()
+            let underlying = MockBudgetAPI(status: { await held.wait(); return BudgetFixtures.status })
+            let guarded = SessionBoundBudgetAPI(api: underlying, isCurrent: { fixture.app.budgetAPI != nil }, onDenial: { _ in })
+            let request = Task { try await guarded.status() }
+            try await waitUntil("budget response held") { await held.isWaiting }
+            if switchOrigin {
+                XCTAssertTrue(fixture.app.saveAndConnect("https://hestia.example:8443"))
+            } else {
+                await fixture.mock.setCapabilities(.init(user: "u"))
+                await fixture.app.refresh()
+            }
+            await held.release()
+            do {
+                _ = try await request.value
+                XCTFail("Expected the stale budget read to be discarded")
+            } catch is CancellationError {}
+            XCTAssertTrue(store.isCleared)
+            XCTAssertNil(store.overview)
+            XCTAssertTrue(store.transactions.isEmpty)
+            XCTAssertNil(store.nextCursor)
+        }
+    }
+
+    func testBudgetViewOnlyOwnerExchangesAndDispatchesOnlyWhenAllFourGatesPass() async throws {
+        let fixture = try Fixture()
+        fixture.app.nativeBudgetEnabled = true
+        await fixture.mock.setFeatures([.capabilities, .deviceExchange])
+        await fixture.mock.setCapabilities(BudgetFixtures.owner)
+        await fixture.app.connect()
+        await assertNoBudgetRequests(fixture, enabled: true)
+
+        await fixture.mock.setFeatures(BudgetFixtures.features)
+        await fixture.mock.setCapabilities(.init(user: "u", ownBudget: .init(
+            permissions: [], canView: true, canUseReceipts: false, canManageDevices: true
+        )))
+        await fixture.app.refresh()
+        await assertNoBudgetRequests(fixture, enabled: true)
+        let exchangesWithoutEligibility = await fixture.exchange.exchangeCount
+        XCTAssertEqual(exchangesWithoutEligibility, 0)
+
+        await fixture.mock.setCapabilities(BudgetFixtures.owner)
+        await fixture.app.refresh()
+        let exchangesWithEligibility = await fixture.exchange.exchangeCount
+        XCTAssertEqual(exchangesWithEligibility, 1)
+        XCTAssertEqual(fixture.app.capabilities?.canUseReceipts, false)
+
+        let issued = try XCTUnwrap(fixture.tokens.load())
+        try fixture.tokens.save(BudgetFixtures.device(permissions: [.budgetReceiptsAdd]))
+        await assertNoBudgetRequests(fixture, enabled: true)
+        try fixture.tokens.save(issued)
+        XCTAssertNotNil(fixture.app.budgetAPI)
+        _ = try await fixture.client(enabled: true).status()
+        XCTAssertEqual(fixture.transport.last?.request.headerFields[.authorization], "Bearer \(fakeDeviceToken.token)")
+        XCTAssertNil(fixture.transport.last?.request.headerFields[.cookie])
+    }
+
+    private func assertNoBudgetRequests(_ fixture: Fixture, enabled: Bool = AppConfig.nativeBudgetEnabled,
+                                        file: StaticString = #filePath, line: UInt = #line) async {
+        XCTAssertNil(fixture.app.budgetAPI, file: file, line: line)
+        XCTAssertNil(fixture.app.makeBudgetStore(), file: file, line: line)
+        do {
+            _ = try await fixture.client(enabled: enabled).status()
+            XCTFail("Expected the read to be blocked", file: file, line: line)
+        } catch {
+            XCTAssertEqual(error as? BudgetError, .forbidden, file: file, line: line)
+        }
+        XCTAssertNil(fixture.transport.last, file: file, line: line)
     }
 }
 
@@ -1290,16 +1453,19 @@ final class BudgetGateTests: XCTestCase {
 final class BudgetAuthTests: XCTestCase {
     private let operations = [
         ("getBudgetAnalyticsMonthlyBudget", "/api/budget/analytics/monthly-budget"),
+        ("getBudgetAnalyticsMonthlyBudgetCharts", "/api/budget/analytics/monthly-budget/charts"),
         ("getBudgetAnalyticsTransactions", "/api/budget/analytics/transactions"),
+        ("getBudgetAnalyticsOverview", "/api/budget/analytics/overview"),
+        ("getBudgetAnalyticsCategories", "/api/budget/analytics/categories"),
         ("getBudgetStatus", "/api/budget/status"),
     ]
 
     func testBudgetReadsUseTheDeviceTokenAndNeverTheSessionBearerOrCookie() async throws {
-        let server = AppConfig.serverURL
-        let store = MemoryDeviceTokenStore(.init(server: server, credential: fakeDeviceToken))
+        let server = BudgetFixtures.origin
+        let sessionStore = try testCredentialSessionStore(origin: server, token: "fake-session-token")
         let middleware = BearerAuthMiddleware(
-            session: BoundSession(origin: server, actor: nil, token: "fake-session-token"),
-            receiptPairing: ReceiptPairing(store: store),
+            session: sessionStore.currentSnapshot(),
+            receiptPairing: BudgetFixtures.paired(sessionStore),
             budgetEnabled: { true }
         )
         for (operation, path) in operations {
@@ -1316,10 +1482,14 @@ final class BudgetAuthTests: XCTestCase {
     }
 
     func testBudgetReadsWithoutADeviceTokenSendNothing() async throws {
-        let server = AppConfig.serverURL
+        let server = BudgetFixtures.origin
+        let sessionStore = try testCredentialSessionStore(origin: server, token: "fake-session-token")
+        let pairing = ReceiptPairing(store: MemoryDeviceTokenStore())
+        pairing.bindSessionStore(sessionStore)
+        pairing.setServerFeatures(BudgetFixtures.features, capabilities: BudgetFixtures.owner)
         let middleware = BearerAuthMiddleware(
-            session: BoundSession(origin: server, actor: nil, token: "fake-session-token"),
-            receiptPairing: ReceiptPairing(store: MemoryDeviceTokenStore()),
+            session: sessionStore.currentSnapshot(),
+            receiptPairing: pairing,
             budgetEnabled: { true }
         )
         for (operation, path) in operations {
@@ -1338,11 +1508,11 @@ final class BudgetAuthTests: XCTestCase {
     }
 
     func testBudgetReadsAreBlockedByMiddlewareWhenDisabled() async throws {
-        let server = AppConfig.serverURL
-        let store = MemoryDeviceTokenStore(.init(server: server, credential: fakeDeviceToken))
+        let server = BudgetFixtures.origin
+        let sessionStore = try testCredentialSessionStore(origin: server, token: "fake-session-token")
         let middleware = BearerAuthMiddleware(
-            session: BoundSession(origin: server, actor: nil, token: "fake-session-token"),
-            receiptPairing: ReceiptPairing(store: store)
+            session: sessionStore.currentSnapshot(),
+            receiptPairing: BudgetFixtures.paired(sessionStore)
         )
         for (operation, path) in operations {
             let transport = CapturingTransport(status: 200, body: "{}")

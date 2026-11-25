@@ -212,46 +212,61 @@ struct ReceiptForm: Equatable {
 actor ReceiptDraftJanitor {
     static let shared = ReceiptDraftJanitor()
 
-    private typealias Item = (id: String, version: Int, server: String)
+    struct Item: Sendable {
+        let id: String
+        let version: Int
+        let scope: ReceiptSessionScope
+    }
     private var queue: [Item] = []
     private var activeDrain: Task<Void, Never>?
 
     var pendingCount: Int { queue.count }
 
-    /// `server` is the hestia origin the draft lives on: a draft ID only means
-    /// something there, so it's only ever deleted through a session on it.
-    func enqueue(id: String, version: Int, server: String) { queue.append((id, version, server)) }
+    func enqueue(_ item: Item) { queue.append(item) }
 
-    /// Delete everything queued for `server`; failures stay queued for the next
-    /// drain, and drafts from another server wait until Vesta points there
-    /// again (or expire on their own after 48 h). Wait for any running drain
-    /// before checking the queue so callers can parse after cleanup finishes.
-    func drain(using api: any ReceiptsAPI, server: String) async {
+    /// Retry deletes only under their original scope. Wait for a running drain
+    /// before checking the queue so parsing can follow any pending cleanup.
+    func drain(using api: any ReceiptsAPI, scope: ReceiptSessionScope,
+               isScopeCurrent: @escaping ReceiptScopeValidator) async {
         while let activeDrain { await activeDrain.value }
-        guard queue.contains(where: { $0.server == server }) else { return }
+        guard queue.contains(where: { $0.scope == scope }) else { return }
         let task = Task {
-            await deleteQueuedDrafts(using: api, server: server)
+            await deleteQueuedDrafts(using: api, scope: scope, isScopeCurrent: isScopeCurrent)
             activeDrain = nil
         }
         activeDrain = task
         await task.value
     }
 
-    private func deleteQueuedDrafts(using api: any ReceiptsAPI, server: String) async {
+    private func deleteQueuedDrafts(using api: any ReceiptsAPI, scope: ReceiptSessionScope,
+                                    isScopeCurrent: ReceiptScopeValidator) async {
         // Finish any new batches before making failed deletes eligible for retry.
         var failed: [Item] = []
         defer { queue.append(contentsOf: failed) }
-        while queue.contains(where: { $0.server == server }) {
-            let batch = queue.filter { $0.server == server }
-            queue.removeAll { $0.server == server }
-            for item in batch {
-                do {
-                    try await api.deleteReceipt(id: item.id, expectedVersion: item.version)
-                } catch ReceiptError.notFound, ReceiptError.versionConflict {
-                    // Gone or changed elsewhere. This version can't be deleted.
-                } catch {
-                    failed.append(item)
+        while queue.contains(where: { $0.scope == scope }) {
+            let batch = queue.filter { $0.scope == scope }
+            queue.removeAll { $0.scope == scope }
+            for (index, item) in batch.enumerated() {
+                guard await isScopeCurrent(item.scope) else {
+                    failed.append(contentsOf: batch[index...])
+                    return
                 }
+                let shouldRetry: Bool
+                do {
+                    try await api.deleteReceipt(id: item.id, expectedVersion: item.version, scope: item.scope)
+                    shouldRetry = false
+                } catch ReceiptError.notFound, ReceiptError.versionConflict, ReceiptError.alreadySubmitted {
+                    // Gone or changed elsewhere. This version can't be deleted.
+                    shouldRetry = false
+                } catch {
+                    shouldRetry = true
+                }
+                guard await isScopeCurrent(item.scope) else {
+                    if shouldRetry { failed.append(item) }
+                    failed.append(contentsOf: batch.dropFirst(index + 1))
+                    return
+                }
+                if shouldRetry { failed.append(item) }
             }
         }
     }
@@ -276,34 +291,36 @@ final class ReceiptFlow {
     var error: ReceiptError?
     private(set) var isBusy = false
     private(set) var parsed: ReceiptParseResult?
-    /// The server ``parsed`` was created on.
-    private var parsedOn = ""
     private(set) var confirmed: ReceiptDetail?
+    let scope: ReceiptSessionScope
 
     private let api: any ReceiptsAPI
     private let recognizer: any ReceiptTextRecognizing
     private let janitor: ReceiptDraftJanitor
     private let allowsMatching: @MainActor () -> Bool
-    private let server: @MainActor () -> String
+    private let isScopeCurrent: ReceiptScopeValidator
+    private let isCleanupScopeCurrent: ReceiptScopeValidator
     private var abandoned = false
     private var captureGeneration = 0
     private var source: ReceiptSourceKind = .paste
 
-    /// `server` names the hestia origin ``api`` currently talks to (it follows
-    /// ``AppConfig/serverURL``); queued deletes are scoped to it.
     init(api: any ReceiptsAPI,
          recognizer: any ReceiptTextRecognizing = VisionReceiptRecognizer(),
          allowsMatching: @escaping @MainActor () -> Bool = { true },
          janitor: ReceiptDraftJanitor = .shared,
-         server: @escaping @MainActor () -> String = { AppConfig.serverURL.absoluteString }) {
+         scope: ReceiptSessionScope,
+         isScopeCurrent: @escaping ReceiptScopeValidator,
+         isCleanupScopeCurrent: @escaping ReceiptScopeValidator) {
         self.api = api
         self.recognizer = recognizer
         self.janitor = janitor
         self.allowsMatching = allowsMatching
-        self.server = server
+        self.scope = scope
+        self.isScopeCurrent = isScopeCurrent
+        self.isCleanupScopeCurrent = isCleanupScopeCurrent
     }
 
-    var canMatchReceipts: Bool { allowsMatching() }
+    var canMatchReceipts: Bool { isScopeCurrent(scope) && allowsMatching() }
     var candidates: [ReceiptCandidate] { canMatchReceipts ? parsed?.candidates ?? [] : [] }
 
     func updateMatchAccess() {
@@ -320,7 +337,7 @@ final class ReceiptFlow {
 
     /// Photo loading and recognition share one busy interval and capture generation.
     func recognize(loading loadPages: @MainActor () async -> [CGImage]) async {
-        guard step == .capture, !isBusy, !abandoned else { return }
+        guard step == .capture, !isBusy, !abandoned, isCurrent else { return }
         let generation = captureGeneration
         isBusy = true
         defer { isBusy = false }
@@ -342,13 +359,16 @@ final class ReceiptFlow {
     }
 
     private func isCurrentCapture(_ generation: Int) -> Bool {
-        generation == captureGeneration && step == .capture && !abandoned
+        generation == captureGeneration && step == .capture && !abandoned && isCurrent
     }
+
+    private var isCurrent: Bool { !Task.isCancelled && isScopeCurrent(scope) }
 
     /// Text from Live Text / the clipboard, or OCR output. An absurdly large
     /// paste is refused before redaction (which is linear, but no reason to
     /// spend it on something hestia will reject anyway).
     func useText(_ raw: String, source: ReceiptSourceKind = .paste) {
+        guard !abandoned, isCurrent else { return }
         captureGeneration += 1
         guard raw.utf8.count <= ReceiptText.maxBytes * 2 else {
             error = .tooLarge
@@ -361,7 +381,7 @@ final class ReceiptFlow {
     }
 
     func startOver() {
-        guard step == .edit, !isBusy, !abandoned else { return }
+        guard step == .edit, !isBusy, !abandoned, isCurrent else { return }
         captureGeneration += 1
         text = ""
         source = .paste
@@ -369,61 +389,70 @@ final class ReceiptFlow {
     }
 
     func send() async {
-        guard !isBusy, !abandoned else { return }
+        guard !isBusy, !abandoned, isCurrent else { return }
         isBusy = true
         defer { isBusy = false }
         error = nil
         do {
             let prepared = try ReceiptText.prepare(text)
             let source = source
-            let origin = server()
             await deleteCurrentDraft()      // re-reading replaces any earlier draft
-            guard !abandoned else { return } // closed while cleanup ran: send nothing
-            var result = try await api.parseReceiptText(prepared, source: source)
-            if abandoned {                  // the sheet closed while we waited
-                await janitor.enqueue(id: result.receiptId, version: result.version, server: origin)
-                await janitor.drain(using: api, server: server())
+            guard !abandoned, isCurrent else { return }
+            var result = try await api.parseReceiptText(prepared, source: source, scope: scope)
+            if abandoned || !isCurrent {
+                await janitor.enqueue(.init(id: result.receiptId, version: result.version, scope: scope))
+                await drainCleanup()
                 return
             }
             if !canMatchReceipts { result.candidates = [] }
             parsed = result
-            parsedOn = origin
             form = ReceiptForm(draft: result.draft, candidates: result.candidates)
             step = .review
         } catch is CancellationError {
             return
         } catch {
+            guard !abandoned, isCurrent else { return }
             self.error = ReceiptError.wrap(error)
         }
     }
 
     func confirm() async {
-        guard !isBusy, !abandoned, let parsed,
+        guard !isBusy, !abandoned, isCurrent, let parsed,
               let request = form.request(receiptID: parsed.receiptId, version: parsed.version, candidates: candidates)
         else { return }
         isBusy = true
         defer { isBusy = false }
         error = nil
         do {
-            confirmed = try await api.confirmReceipt(request)
-            self.parsed = nil
-            guard !abandoned else { return } // Save succeeded after the sheet closed.
-            step = .done
+            let result = try await api.confirmReceipt(request, scope: scope)
+            finishConfirmation(with: result)
+        } catch ReceiptError.alreadySubmitted {
+            finishConfirmation(with: nil)
         } catch {
             if abandoned {
                 await deleteCurrentDraft()
-            } else if !(error is CancellationError) {
+            } else if isCurrent, !(error is CancellationError) {
                 self.error = ReceiptError.wrap(error)
             }
         }
     }
 
+    private func finishConfirmation(with receipt: ReceiptDetail?) {
+        let mayPublish = isCurrent
+        // The server already settled this draft, even if its sheet is obsolete.
+        parsed = nil
+        guard mayPublish else { return }
+        confirmed = receipt
+        if !abandoned { step = .done }
+    }
+
     /// Back from review to the text: the draft is dropped server-side.
     func backToEdit() async {
-        guard !isBusy else { return }
+        guard !isBusy, !abandoned, isCurrent else { return }
         isBusy = true
         defer { isBusy = false }
         await deleteCurrentDraft()
+        guard !abandoned, isCurrent else { return }
         step = .edit
     }
 
@@ -440,8 +469,13 @@ final class ReceiptFlow {
     private func deleteCurrentDraft() async {
         if let parsed {
             self.parsed = nil
-            await janitor.enqueue(id: parsed.receiptId, version: parsed.version, server: parsedOn)
+            await janitor.enqueue(.init(id: parsed.receiptId, version: parsed.version, scope: scope))
         }
-        await janitor.drain(using: api, server: server())
+        await drainCleanup()
+    }
+
+    private func drainCleanup() async {
+        guard isCleanupScopeCurrent(scope) else { return }
+        await janitor.drain(using: api, scope: scope, isScopeCurrent: isCleanupScopeCurrent)
     }
 }

@@ -16,6 +16,7 @@ struct StoredReceiptDeviceToken: Codable, Equatable, Sendable {
     let actor: String?
     let owner: String?
     let ownerKey: String?
+    let deviceScope: DeviceTokenScope?
     let issuedPermissions: [String]?
     let lastUsableCeiling: [String]?
     // A code redeem supplies no identity. Associate it with the session that
@@ -26,7 +27,7 @@ struct StoredReceiptDeviceToken: Codable, Equatable, Sendable {
 
     init(server: URL, provenance: DeviceTokenProvenance = .legacyMigrated1x,
          actor: String? = nil, owner: String? = nil, ownerKey: String? = nil,
-         issuedPermissions: [String]? = nil, lastUsableCeiling: [String]? = nil,
+         issuedPermissions: [String]? = nil, lastUsableCeiling: [String]? = nil, deviceScope: DeviceTokenScope? = nil,
          sessionCommitID: UUID? = nil, codeSessionHandoff: ReceiptCodeSessionHandoff? = nil,
          credential: ReceiptDeviceToken) {
         self.server = server
@@ -34,6 +35,7 @@ struct StoredReceiptDeviceToken: Codable, Equatable, Sendable {
         self.actor = actor
         self.owner = owner
         self.ownerKey = ownerKey
+        self.deviceScope = deviceScope
         self.issuedPermissions = issuedPermissions
         self.lastUsableCeiling = lastUsableCeiling
         self.sessionCommitID = sessionCommitID
@@ -42,7 +44,7 @@ struct StoredReceiptDeviceToken: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case server, provenance, actor, owner, ownerKey, issuedPermissions, lastUsableCeiling, sessionCommitID, codeSessionHandoff, credential
+        case server, provenance, actor, owner, ownerKey, deviceScope, issuedPermissions, lastUsableCeiling, sessionCommitID, codeSessionHandoff, credential
     }
 
     init(from decoder: any Decoder) throws {
@@ -52,6 +54,7 @@ struct StoredReceiptDeviceToken: Codable, Equatable, Sendable {
         actor = try container.decodeIfPresent(String.self, forKey: .actor)
         owner = try container.decodeIfPresent(String.self, forKey: .owner)
         ownerKey = try container.decodeIfPresent(String.self, forKey: .ownerKey)
+        deviceScope = try container.decodeIfPresent(DeviceTokenScope.self, forKey: .deviceScope)
         issuedPermissions = try container.decodeIfPresent([String].self, forKey: .issuedPermissions)
         lastUsableCeiling = try container.decodeIfPresent([String].self, forKey: .lastUsableCeiling)
         sessionCommitID = try container.decodeIfPresent(UUID.self, forKey: .sessionCommitID)
@@ -61,7 +64,7 @@ struct StoredReceiptDeviceToken: Codable, Equatable, Sendable {
 
     func withScope(actor: String?, sessionCommitID: UUID? = nil, codeSessionHandoff: ReceiptCodeSessionHandoff? = nil) -> Self {
         Self(server: server, provenance: provenance, actor: actor, owner: owner, ownerKey: ownerKey,
-             issuedPermissions: issuedPermissions, lastUsableCeiling: lastUsableCeiling,
+             issuedPermissions: issuedPermissions, lastUsableCeiling: lastUsableCeiling, deviceScope: deviceScope,
              sessionCommitID: sessionCommitID, codeSessionHandoff: codeSessionHandoff, credential: credential)
     }
 
@@ -85,16 +88,40 @@ protocol DeviceTokenStoring {
     func clear() throws
     func loadPendingRevocations() throws -> [StoredReceiptDeviceToken]
     func savePendingRevocations(_ tokens: [StoredReceiptDeviceToken]) throws
+    func hasPendingRevocationOverflow() throws -> Bool
+    func markPendingRevocationOverflow() throws
+    func loadRotationJournal() throws -> [RotationJournalRecord]
+    func saveRotationJournal(_ records: [RotationJournalRecord]) throws
+    func loadRollbackQuarantine() throws -> [StoredReceiptDeviceToken]
+    func saveRollbackQuarantine(_ tokens: [StoredReceiptDeviceToken]) throws
+    func loadUntrustedExchangeTokens() throws -> [StoredReceiptDeviceToken]
+    func saveUntrustedExchangeTokens(_ tokens: [StoredReceiptDeviceToken]) throws
+    func loadDeviceExchangeLimits() throws -> [DeviceExchangeLimit]
+    func saveDeviceExchangeLimits(_ limits: [DeviceExchangeLimit]) throws
 }
 
 private let pendingRevocationLimit = 5
 
 extension DeviceTokenStoring {
+    func hasPendingRevocationOverflow() throws -> Bool { false }
+    func markPendingRevocationOverflow() throws {}
+    func loadRotationJournal() throws -> [RotationJournalRecord] { [] }
+    func saveRotationJournal(_ records: [RotationJournalRecord]) throws { throw DevicePairingError.storage }
+    func loadRollbackQuarantine() throws -> [StoredReceiptDeviceToken] { [] }
+    func saveRollbackQuarantine(_ tokens: [StoredReceiptDeviceToken]) throws { throw DevicePairingError.storage }
+    func loadUntrustedExchangeTokens() throws -> [StoredReceiptDeviceToken] { [] }
+    func saveUntrustedExchangeTokens(_ tokens: [StoredReceiptDeviceToken]) throws { throw DevicePairingError.storage }
+    func loadDeviceExchangeLimits() throws -> [DeviceExchangeLimit] { [] }
+    func saveDeviceExchangeLimits(_ limits: [DeviceExchangeLimit]) throws { throw DevicePairingError.storage }
+
     func addPendingRevocation(_ token: StoredReceiptDeviceToken, preservingExisting: Bool = false) throws {
         var pending = try loadPendingRevocations()
-        if pending.contains(token) { return }
-        pending.removeAll { $0.matchesDevice(token) }
-        pending.append(token)
+        if pending.contains(where: token.matchesBearer) {
+            if preservingExisting || pending.count <= pendingRevocationLimit { return }
+        } else {
+            pending.append(token)
+        }
+        if !preservingExisting, pending.count > pendingRevocationLimit { try markPendingRevocationOverflow() }
         try savePendingRevocations(preservingExisting ? pending : Array(pending.suffix(pendingRevocationLimit)))
     }
 
@@ -153,6 +180,7 @@ struct KeychainDeviceTokenStore: DeviceTokenStoring {
 
     private var query: [String: Any] { itemQuery(account: account) }
     private var pendingQuery: [String: Any] { itemQuery(account: "\(account)-pending-revocations") }
+    private var revocationOverflowQuery: [String: Any] { itemQuery(account: "\(account)-revocation-overflow") }
 
     fileprivate func loadData(_ query: [String: Any]) throws -> Data? {
         var query = query
@@ -209,6 +237,40 @@ struct KeychainDeviceTokenStore: DeviceTokenStoring {
             return
         }
         try saveData(JSONEncoder().encode(tokens), query: pendingQuery)
+    }
+
+    func hasPendingRevocationOverflow() throws -> Bool {
+        try loadData(revocationOverflowQuery) != nil
+    }
+
+    func markPendingRevocationOverflow() throws {
+        try saveData(Data([1]), query: revocationOverflowQuery)
+    }
+
+    func loadRotationJournal() throws -> [RotationJournalRecord] { try loadRecords("rotation-journal") }
+    func saveRotationJournal(_ records: [RotationJournalRecord]) throws { try saveRecords(records, "rotation-journal") }
+
+    func loadRollbackQuarantine() throws -> [StoredReceiptDeviceToken] { try loadRecords("rollback-quarantine") }
+    func saveRollbackQuarantine(_ tokens: [StoredReceiptDeviceToken]) throws { try saveRecords(tokens, "rollback-quarantine") }
+
+    func loadUntrustedExchangeTokens() throws -> [StoredReceiptDeviceToken] { try loadRecords("untrusted-exchanges") }
+    func saveUntrustedExchangeTokens(_ tokens: [StoredReceiptDeviceToken]) throws { try saveRecords(tokens, "untrusted-exchanges") }
+
+    func loadDeviceExchangeLimits() throws -> [DeviceExchangeLimit] { try loadRecords("exchange-limits") }
+    func saveDeviceExchangeLimits(_ limits: [DeviceExchangeLimit]) throws { try saveRecords(limits, "exchange-limits") }
+
+    private func loadRecords<Record: Decodable>(_ name: String) throws -> [Record] {
+        guard let data = try loadData(itemQuery(account: "\(account)-\(name)")) else { return [] }
+        return try JSONDecoder().decode([Record].self, from: data)
+    }
+
+    private func saveRecords<Record: Encodable>(_ records: [Record], _ name: String) throws {
+        let query = itemQuery(account: "\(account)-\(name)")
+        if records.isEmpty {
+            try removeData(query)
+        } else {
+            try saveData(JSONEncoder().encode(records), query: query)
+        }
     }
 }
 

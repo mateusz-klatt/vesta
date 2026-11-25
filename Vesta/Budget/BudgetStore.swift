@@ -307,7 +307,7 @@ final class BudgetStore {
     private func publish(_ error: BudgetError) {
         failure = error
         switch error {
-        case .unauthorized:
+        case .unauthorized, .expiredDeviceToken, .revokedDeviceToken, .invalidDeviceToken:
             cancelWork()
             wipeData()
             state = .unauthorized

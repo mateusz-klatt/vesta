@@ -8,49 +8,111 @@ typealias ReceiptLine = Components.Schemas.BudgetReceiptLine
 typealias ReceiptConfirmRequest = Components.Schemas.BudgetReceiptConfirmRequest
 typealias ReceiptSourceKind = Components.Schemas.BudgetReceiptParseTextRequest.SourceKindPayload
 
+/// The device credential and ledger that a receipt operation was started with.
+/// A legacy code credential has no owner key, but still has a session actor
+/// when the backend requires sign-in.
+struct ReceiptSessionScope: Equatable, Sendable {
+    let origin: URL
+    let actor: String?
+    let ownerKey: String?
+    let credential: ReceiptDeviceToken?
+
+    func matches(_ active: StoredReceiptDeviceToken, actor: String?) -> Bool {
+        OriginMatcher.matches(origin, active.server) && self.actor == actor &&
+            ownerKey == active.ownerKey && credential == active.credential
+    }
+}
+
+typealias ReceiptScopeValidator = @MainActor @Sendable (ReceiptSessionScope) -> Bool
+
 /// Vesta submits receipt text from on-device OCR or paste. Kept apart from
 /// ``HestiaAPI`` so the home-control surface stays independent of receipts.
 protocol ReceiptsAPI: Sendable {
-    func parseReceiptText(_ text: String, source: ReceiptSourceKind) async throws -> ReceiptParseResult
-    func confirmReceipt(_ request: ReceiptConfirmRequest) async throws -> ReceiptDetail
+    func parseReceiptText(_ text: String, source: ReceiptSourceKind, scope: ReceiptSessionScope?) async throws -> ReceiptParseResult
+    func confirmReceipt(_ request: ReceiptConfirmRequest, scope: ReceiptSessionScope?) async throws -> ReceiptDetail
     /// Discard a draft the user abandoned (otherwise it counts against the
     /// 20-draft quota until hestia sweeps it after 48 h).
-    func deleteReceipt(id: String, expectedVersion: Int) async throws
+    func deleteReceipt(id: String, expectedVersion: Int, scope: ReceiptSessionScope?) async throws
 }
 
-/// Reports a denial against the app session that started each receipt operation.
-struct DenialReportingReceiptsAPI: ReceiptsAPI {
-    typealias DenialHandler = @MainActor @Sendable () -> Void
-
-    private let api: any ReceiptsAPI
-    private let beforeRequest: @MainActor @Sendable () -> DenialHandler?
-
-    init(api: any ReceiptsAPI, beforeRequest: @escaping @MainActor @Sendable () -> DenialHandler?) {
-        self.api = api
-        self.beforeRequest = beforeRequest
-    }
-
+extension ReceiptsAPI {
     func parseReceiptText(_ text: String, source: ReceiptSourceKind) async throws -> ReceiptParseResult {
-        try await reportingDenial { try await api.parseReceiptText(text, source: source) }
+        try await parseReceiptText(text, source: source, scope: nil)
     }
 
     func confirmReceipt(_ request: ReceiptConfirmRequest) async throws -> ReceiptDetail {
-        try await reportingDenial { try await api.confirmReceipt(request) }
+        try await confirmReceipt(request, scope: nil)
     }
 
     func deleteReceipt(id: String, expectedVersion: Int) async throws {
-        try await reportingDenial { try await api.deleteReceipt(id: id, expectedVersion: expectedVersion) }
+        try await deleteReceipt(id: id, expectedVersion: expectedVersion, scope: nil)
+    }
+}
+
+/// Reports a denial only while the initiating app session still owns the scope.
+struct DenialReportingReceiptsAPI: ReceiptsAPI {
+    typealias FailureHandler = @MainActor @Sendable (ReceiptError, ReceiptSessionScope) -> Void
+
+    private let api: any ReceiptsAPI
+    private let scope: ReceiptSessionScope
+    private let isScopeCurrent: ReceiptScopeValidator
+    private let isCleanupScopeCurrent: ReceiptScopeValidator
+    private let onFailure: FailureHandler
+
+    init(api: any ReceiptsAPI, scope: ReceiptSessionScope,
+         isScopeCurrent: @escaping ReceiptScopeValidator, isCleanupScopeCurrent: @escaping ReceiptScopeValidator,
+         onFailure: @escaping FailureHandler) {
+        self.api = api
+        self.scope = scope
+        self.isScopeCurrent = isScopeCurrent
+        self.isCleanupScopeCurrent = isCleanupScopeCurrent
+        self.onFailure = onFailure
     }
 
-    private func reportingDenial<Result: Sendable>(_ operation: () async throws -> Result) async throws -> Result {
-        guard let reportDenial = await beforeRequest() else { throw CancellationError() }
+    func parseReceiptText(_ text: String, source: ReceiptSourceKind, scope: ReceiptSessionScope?) async throws -> ReceiptParseResult {
+        try await reportingDenial(scope, valid: isScopeCurrent) {
+            try await api.parseReceiptText(text, source: source, scope: self.scope)
+        }
+    }
+
+    func confirmReceipt(_ request: ReceiptConfirmRequest, scope: ReceiptSessionScope?) async throws -> ReceiptDetail {
+        try await reportingDenial(scope, valid: isScopeCurrent) {
+            try await api.confirmReceipt(request, scope: self.scope)
+        }
+    }
+
+    func deleteReceipt(id: String, expectedVersion: Int, scope: ReceiptSessionScope?) async throws {
+        try await reportingDenial(scope, valid: isCleanupScopeCurrent) {
+            try await api.deleteReceipt(id: id, expectedVersion: expectedVersion, scope: self.scope)
+        }
+    }
+
+    private func reportingDenial<Result: Sendable>(
+        _ requested: ReceiptSessionScope?, valid: ReceiptScopeValidator,
+        _ operation: () async throws -> Result
+    ) async throws -> Result {
+        guard requested == nil || requested == scope, await valid(scope) else { throw CancellationError() }
         try Task.checkCancellation()
         do {
-            return try await operation()
-        } catch ReceiptError.forbidden {
-            if !Task.isCancelled { await reportDenial() }
-            throw ReceiptError.forbidden
+            let result = try await operation()
+            // Explicitly scoped callers revalidate on receipt, so a late parse can
+            // queue the returned draft on its original scope before discarding it.
+            if requested == nil, !(await valid(scope)) { throw CancellationError() }
+            return result
+        } catch let error as ReceiptError {
+            switch error {
+            case .forbidden, .expiredDeviceToken, .revokedDeviceToken, .invalidDeviceToken:
+                await reportFailure(error, valid: valid)
+            default:
+                break
+            }
+            throw error
         }
+    }
+
+    @MainActor
+    private func reportFailure(_ error: ReceiptError, valid: ReceiptScopeValidator) {
+        if !Task.isCancelled, valid(scope) { onFailure(error, scope) }
     }
 }
 
@@ -64,8 +126,11 @@ enum ReceiptError: LocalizedError, Equatable {
     case notFound
     /// 403: the server denied access to receipts.
     case forbidden
-    /// The device token is missing, expired or revoked.
+    /// No usable device token is available for the request.
     case pairAgain
+    case expiredDeviceToken
+    case revokedDeviceToken
+    case invalidDeviceToken
     /// 400 `budget_auth_ambiguous`: hestia saw multiple credentials.
     case ambiguousAuth
     /// 429: hestia's receipt rate limit.
@@ -79,6 +144,8 @@ enum ReceiptError: LocalizedError, Equatable {
     case versionConflict
     /// 409 `budget_receipt_tx_already_linked`.
     case alreadyLinked
+    /// 409 `already_submitted`: confirmation already succeeded.
+    case alreadySubmitted
     /// 409 `budget_receipt_stale_source`: the bank transaction changed since preview.
     case staleCandidate
     /// 400 `budget_receipt_total_mismatch`: line totals don't add up to the total.
@@ -98,13 +165,14 @@ enum ReceiptError: LocalizedError, Equatable {
         case .disabled: "Receipts are turned off"
         case .notFound: "Draft no longer exists"
         case .forbidden: APIError.forbidden.title
-        case .pairAgain: "Pair again"
+        case .pairAgain, .expiredDeviceToken, .revokedDeviceToken, .invalidDeviceToken: "Pair again"
         case .ambiguousAuth: "Multiple credentials"
         case .rateLimited: "Receipt limit reached"
         case .draftQuota: "Too many open drafts"
         case .tooLarge: "Receipt text is too long"
         case .versionConflict: "Receipt changed elsewhere"
         case .alreadyLinked: "Transaction already has a receipt"
+        case .alreadySubmitted: "Receipt saved"
         case .staleCandidate: "Bank transaction changed"
         case .totalMismatch: "Totals don’t add up"
         case .deviceLimit: "Device limit reached"
@@ -119,13 +187,14 @@ enum ReceiptError: LocalizedError, Equatable {
         case .disabled: "The server owner has not enabled receipts yet."
         case .notFound: "Drafts expire after 48 hours. Scan the receipt again."
         case .forbidden: APIError.forbidden.message
-        case .pairAgain: "Pair this iPhone with hestia to continue."
+        case .pairAgain, .expiredDeviceToken, .revokedDeviceToken, .invalidDeviceToken: "Pair this iPhone with hestia to continue."
         case .ambiguousAuth: "The server received more than one credential. Check your connection and try again."
         case .rateLimited: "Too many receipts, try again in a minute"
         case .draftQuota: "Confirm or discard some drafts on the server, then try again."
         case .tooLarge: "The receipt is too large for the server. Shorten the text and read it again."
         case .versionConflict: "Scan the receipt again to start from the current version."
         case .alreadyLinked: "Pick a different transaction or save the receipt without one."
+        case .alreadySubmitted: "Receipt saved"
         case .staleCandidate: "Scan the receipt again to refresh the matching transactions."
         case .totalMismatch: "Fix the receipt text so the item totals add up to the total, then read it again."
         case .deviceLimit: DevicePairingError.deviceLimit.message
@@ -145,11 +214,20 @@ enum ReceiptError: LocalizedError, Equatable {
 
     var errorDescription: String? { String(localized: message) }
 
+    var requiresPairing: Bool {
+        switch self {
+        case .pairAgain, .expiredDeviceToken, .revokedDeviceToken, .invalidDeviceToken: true
+        default: false
+        }
+    }
+
     /// Map an HTTP status + hestia error code (may be nil: middleware can answer
     /// with an empty body).
     static func from(status: Int, code: String?) -> ReceiptError {
         switch (status, code) {
-        case (401, "device_token_expired"), (401, "device_token_revoked"): .pairAgain
+        case (401, "device_token_expired"): .expiredDeviceToken
+        case (401, "device_token_revoked"): .revokedDeviceToken
+        case (401, "device_token_invalid"): .invalidDeviceToken
         case (401, _): .api(.unauthorized)
         case (403, _): .forbidden
         case (404, "budget_receipts_disabled"), (404, "budget_disabled"): .disabled
@@ -158,6 +236,7 @@ enum ReceiptError: LocalizedError, Equatable {
         case (413, _): .tooLarge
         case (409, "budget_receipt_conflict"): .versionConflict
         case (409, "budget_receipt_tx_already_linked"): .alreadyLinked
+        case (409, "already_submitted"): .alreadySubmitted
         case (409, "budget_receipt_stale_source"): .staleCandidate
         case (409, "device_token_limit_reached"): .deviceLimit
         case (409, let code?): .rejected(code)

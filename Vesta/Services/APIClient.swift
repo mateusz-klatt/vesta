@@ -95,7 +95,7 @@ actor APIClient: HestiaAPI {
     init(transport: (any ClientTransport)? = nil,
          receiptPairing: ReceiptPairing? = nil,
          sessionStore: CredentialSessionStore? = nil,
-         budgetEnabled: @escaping @Sendable () -> Bool = { false }) {
+         budgetEnabled: @escaping @Sendable () -> Bool = { AppConfig.nativeBudgetEnabled }) {
         self.transport = transport ?? URLSessionTransport(
             configuration: .init(session: HTTPSession.shared, httpBodyProcessingMode: .buffered))
         probeTransport = transport ?? URLSessionTransport(
@@ -120,6 +120,19 @@ actor APIClient: HestiaAPI {
     func requestClient(on origin: URL? = nil) -> Client {
         let session = sessionStore?.currentSnapshot()
         return makeClient(on: origin ?? session?.origin ?? backendURLStore.currentEffectiveURL(), session: session)
+    }
+
+    func requestReceiptClient(scope: ReceiptSessionScope?) -> Client {
+        guard let scope else { return requestClient() }
+        return Client(
+            serverURL: scope.origin,
+            transport: transport,
+            middlewares: [
+                ExplicitNullsMiddleware(),
+                BearerAuthMiddleware(session: sessionStore?.currentSnapshot(), receiptPairing: receiptPairing,
+                                     receiptScope: scope),
+            ]
+        )
     }
 
     func whoami() async throws -> Components.Schemas.WhoAmI {

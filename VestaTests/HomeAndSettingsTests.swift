@@ -160,6 +160,7 @@ final class HomeAndSettingsTests: XCTestCase {
 
         let janitor = ReceiptDraftJanitor()
         let flow = try XCTUnwrap(app.makeReceiptFlow(janitor: janitor))
+        XCTAssertEqual(flow.scope.origin, origin)
         session.backendURLStore.saveOverride(otherOrigin)
         flow.useText("Receipt text")
         await flow.send()
@@ -167,10 +168,13 @@ final class HomeAndSettingsTests: XCTestCase {
         await flow.abandon()
 
         let cleanupAPI = MockReceiptsAPI()
-        await janitor.drain(using: cleanupAPI, server: otherOrigin.absoluteString)
+        let wrongScope = ReceiptSessionScope(origin: otherOrigin, actor: flow.scope.actor,
+                                             ownerKey: flow.scope.ownerKey, credential: flow.scope.credential)
+        await janitor.drain(using: cleanupAPI, scope: wrongScope, isScopeCurrent: { $0 == wrongScope })
         let wrongOriginCalls = await cleanupAPI.calls
         XCTAssertTrue(wrongOriginCalls.isEmpty)
-        await janitor.drain(using: cleanupAPI, server: origin.absoluteString)
+        let scope = flow.scope
+        await janitor.drain(using: cleanupAPI, scope: scope, isScopeCurrent: { $0 == scope })
         let cleanupCalls = await cleanupAPI.calls
         XCTAssertEqual(cleanupCalls, [.delete(draft.receiptId, draft.version)])
     }
