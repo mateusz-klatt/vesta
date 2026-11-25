@@ -1,6 +1,6 @@
 import Foundation
 
-/// The one URLSession Vesta talks to hestia through (REST + SSE).
+/// Cookie-free URL sessions for hestia.
 ///
 /// hestia's `/api/login` always sets its httponly `hestia_session` cookie — even
 /// for a native `bearer: true` login — and `URLSession.shared` would store it and
@@ -10,6 +10,17 @@ import Foundation
 /// Ephemeral also keeps responses (home state, receipts) out of the disk cache.
 enum HTTPSession {
     static let shared = URLSession(configuration: configuration, delegate: HestiaRedirectDelegate(), delegateQueue: nil)
+    // A feature probe stays on the public route and uses no HTTP credentials.
+    static let featuresProbe = URLSession(
+        configuration: featuresProbeConfiguration, delegate: FeaturesProbeDelegate(), delegateQueue: nil
+    )
+
+    static var featuresProbeConfiguration: URLSessionConfiguration {
+        let probeConfiguration = configuration
+        probeConfiguration.urlCredentialStorage = nil
+        probeConfiguration.httpAdditionalHeaders = ["Cache-Control": "no-store"]
+        return probeConfiguration
+    }
 
     static var configuration: URLSessionConfiguration {
         let configuration = URLSessionConfiguration.ephemeral
@@ -18,6 +29,30 @@ enum HTTPSession {
         configuration.httpCookieStorage = nil
         configuration.urlCache = nil
         return configuration
+    }
+}
+
+final class FeaturesProbeDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest
+    ) async -> URLRequest? { nil }
+
+    func urlSession(
+        _ session: URLSession, didReceive challenge: URLAuthenticationChallenge
+    ) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
+        (Self.disposition(for: challenge), nil)
+    }
+
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge
+    ) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
+        (Self.disposition(for: challenge), nil)
+    }
+
+    private static func disposition(for challenge: URLAuthenticationChallenge) -> URLSession.AuthChallengeDisposition {
+        challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust
+            ? .performDefaultHandling : .rejectProtectionSpace
     }
 }
 

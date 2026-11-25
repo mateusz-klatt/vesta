@@ -4,7 +4,8 @@ import Foundation
 /// tested against a mock (the real implementation is ``APIClient``).
 protocol HestiaAPI: Sendable {
     func whoami() async throws -> Components.Schemas.WhoAmI
-    func capabilities() async throws -> Capabilities
+    func probeFeatures(on origin: URL) async throws -> ServerFeatures
+    func capabilities(on origin: URL, features: ServerFeatures) async throws -> Capabilities
     func discovery() async throws -> Components.Schemas.Discovery
     @discardableResult
     func login(user: String, password: String) async throws -> Components.Schemas.LoginSuccess

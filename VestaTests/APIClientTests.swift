@@ -95,9 +95,10 @@ final class APIClientTests: XCTestCase {
 
     func testMapStatusSeparates401From403() async {
         let statuses: [(Int, APIError)] = [(401, .unauthorized), (403, .forbidden)]
+        let origin = URL(string: "https://hestia.example")!
         for (status, expected) in statuses {
             let api = APIClient(transport: StubTransport { _ in (status, nil) }, sessionToken: { nil })
-            await XCTAssertThrowsErrorEqual(try await api.capabilities(), expected)
+            await XCTAssertThrowsErrorEqual(try await api.capabilities(on: origin, features: .legacy), expected)
             await XCTAssertThrowsErrorEqual(try await api.discovery(), expected)
             await XCTAssertThrowsErrorEqual(try await api.setSwitch(node: 4, on: true), expected)
             await XCTAssertThrowsErrorEqual(try await api.scene(.lightsOff), expected)

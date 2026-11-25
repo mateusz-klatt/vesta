@@ -25,7 +25,9 @@ final class AppState {
     }
 
     private(set) var phase: Phase = .connecting
-    private(set) var capabilities: Capabilities?
+    private var authorization: (features: ServerFeatures?, capabilities: Capabilities?) = (nil, nil)
+    var serverFeatures: ServerFeatures? { authorization.features }
+    var capabilities: Capabilities? { authorization.capabilities }
     private(set) var receiptAccessGeneration = 0
     private(set) var notice: APIError?
     var whoami: Components.Schemas.WhoAmI? {
@@ -67,6 +69,7 @@ final class AppState {
     private var sessionGeneration = 0
     private var capabilitiesGeneration = 0
     private var discoveryGeneration = 0
+    private var refreshRevision = 0
     private var activeCapabilitiesRefresh: CapabilityRefresh?
     @ObservationIgnored private weak var openReceiptFlow: ReceiptFlow?
     /// The logout (and unpair) a backend change runs. A login waits for it, or
@@ -91,10 +94,15 @@ final class AppState {
         case backingOff
     }
 
+    private struct RefreshSnapshot: Equatable {
+        let origin: URL
+        let session: Int
+        let revision: Int
+    }
+
     private struct CapabilityRefresh {
-        let id: UUID
         let source: RefreshSource
-        let fence: Fence
+        let snapshot: RefreshSnapshot
         let task: Task<Fence?, Never>
     }
 
@@ -108,6 +116,14 @@ final class AppState {
 
     private func isCurrent(_ fence: Fence) -> Bool {
         !Task.isCancelled && fence == currentFence
+    }
+
+    private var currentRefreshSnapshot: RefreshSnapshot {
+        RefreshSnapshot(origin: AppConfig.serverURL, session: sessionGeneration, revision: refreshRevision)
+    }
+
+    private func isCurrent(_ snapshot: RefreshSnapshot, phase expectedPhase: Phase) -> Bool {
+        !Task.isCancelled && snapshot == currentRefreshSnapshot && phase == expectedPhase
     }
 
     private func isCurrentDiscovery(_ fence: DiscoveryFence) -> Bool {
@@ -140,7 +156,8 @@ final class AppState {
     /// Nothing in production turns this on yet; tests do.
     var nativeBudgetEnabled = false
     var budgetAPI: (any BudgetAPI)? {
-        guard nativeBudgetEnabled, capabilities?.effectiveDeviceEligiblePermissions.contains(.budgetView) == true else { return nil }
+        guard nativeBudgetEnabled, serverFeatures?.supports(.budgetNativeRead) == true,
+              capabilities?.effectiveDeviceEligiblePermissions.contains(.budgetView) == true else { return nil }
         return api as? any BudgetAPI
     }
 
@@ -157,12 +174,8 @@ final class AppState {
         activeBudgetStore = nil
     }
 
-    /// V2a will set this from the server's `calendar_instances` feature.
-    var nativeCalendarEnabled = false {
-        didSet { if !nativeCalendarEnabled { closeAgenda() } }
-    }
     var calendarAPI: (any CalendarAPI)? {
-        guard nativeCalendarEnabled, capabilities?.canViewCalendar == true else { return nil }
+        guard serverFeatures?.supports(.calendarInstances) == true, capabilities?.canViewCalendar == true else { return nil }
         return api as? any CalendarAPI
     }
 
@@ -267,7 +280,7 @@ final class AppState {
         let changed = url != AppConfig.serverURL
         BackendURLStore.shared.saveOverride(url)
         backendURLString = url.absoluteString
-        prepareInitialAuth()
+        prepareInitialAuth(keepingFeatures: !changed)
         let api = self.api
         let previous = resetTask
         resetTask = Task {
@@ -305,8 +318,8 @@ final class AppState {
         await pairReceiptsAfterLogin(user: user, password: password, server: server)
     }
 
-    private func prepareInitialAuth() {
-        clearAuthorization()
+    private func prepareInitialAuth(keepingFeatures: Bool = true) {
+        clearAuthorization(keeping: keepingFeatures ? serverFeatures : nil)
         phase = .connecting
     }
 
@@ -339,9 +352,9 @@ final class AppState {
         phase = .needsAuth
     }
 
-    private func invalidateSession() {
+    private func invalidateSession(features: ServerFeatures? = nil) {
         sessionGeneration += 1
-        clearAuthorization()
+        clearAuthorization(keeping: features ?? serverFeatures)
         phase = .needsAuth
         // Login waits for local credential invalidation just as it waits for reset.
         let api = self.api
@@ -352,12 +365,15 @@ final class AppState {
         }
     }
 
-    private func clearAuthorization() {
-        closeBudget()
-        closeAgenda()
+    private func cancelCapabilityRefresh() {
+        refreshRevision += 1
         activeCapabilitiesRefresh?.task.cancel()
         activeCapabilitiesRefresh = nil
-        publishCapabilities(nil)
+    }
+
+    private func clearAuthorization(keeping features: ServerFeatures?) {
+        cancelCapabilityRefresh()
+        publishAuthorization(features: features, capabilities: nil)
         notice = nil
     }
 
@@ -369,42 +385,56 @@ final class AppState {
     }
 
     private func beginCapabilityRefresh(source: RefreshSource) -> Task<Fence?, Never>? {
-        let expectedPhase: Phase = source == .initialAuth ? .connecting : .ready
-        guard phase == expectedPhase else { return nil }
-        let fence = currentFence
+        let expectedPhase = phase
+        guard expectedPhase == (source == .initialAuth ? .connecting : .ready)
+                || (source == .foreground && expectedPhase == .needsAuth) else { return nil }
         // A denial needs an answer requested after the rejection. Explicit
         // refreshes own their follow-up work, so only like denials can share it.
-        if let active = activeCapabilitiesRefresh, active.fence == fence,
+        if let active = activeCapabilitiesRefresh, active.snapshot == currentRefreshSnapshot,
            source == .denial, active.source == .denial {
             return active.task
         }
-        activeCapabilitiesRefresh?.task.cancel()
-        let id = UUID()
+        cancelCapabilityRefresh()
+        let snapshot = currentRefreshSnapshot
         let task = Task { [weak self] in
-            await self?.performCapabilityRefresh(id: id, source: source, fence: fence, phase: expectedPhase)
+            await self?.performCapabilityRefresh(source: source, snapshot: snapshot, phase: expectedPhase)
         }
-        activeCapabilitiesRefresh = CapabilityRefresh(id: id, source: source, fence: fence, task: task)
+        activeCapabilitiesRefresh = CapabilityRefresh(source: source, snapshot: snapshot, task: task)
         return task
     }
 
-    private func performCapabilityRefresh(id: UUID, source: RefreshSource, fence: Fence, phase expectedPhase: Phase) async -> Fence? {
+    private func performCapabilityRefresh(source: RefreshSource, snapshot: RefreshSnapshot, phase expectedPhase: Phase) async -> Fence? {
         defer {
-            if activeCapabilitiesRefresh?.id == id { activeCapabilitiesRefresh = nil }
+            if activeCapabilitiesRefresh?.snapshot == snapshot { activeCapabilitiesRefresh = nil }
         }
-        guard isCurrent(fence), phase == expectedPhase else { return nil }
+        guard isCurrent(snapshot, phase: expectedPhase) else { return nil }
+        let features: ServerFeatures
         do {
-            let resolved = try await api.capabilities()
-            guard isCurrent(fence), phase == expectedPhase else { return nil }
-            publishCapabilities(resolved)
+            features = try await api.probeFeatures(on: snapshot.origin)
+        } catch {
+            if isCurrent(snapshot, phase: expectedPhase), source == .initialAuth, !APIError.isCancellation(error) {
+                phase = .failed(APIError.wrap(error))
+            }
+            return nil
+        }
+        guard isCurrent(snapshot, phase: expectedPhase) else { return nil }
+        if expectedPhase == .needsAuth {
+            publishAuthorization(features: features, capabilities: nil)
+            return nil
+        }
+        do {
+            let resolved = try await api.capabilities(on: snapshot.origin, features: features)
+            guard isCurrent(snapshot, phase: expectedPhase) else { return nil }
+            publishAuthorization(features: features, capabilities: resolved)
             if source == .foreground || source == .userPull { notice = nil }
             return currentFence
         } catch {
-            guard isCurrent(fence), phase == expectedPhase, !APIError.isCancellation(error) else { return nil }
+            guard isCurrent(snapshot, phase: expectedPhase), !APIError.isCancellation(error) else { return nil }
             switch APIError.wrap(error) {
             case .unauthorized:
-                invalidateSession()
+                invalidateSession(features: features)
             case .forbidden:
-                publishCapabilities(nil)
+                publishAuthorization(features: features, capabilities: nil)
                 if phase == .connecting {
                     phase = .failed(.forbidden)
                 } else {
@@ -417,13 +447,14 @@ final class AppState {
         }
     }
 
-    private func publishCapabilities(_ published: Capabilities?) {
+    private func publishAuthorization(features: ServerFeatures?, capabilities published: Capabilities?) {
         if capabilities != published { capabilitiesGeneration += 1 }
         if capabilities?.canUseReceipts == true, published?.canUseReceipts != true {
             receiptAccessGeneration += 1
         }
-        capabilities = published
-        if published?.canViewCalendar != true { closeAgenda() }
+        authorization = (features, published)
+        if calendarAPI == nil { closeAgenda() }
+        if budgetAPI == nil { closeBudget() }
         applyIOCGrant(published?.canViewIOC == true)
         openReceiptFlow?.updateMatchAccess()
     }
@@ -454,14 +485,13 @@ final class AppState {
     func enterForeground() {
         isInForeground = true
         lifecycleGeneration += 1
-        receiptPairing.refreshStatus()
-        guard phase == .ready else { return }
-        let session = sessionGeneration
+        // Refreshing pairing status can retry a pending authenticated revocation.
+        if phase != .needsAuth { receiptPairing.refreshStatus() }
+        guard let task = beginCapabilityRefresh(source: .foreground) else { return }
         let lifecycle = lifecycleGeneration
         Task { [weak self] in
-            guard let self, session == sessionGeneration, lifecycle == lifecycleGeneration,
-                  let fence = await refreshCapabilities(source: .foreground),
-                  isCurrent(fence), lifecycle == lifecycleGeneration, canViewIOC else { return }
+            guard let fence = await task.value, let self, isCurrent(fence), lifecycle == lifecycleGeneration,
+                  canViewIOC else { return }
             startEvents()
         }
     }

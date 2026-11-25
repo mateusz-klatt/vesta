@@ -84,6 +84,7 @@ actor APIClient: HestiaAPI {
     private var serverURL: URL
     private(set) var client: Client
     private let transport: any ClientTransport
+    private let probeTransport: any ClientTransport
     private let auth: BearerAuthMiddleware
     private let saveToken: @Sendable (String) -> Void
     private let clearToken: @Sendable () -> Void
@@ -97,20 +98,23 @@ actor APIClient: HestiaAPI {
 
     // The streaming transport installs its own task delegate. Use the session's
     // redirect delegate for generated REST requests.
-    init(transport: any ClientTransport = URLSessionTransport(
-            configuration: .init(session: HTTPSession.shared, httpBodyProcessingMode: .buffered)),
+    init(transport: (any ClientTransport)? = nil,
          receiptPairing: ReceiptPairing? = nil,
          sessionToken: @escaping @Sendable () -> String? = { TokenStore.load() },
          saveToken: @escaping @Sendable (String) -> Void = { TokenStore.save($0) },
          clearToken: @escaping @Sendable () -> Void = { TokenStore.clear() },
          budgetEnabled: @escaping @Sendable () -> Bool = { false }) {
-        self.transport = transport
+        let restTransport = transport ?? URLSessionTransport(
+            configuration: .init(session: HTTPSession.shared, httpBodyProcessingMode: .buffered))
+        self.transport = restTransport
+        probeTransport = transport ?? URLSessionTransport(
+            configuration: .init(session: HTTPSession.featuresProbe, httpBodyProcessingMode: .buffered))
         self.saveToken = saveToken
         self.clearToken = clearToken
         self.budgetEnabled = budgetEnabled
         auth = BearerAuthMiddleware(token: sessionToken, receiptPairing: receiptPairing, budgetEnabled: budgetEnabled)
         serverURL = AppConfig.serverURL
-        client = APIClient.make(serverURL, transport, auth)
+        client = APIClient.make(serverURL, restTransport, auth)
     }
 
     private static func make(_ url: URL, _ transport: any ClientTransport, _ auth: BearerAuthMiddleware) -> Client {
@@ -131,6 +135,10 @@ actor APIClient: HestiaAPI {
 
     func whoami() async throws -> Components.Schemas.WhoAmI {
         refresh()
+        return try await whoami(using: client)
+    }
+
+    private func whoami(using client: Client) async throws -> Components.Schemas.WhoAmI {
         do {
             switch try await client.whoami(.init()) {
             case .ok(let ok): return try ok.body.json
@@ -139,9 +147,34 @@ actor APIClient: HestiaAPI {
         } catch { throw Self.requestError(error) }
     }
 
-    func capabilities() async throws -> Capabilities {
-        let identity = try await whoami()
-        return Capabilities.fromLegacyRole(role: identity.role, user: identity.user)
+    func probeFeatures(on origin: URL) async throws -> ServerFeatures {
+        try Task.checkCancellation()
+        guard origin.user == nil, origin.password == nil else { throw URLError(.badURL) }
+        let probe = Client(serverURL: origin, transport: probeTransport)
+        do {
+            guard case .ok(let ok) = try await probe.authFeatures(.init()) else { return .legacy }
+            return try ok.body.json.serverFeatures
+        } catch {
+            let underlying = (error as? ClientError)?.underlyingError ?? error
+            if let urlError = underlying as? URLError { throw urlError }
+            if underlying is CancellationError { throw CancellationError() }
+            return .legacy
+        }
+    }
+
+    func capabilities(on origin: URL, features: ServerFeatures) async throws -> Capabilities {
+        try Task.checkCancellation()
+        let boundClient = origin == serverURL ? client : Self.make(origin, transport, auth)
+        guard features.supports(.capabilities) else {
+            let identity = try await whoami(using: boundClient)
+            return Capabilities.fromLegacyRole(role: identity.role, user: identity.user)
+        }
+        do {
+            switch try await boundClient.meCapabilities(.init()) {
+            case .ok(let ok): return try ok.body.json.capabilities
+            case .undocumented(let code, _): throw mapStatus(code)
+            }
+        } catch { throw Self.requestError(error) }
     }
 
     func discovery() async throws -> Components.Schemas.Discovery {

@@ -690,7 +690,7 @@ final class CalendarAccessTests: XCTestCase {
         )
     }
 
-    func testCalendarAPIIsHiddenByDefaultWithCalendarViewGrant() async {
+    func testCalendarAPIIsHiddenOnLegacyServerWithCalendarViewGrant() async {
         let mock = MockHestiaAPI()
         await mock.setCapabilities(grant)
         let app = makeApp(mock)
@@ -703,8 +703,8 @@ final class CalendarAccessTests: XCTestCase {
 
     func testCalendarAPIRequiresViewGrantWhenFeatureIsEnabled() async {
         let mock = MockHestiaAPI()
+        await mock.setFeatures([.capabilities, .calendarInstances])
         let app = makeApp(mock)
-        app.nativeCalendarEnabled = true
         XCTAssertNil(app.calendarAPI)
         await mock.setCapabilities(Capabilities(installation: [.calendarEdit]))
         await app.connect()
@@ -720,10 +720,10 @@ final class CalendarAccessTests: XCTestCase {
     func testForbiddenClearsStoreAndRefreshesCapabilitiesOnce() async throws {
         let mock = MockHestiaAPI()
         let calendar = PausedCalendarAPI()
+        await mock.setFeatures([.capabilities, .calendarInstances])
         await mock.setCapabilities(grant)
         await mock.setCalendarStub(calendar)
         let app = makeApp(mock)
-        app.nativeCalendarEnabled = true
         await app.connect()
 
         let store = try XCTUnwrap(app.makeAgendaStore())
@@ -758,10 +758,10 @@ final class CalendarAccessTests: XCTestCase {
     func testStaleForbiddenAfterGroupSwitchDoesNotDiscardOrRefreshCapabilities() async throws {
         let mock = MockHestiaAPI()
         let calendar = PausedCalendarAPI()
+        await mock.setFeatures([.capabilities, .calendarInstances])
         await mock.setCapabilities(grant)
         await mock.setCalendarStub(calendar)
         let app = makeApp(mock)
-        app.nativeCalendarEnabled = true
         await app.connect()
 
         let store = try XCTUnwrap(app.makeAgendaStore())
@@ -791,10 +791,10 @@ final class CalendarAccessTests: XCTestCase {
     func testUnauthorizedDiscardsTheAgendaAndInvalidatesTheSession() async throws {
         let mock = MockHestiaAPI()
         let calendar = PausedCalendarAPI()
+        await mock.setFeatures([.capabilities, .calendarInstances])
         await mock.setCapabilities(grant)
         await mock.setCalendarStub(calendar)
         let app = makeApp(mock)
-        app.nativeCalendarEnabled = true
         await app.connect()
 
         let store = try XCTUnwrap(app.makeAgendaStore())
@@ -826,10 +826,10 @@ final class CalendarAccessTests: XCTestCase {
     func testClosingAgendaDiscardsALateResponse() async throws {
         let mock = MockHestiaAPI()
         let calendar = PausedCalendarAPI()
+        await mock.setFeatures([.capabilities, .calendarInstances])
         await mock.setCapabilities(grant)
         await mock.setCalendarStub(calendar)
         let app = makeApp(mock)
-        app.nativeCalendarEnabled = true
         await app.connect()
 
         let store = try XCTUnwrap(app.makeAgendaStore())
@@ -846,23 +846,39 @@ final class CalendarAccessTests: XCTestCase {
 
     func testStoreIsDiscardedWhenFeatureOrPermissionIsWithdrawn() async throws {
         let mock = MockHestiaAPI()
+        let calendar = PausedCalendarAPI()
+        await mock.setFeatures([.capabilities, .calendarInstances])
         await mock.setCapabilities(grant)
-        await mock.setCalendarStub(MockCalendarAPI(result: .success(AgendaPage(enabled: true, groups: ["home"]))))
+        await mock.setCalendarStub(calendar)
         let app = makeApp(mock)
-        app.nativeCalendarEnabled = true
         await app.connect()
 
         let featureStore = try XCTUnwrap(app.makeAgendaStore())
-        await featureStore.load()
+        let initialLoad = Task { await featureStore.load() }
+        await calendar.waitForCalls(1)
+        await calendar.resumeNext(with: AgendaPage(enabled: true, groups: ["home"]))
+        await initialLoad.value
         XCTAssertEqual(featureStore.groups, ["home"])
-        app.nativeCalendarEnabled = false
+
+        let lateLoad = Task { await featureStore.refresh() }
+        await calendar.waitForCalls(2)
+        await mock.setFeatures([.capabilities])
+        await app.refresh()
+        await calendar.resumeNext(with: AgendaPage(enabled: true, groups: ["late"]))
+        await lateLoad.value
         XCTAssertTrue(featureStore.isDiscarded)
+        XCTAssertEqual(featureStore.state, .idle)
         XCTAssertTrue(featureStore.groups.isEmpty)
         XCTAssertNil(app.calendarAPI)
+        XCTAssertEqual(app.capabilities, grant)
 
-        app.nativeCalendarEnabled = true
+        await mock.setFeatures([.capabilities, .calendarInstances])
+        await app.refresh()
         let permissionStore = try XCTUnwrap(app.makeAgendaStore())
-        await permissionStore.load()
+        let permissionLoad = Task { await permissionStore.load() }
+        await calendar.waitForCalls(3)
+        await calendar.resumeNext(with: AgendaPage(enabled: true, groups: ["home"]))
+        await permissionLoad.value
         XCTAssertEqual(permissionStore.groups, ["home"])
         await mock.setCapabilities(Capabilities())
         await app.refresh()
@@ -873,10 +889,10 @@ final class CalendarAccessTests: XCTestCase {
 
     func testSigningOutDiscardsAgenda() async throws {
         let mock = MockHestiaAPI()
+        await mock.setFeatures([.capabilities, .calendarInstances])
         await mock.setCapabilities(grant)
         await mock.setCalendarStub(MockCalendarAPI(result: .success(AgendaPage(enabled: true, groups: ["home"]))))
         let app = makeApp(mock)
-        app.nativeCalendarEnabled = true
         await app.connect()
 
         let store = try XCTUnwrap(app.makeAgendaStore())
