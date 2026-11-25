@@ -9,6 +9,9 @@ accessModifier: internal
 namingStrategy: idiomatic
 typeOverrides:
   schemas:
+    # Preserve required nullable fields that the generator drops from anyOf unions.
+    AuthFeatures: AuthFeaturesWire
+    MeCapabilities: MeCapabilitiesWire
     # The generator drops recurrence_id's required anyOf with a null branch.
     CalendarExpandedInstance: CalendarExpandedInstanceWire
     # Allow malformed instances to be skipped while preserving the page metadata.

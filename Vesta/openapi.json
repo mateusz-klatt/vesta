@@ -135,6 +135,40 @@
         "title": "AuditFeed",
         "type": "object"
       },
+      "AuthFeatures": {
+        "properties": {
+          "auth_contract": {
+            "minimum": 2,
+            "title": "Auth Contract",
+            "type": "integer"
+          },
+          "features": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "qr_origin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qr Origin"
+          }
+        },
+        "required": [
+          "auth_contract",
+          "features",
+          "qr_origin"
+        ],
+        "title": "AuthFeatures",
+        "type": "object"
+      },
       "AutomationDeleted": {
         "description": "200 from POST /api/automations/delete: `deleted` is false (200, not 404) for an absent id.",
         "properties": {
@@ -1491,6 +1525,27 @@
         "title": "DbStats",
         "type": "object"
       },
+      "DelegatedReceiptCapabilities": {
+        "properties": {
+          "can_use": {
+            "title": "Can Use",
+            "type": "boolean"
+          },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Permissions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "permissions",
+          "can_use"
+        ],
+        "title": "DelegatedReceiptCapabilities",
+        "type": "object"
+      },
       "DeviceInfo": {
         "description": "One device, merged from the classifier + the user registry (``proxy._discovery_entry``). The base\n+ live-state fields are ALWAYS present (required), null when unseen \u2014 so `0`/`false` are never lost.\nThe registry labels (``name``/``room``/``endpoint_names``) are OPTIONAL \u2014 absent until set, never null.\n``confidence`` is usually a string but a legacy/hand-edited registry node (a ``type`` without a\n``confidence``) can surface null, so the contract admits it. NOTE: the whole-home scene opt-out\n(``exclude_from_all``) is deliberately NOT exposed here \u2014 it lives only on the dedicated\n``/api/whole-home`` surface, so adding it never changes this (client-decoded) response shape.",
         "properties": {
@@ -2121,6 +2176,77 @@
         "title": "LoginSuccess",
         "type": "object"
       },
+      "MeCapabilities": {
+        "description": "Effective permissions for the authenticated actor; delegated responses never name an owner.",
+        "properties": {
+          "actor_tag": {
+            "anyOf": [
+              {
+                "maxLength": 43,
+                "minLength": 43,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Tag"
+          },
+          "delegated_receipts": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DelegatedReceiptCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "household_available": {
+            "title": "Household Available",
+            "type": "boolean"
+          },
+          "installation_permissions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Installation Permissions",
+            "type": "array"
+          },
+          "own_budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OwnBudgetCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "user": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User"
+          }
+        },
+        "required": [
+          "user",
+          "actor_tag",
+          "installation_permissions",
+          "own_budget",
+          "delegated_receipts",
+          "household_available"
+        ],
+        "title": "MeCapabilities",
+        "type": "object"
+      },
       "NameRequest": {
         "additionalProperties": false,
         "description": "POST /api/name \u2014 set a device's registry labels. ``node`` is required; at least one of\nname/room/type must be present (server-enforced cross-field, not expressible here). name/room\naccept null (clear); type is a DeviceType; ep is a multi-gang channel label. Unknown keys \u2192 400.",
@@ -2195,6 +2321,37 @@
           "ok"
         ],
         "title": "OkResult",
+        "type": "object"
+      },
+      "OwnBudgetCapabilities": {
+        "properties": {
+          "can_manage_devices": {
+            "title": "Can Manage Devices",
+            "type": "boolean"
+          },
+          "can_use_receipts": {
+            "title": "Can Use Receipts",
+            "type": "boolean"
+          },
+          "can_view": {
+            "title": "Can View",
+            "type": "boolean"
+          },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Permissions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "permissions",
+          "can_view",
+          "can_use_receipts",
+          "can_manage_devices"
+        ],
+        "title": "OwnBudgetCapabilities",
         "type": "object"
       },
       "ResetPasswordRequest": {
@@ -4542,6 +4699,35 @@
         "x-required-role": "viewer"
       }
     },
+    "/api/auth/features": {
+      "get": {
+        "description": "Public and Cache-Control: no-store. Only actually registered features are listed.",
+        "operationId": "authFeatures",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthFeatures"
+                }
+              }
+            },
+            "description": "the authentication contract and feature strings",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Public authentication contract and available features",
+        "x-required-permission": "public",
+        "x-required-role": "public"
+      }
+    },
     "/api/automations": {
       "get": {
         "description": "Requires the admin role (rules can carry presence-trigger MACs).",
@@ -5728,6 +5914,35 @@
         },
         "summary": "Clear the session cookie",
         "x-required-role": "public"
+      }
+    },
+    "/api/me/capabilities": {
+      "get": {
+        "description": "Authenticated. Cache-Control: no-store. Delegated responses never identify an owner.",
+        "operationId": "meCapabilities",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeCapabilities"
+                }
+              }
+            },
+            "description": "the current actor's effective capabilities",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Effective installation and own-Budget capabilities",
+        "x-required-permission": "authenticated",
+        "x-required-role": "viewer"
       }
     },
     "/api/me/password": {

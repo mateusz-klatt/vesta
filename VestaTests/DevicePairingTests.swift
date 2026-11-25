@@ -555,6 +555,24 @@ final class DevicePairingTests: XCTestCase {
         }
     }
 
+    func testSignedOutForegroundDoesNotRetryPendingRevocations() async throws {
+        let api = MockDevicePairingAPI()
+        let store = MemoryDeviceTokenStore()
+        let pairing = ReceiptPairing(api: api, store: store, serverURL: { fakeServer })
+        let app = AppState(api: MockHestiaAPI(), receiptPairing: pairing, events: noEvents)
+        await app.signOut()
+        let pending = StoredReceiptDeviceToken(server: fakeServer, credential: fakeDeviceToken)
+        store.savePendingRevocations([pending])
+
+        app.enterForeground()
+        XCTAssertNil(pairing.revocationNotice)
+        try await waitUntil("the signed-out probe") { app.serverFeatures == .legacy }
+
+        let calls = await api.calls
+        XCTAssertTrue(calls.isEmpty)
+        XCTAssertEqual(store.pending, [pending])
+    }
+
     func testRefreshKeepsPendingRevocationAfterAnotherFailure() async throws {
         for behavior in [MockDevicePairingAPI.RevokeBehavior.offline, .unauthorized] {
             let api = MockDevicePairingAPI(failRevoke: true)

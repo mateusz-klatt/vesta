@@ -883,6 +883,7 @@ final class BudgetStoreTests: XCTestCase {
             events: { AsyncStream { $0.finish() } }
         )
         app.nativeBudgetEnabled = true
+        await mock.setFeatures([.capabilities, .budgetNativeRead])
         await mock.setWhoami(role: "admin")
         await app.connect()
 
@@ -1239,32 +1240,47 @@ extension MockHestiaAPI: BudgetAPI {
 
 @MainActor
 final class BudgetGateTests: XCTestCase {
-    func testBudgetAPIIsHiddenByDefaultEvenForAdmin() async {
-        let mock = MockHestiaAPI()
-        let app = AppState(
+    private let owner = Capabilities(user: "owner", ownBudget: .init(
+        permissions: [.budgetView], canView: true, canUseReceipts: false, canManageDevices: false
+    ))
+
+    private func makeApp(_ mock: MockHestiaAPI) -> AppState {
+        AppState(
             api: mock,
             receiptPairing: ReceiptPairing(store: MemoryDeviceTokenStore()),
             events: { AsyncStream { $0.finish() } }
         )
-        await mock.setWhoami(role: "admin")
-        await app.connect()
-        XCTAssertNil(app.budgetAPI)
     }
 
-    func testBudgetAPIIsNilForNonAdminAndAvailableForAdmin() async {
+    func testBudgetAPIStaysOffByDefaultWhenAdvertised() async {
         let mock = MockHestiaAPI()
-        let app = AppState(
-            api: mock,
-            receiptPairing: ReceiptPairing(store: MemoryDeviceTokenStore()),
-            events: { AsyncStream { $0.finish() } }
-        )
+        let app = makeApp(mock)
+        await mock.setFeatures([.capabilities, .budgetNativeRead])
+        await mock.setCapabilities(owner)
+        await app.connect()
+
+        XCTAssertFalse(app.nativeBudgetEnabled)
+        XCTAssertEqual(app.serverFeatures?.supports(.budgetNativeRead), true)
+        XCTAssertNil(app.budgetAPI)
+        XCTAssertNil(app.makeBudgetStore())
+    }
+
+    func testBudgetAPIRequiresServerFeatureAndViewGrantWhenFlagIsEnabled() async {
+        let mock = MockHestiaAPI()
+        let app = makeApp(mock)
         app.nativeBudgetEnabled = true
-        await mock.setWhoami(role: "viewer")
+        await mock.setFeatures([.capabilities])
+        await mock.setCapabilities(owner)
         await app.connect()
         XCTAssertNil(app.budgetAPI)
 
-        await mock.setWhoami(role: "admin")
-        await app.connect()
+        await mock.setFeatures([.capabilities, .budgetNativeRead])
+        await mock.setCapabilities(Capabilities(user: "viewer"))
+        await app.refresh()
+        XCTAssertNil(app.budgetAPI)
+
+        await mock.setCapabilities(owner)
+        await app.refresh()
         XCTAssertNotNil(app.budgetAPI)
     }
 }

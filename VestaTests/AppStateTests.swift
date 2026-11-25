@@ -16,8 +16,18 @@ actor MockHestiaAPI: HestiaAPI, ReceiptsAPI {
         case parseReceipt
     }
 
+    struct CapabilityRequest: Equatable, Sendable {
+        let origin: URL
+        let features: ServerFeatures
+    }
+
     private(set) var calls: [Call] = []
     private(set) var calendarStub: (any CalendarAPI)?
+    private(set) var probeOrigins: [URL] = []
+    private(set) var capabilityRequests: [CapabilityRequest] = []
+    private var probeResult: Result<ServerFeatures, URLError> = .success(.legacy)
+    private var holdProbe = false
+    private var probeGate: CheckedContinuation<Void, Never>?
     private var whoamiResult = Components.Schemas.WhoAmI(role: "operator", user: "u")
     private var capabilitiesResult: Result<Capabilities, APIError>?
     private var holdCapabilities = false
@@ -46,6 +56,18 @@ actor MockHestiaAPI: HestiaAPI, ReceiptsAPI {
     func setAuthOff() {
         whoamiResult = .init(role: nil, user: nil)
         capabilitiesResult = nil
+    }
+    func setFeatures(_ features: ServerFeatures) { probeResult = .success(features) }
+    func setFeatures(_ features: Set<ServerFeature>) {
+        setFeatures(.init(authContract: 2, features: features, qrOrigin: nil, isLegacy: false))
+    }
+    func setProbeError(_ error: URLError) { probeResult = .failure(error) }
+    func setHoldProbe() { holdProbe = true }
+    var isProbeHeld: Bool { probeGate != nil }
+    func releaseProbe() {
+        holdProbe = false
+        probeGate?.resume()
+        probeGate = nil
     }
     func setCapabilities(_ capabilities: Capabilities) { capabilitiesResult = .success(capabilities) }
     func setCapabilitiesError(_ error: APIError) { capabilitiesResult = .failure(error) }
@@ -100,8 +122,18 @@ actor MockHestiaAPI: HestiaAPI, ReceiptsAPI {
     func count(_ call: Call) -> Int { calls.filter { $0 == call }.count }
 
     func whoami() async throws -> Components.Schemas.WhoAmI { calls.append(.whoami); return whoamiResult }
-    func capabilities() async throws -> Capabilities {
+    func probeFeatures(on origin: URL) async throws -> ServerFeatures {
+        probeOrigins.append(origin)
+        let result = probeResult
+        if holdProbe {
+            holdProbe = false
+            await withCheckedContinuation { probeGate = $0 }
+        }
+        return try result.get()
+    }
+    func capabilities(on origin: URL, features: ServerFeatures) async throws -> Capabilities {
         calls.append(.capabilities)
+        capabilityRequests.append(.init(origin: origin, features: features))
         let result = capabilitiesResult ?? .success(.fromLegacyRole(role: whoamiResult.role, user: whoamiResult.user))
         if holdCapabilities {
             holdCapabilities = false

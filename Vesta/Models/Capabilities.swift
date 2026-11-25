@@ -37,15 +37,18 @@ struct Capabilities: Equatable, Sendable {
     let installation: Set<Permission>
     let ownBudget: OwnBudget?
     let delegatedReceipts: DelegatedReceipts?
+    let householdAvailable: Bool
     let isAuthOff: Bool
     let legacyRole: String?
 
     init(user: String? = nil, installation: Set<Permission> = [], ownBudget: OwnBudget? = nil,
-         delegatedReceipts: DelegatedReceipts? = nil, isAuthOff: Bool = false, legacyRole: String? = nil) {
+         delegatedReceipts: DelegatedReceipts? = nil, householdAvailable: Bool = false,
+         isAuthOff: Bool = false, legacyRole: String? = nil) {
         self.user = user
         self.installation = installation
         self.ownBudget = ownBudget
         self.delegatedReceipts = delegatedReceipts
+        self.householdAvailable = householdAvailable
         self.isAuthOff = isAuthOff
         self.legacyRole = legacyRole
     }

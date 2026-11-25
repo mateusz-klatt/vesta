@@ -23,6 +23,21 @@ packages:
     url: https://github.com/apple/swift-openapi-urlsession
     from: "1.0.0"
 
+targetTemplates:
+  LegacyContractTests:
+    type: bundle.unit-test
+    platform: iOS
+    dependencies:
+      - package: swift-openapi-runtime
+        product: OpenAPIRuntime
+    buildToolPlugins:
+      - plugin: OpenAPIGenerator
+        package: swift-openapi-generator
+    settings:
+      base:
+        PRODUCT_NAME: $(TARGET_NAME)
+        GENERATE_INFOPLIST_FILE: YES
+
 targets:
   Vesta:
     type: application
@@ -123,6 +138,8 @@ targets:
     scheme:
       testTargets:
         - VestaTests
+        - Legacy110ContractTests
+        - LegacyReceipts090ContractTests
       gatherCoverageData: true
 
   VestaTests:
@@ -143,3 +160,21 @@ targets:
         CODE_SIGN_STYLE: Automatic
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/Vesta.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Vesta
         BUNDLE_LOADER: $(TEST_HOST)
+
+  Legacy110ContractTests:
+    templates: [LegacyContractTests]
+    sources:
+      - VestaContractTests/Legacy110
+      - VestaContractTests/ContractFixtureTransport.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ie.klatt.vesta.legacy110tests
+
+  LegacyReceipts090ContractTests:
+    templates: [LegacyContractTests]
+    sources:
+      - VestaContractTests/LegacyReceipts090
+      - VestaContractTests/ContractFixtureTransport.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ie.klatt.vesta.legacyreceipts090tests
