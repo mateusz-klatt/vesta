@@ -869,7 +869,9 @@ final class BudgetStoreTests: XCTestCase {
                 window.isHidden = true
                 window.rootViewController = nil
             }
-            try await waitUntil("BudgetView denial closes the sheet") { hostedClosed }
+            // Hosting a SwiftUI view in a window waits on the run loop. Under coverage
+            // instrumentation on CI that has taken ~20s, so allow more than the 5s default.
+            try await waitUntil("BudgetView denial closes the sheet", timeout: .seconds(60)) { hostedClosed }
             XCTAssertTrue(hostedStore.isDenied)
             XCTAssertTrue(hostedClosed)
         }
