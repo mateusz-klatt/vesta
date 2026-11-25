@@ -270,7 +270,7 @@ final class HTTPSessionTests: XCTestCase {
 
     func testFeaturesProbeRejectsRedirects() async throws {
         let session = HTTPSession.featuresProbe
-        let delegate = try XCTUnwrap(session.delegate as? FeaturesProbeDelegate)
+        let delegate = try XCTUnwrap(session.delegate as? UnauthenticatedAuthDelegate)
         let url = try XCTUnwrap(URL(string: "https://hestia.example/api/auth/features"))
         let task = session.dataTask(with: url)
         defer { task.cancel() }
@@ -286,7 +286,7 @@ final class HTTPSessionTests: XCTestCase {
 
     func testFeaturesProbeOnlyAllowsDefaultServerTrustHandling() async throws {
         let session = HTTPSession.featuresProbe
-        let delegate = try XCTUnwrap(session.delegate as? FeaturesProbeDelegate)
+        let delegate = try XCTUnwrap(session.delegate as? UnauthenticatedAuthDelegate)
         let url = try XCTUnwrap(URL(string: "https://hestia.example/api/auth/features"))
         let task = session.dataTask(with: url)
         defer { task.cancel() }

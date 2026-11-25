@@ -1,10 +1,68 @@
 import SwiftUI
 
+struct PendingQRScan: Equatable {
+    let payload: QRLoginPayload
+
+    var displayedOrigin: String {
+        // Isolate this left-to-right URL inside the translated prompt.
+        "\u{2066}\(payload.origin.absoluteString)\u{2069}"
+    }
+}
+
+@MainActor
+@Observable
+final class QRLoginPresentation {
+    typealias SignIn = @MainActor (QRLoginPayload) async throws -> Void
+
+    private(set) var pendingScan: PendingQRScan?
+    private(set) var message: LocalizedStringResource?
+    private(set) var isSigningIn = false
+
+    func receiveScan(_ rawPayload: String, savedOverride: URL?, locale: Locale, signIn: SignIn) async {
+        guard !isSigningIn, pendingScan == nil else { return }
+        guard let payload = QRLoginPayload(rawValue: rawPayload) else {
+            message = "This isn’t a hestia sign-in QR code."
+            return
+        }
+        message = nil
+        if let savedOverride, OriginMatcher.matches(savedOverride, payload.origin) {
+            await submit(payload, locale: locale, signIn: signIn)
+        } else {
+            pendingScan = PendingQRScan(payload: payload)
+        }
+    }
+
+    func confirm(_ scan: PendingQRScan, locale: Locale, signIn: SignIn) async {
+        guard pendingScan == scan else { return }
+        pendingScan = nil
+        await submit(scan.payload, locale: locale, signIn: signIn)
+    }
+
+    func cancelConfirmation() { pendingScan = nil }
+
+    private func submit(_ payload: QRLoginPayload, locale: Locale, signIn: SignIn) async {
+        isSigningIn = true
+        defer { isSigningIn = false }
+        do {
+            try await signIn(payload)
+        } catch is CancellationError {
+            return
+        } catch let error as QRLoginError {
+            message = error.message(locale: locale)
+        } catch let error as APIError {
+            message = error.message
+        } catch {
+            message = "Couldn’t sign in"
+        }
+    }
+}
+
 /// Onboarding + sign-in + recovery. First run shows a calm "connect to your
 /// server" setup (no error, no default host); a real failure shows friendly copy
 /// with retry; a reachable-but-unauthenticated server shows sign-in.
 struct ConnectView: View {
     @Environment(AppState.self) private var app
+    @Environment(\.locale) private var locale
 
     @State private var urlText = ""
     @State private var user = ""
@@ -12,6 +70,10 @@ struct ConnectView: View {
     @State private var urlInvalid = false
     @State private var showWhatIsThis = false
     @State private var showTechnical = false
+    @State private var qrLogin = QRLoginPresentation()
+    @State private var showScanner = false
+    @State private var scannedPayload: String?
+    @State private var showQRConfirmation = false
 
     var body: some View {
         NavigationStack {
@@ -19,12 +81,14 @@ struct ConnectView: View {
                 switch app.phase {
                 case .needsAuth:
                     signInSection
+                    qrLoginSection
                     serverSection(title: "Server")
                 case .failed(let error):
                     failureSection(error)
                     serverSection(title: "Server")
                 default:
                     onboardingSection
+                    qrLoginSection
                     serverSection(title: "Server address")
                 }
             }
@@ -32,6 +96,15 @@ struct ConnectView: View {
             .scrollContentBackground(.hidden)
             .background(Theme.background)
             .sheet(isPresented: $showWhatIsThis) { whatIsThisSheet }
+            .sheet(isPresented: $showScanner, onDismiss: completeQRScan) { scannerSheet }
+            .alert("Sign in to this server?", isPresented: $showQRConfirmation, presenting: qrLogin.pendingScan) { scan in
+                Button("Sign in") {
+                    Task { await qrLogin.confirm(scan, locale: locale, signIn: app.signIn(with:)) }
+                }
+                Button("Cancel", role: .cancel) { qrLogin.cancelConfirmation() }
+            } message: { scan in
+                Text("Sign in to \(scan.displayedOrigin) using the scanned code?")
+            }
             .onAppear {
                 if urlText.isEmpty, app.phase != .unconfigured { urlText = app.backendURLString }
             }
@@ -50,6 +123,52 @@ struct ConnectView: View {
                     .font(.footnote)
             }
             .padding(.vertical, 4)
+        }
+    }
+
+    @ViewBuilder
+    private var qrLoginSection: some View {
+        if app.canScanQRLogin {
+            Section {
+                Button { showScanner = true } label: {
+                    Label("Scan a code from Hestia", systemImage: "qrcode.viewfinder")
+                }
+                .disabled(qrLogin.isSigningIn)
+                if qrLogin.isSigningIn { ProgressView() }
+                if let message = qrLogin.message {
+                    Text(message)
+                        .font(.footnote)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+        }
+    }
+
+    private var scannerSheet: some View {
+        NavigationStack {
+            QRScannerView { payload in
+                guard showScanner else { return }
+                scannedPayload = payload
+                showScanner = false
+            }
+            .navigationTitle("Scan QR")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showScanner = false }
+                }
+            }
+        }
+        .appLanguage(app.appLanguage)
+    }
+
+    private func completeQRScan() {
+        guard let scannedPayload else { return }
+        self.scannedPayload = nil
+        Task {
+            await qrLogin.receiveScan(scannedPayload, savedOverride: app.savedBackendOverride,
+                                      locale: locale, signIn: app.signIn(with:))
+            showQRConfirmation = qrLogin.pendingScan != nil
         }
     }
 

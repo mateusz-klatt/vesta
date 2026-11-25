@@ -56,6 +56,7 @@ final class AppState {
     private static let languageKey = "vesta.language"
 
     private let api: any HestiaAPI
+    private let redeemQRLogin: @Sendable (URL, String) async throws -> QRLoginResponse
     private let sessionStore: CredentialSessionStore
     private var backendURLStore: BackendURLStore { sessionStore.backendURLStore }
     private var activeOrigin: URL {
@@ -122,6 +123,17 @@ final class AppState {
         let detachedDevice: StoredReceiptDeviceToken?
     }
 
+    private struct AuthAttempt {
+        let id: Int
+        let session: Int
+    }
+
+    private struct LoginCommit {
+        let session: BoundSession
+        let hydration: CapabilityRefresh?
+        let cleanup: Task<Void, Never>?
+    }
+
     private struct CapabilityRefresh {
         let source: RefreshSource
         let snapshot: RefreshSnapshot
@@ -153,6 +165,12 @@ final class AppState {
     }
 
     private var allDevices: [IdentifiedDevice] { rooms.flatMap(\.devices) }
+    var canScanQRLogin: Bool {
+        phase == .unconfigured || (phase == .needsAuth && serverFeatures?.supports(.qrLogin) == true)
+    }
+    var savedBackendOverride: URL? {
+        backendURLStore.loadOverrideRecord().flatMap { URL(string: $0.urlString) }
+    }
     var canViewIOC: Bool { capabilities?.canViewIOC == true }
     var isReadOnly: Bool { capabilities?.canControlIOC != true }
     var receiptsAPI: (any ReceiptsAPI)? {
@@ -246,6 +264,7 @@ final class AppState {
     init(api: (any HestiaAPI)? = nil,
          receiptPairing: ReceiptPairing? = nil,
          sessionStore: CredentialSessionStore = CredentialSessionStore(),
+         redeemQRLogin: (@Sendable (URL, String) async throws -> QRLoginResponse)? = nil,
          events: @escaping @Sendable (SSESessionSnapshot) -> AsyncStream<EventStream.Event> = { EventStream.changes(snapshot: $0) },
          eventRetryDelay: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
         let backendURLStore = sessionStore.backendURLStore
@@ -253,6 +272,7 @@ final class AppState {
         self.sessionStore = sessionStore
         self.receiptPairing = receiptPairing
         self.api = api ?? APIClient(receiptPairing: receiptPairing, sessionStore: sessionStore)
+        self.redeemQRLogin = redeemQRLogin ?? QRLoginAPI().redeem
         self.makeEvents = events
         self.eventRetryDelay = eventRetryDelay
         backendURLString = backendURLStore.currentEffectiveURL().absoluteString
@@ -304,10 +324,10 @@ final class AppState {
         case .deferred:
             return
         case .ready:
-            prepareInitialAuth()
-            await finishInitialAuth()
+            prepareInitialAuth(features: serverFeatures)
+            await finishInitialAuth(using: beginCapabilityRefresh(source: .initialAuth))
         case .verifiedLegacy(let features, let capabilities):
-            prepareInitialAuth(keepingFeatures: false)
+            prepareInitialAuth(features: nil)
             publishAuthorization(features: features, capabilities: capabilities)
             await finishInitialAuth(using: currentFence)
         }
@@ -393,7 +413,8 @@ final class AppState {
         do {
             let cleanup = try resetLocalSession(savingOverride: url)
             let previousOrigin = cleanup.oldSession?.origin
-            prepareInitialAuth(keepingFeatures: !changed && (previousOrigin.map { OriginMatcher.matches($0, url) } ?? true))
+            let keepFeatures = !changed && (previousOrigin.map { OriginMatcher.matches($0, url) } ?? true)
+            prepareInitialAuth(features: keepFeatures ? serverFeatures : nil)
             scheduleCleanup(cleanup, reconnect: true)
             return true
         } catch {
@@ -404,49 +425,101 @@ final class AppState {
 
     func login(user: String, password: String) async {
         sessionStorageError = nil
-        authAttempt += 1
-        let attempt = authAttempt
-        let generation = sessionGeneration
+        let attempt = beginAuthAttempt()
         let origin = activeOrigin
         await resetTask?.value
-        guard isCurrentLogin(attempt, generation: generation, origin: origin) else { return }
-        let actor: String
-        let token: String
+        guard isCurrent(attempt), OriginMatcher.matches(origin, activeOrigin) else { return }
+        let credentials: (actor: String, token: String)
         do {
             let result = try await api.login(user: user, password: password, on: origin)
             guard result.ok, !result.user.isEmpty,
-                  let receivedToken = result.token, !receivedToken.isEmpty else { throw APIError.unauthorized }
-            actor = result.user
-            token = receivedToken
+                  let token = result.token, !token.isEmpty else { throw APIError.unauthorized }
+            credentials = (actor: result.user, token: token)
         } catch {
-            guard isCurrentLogin(attempt, generation: generation, origin: origin), !APIError.isCancellation(error) else { return }
+            guard isCurrent(attempt), OriginMatcher.matches(origin, activeOrigin),
+                  !APIError.isCancellation(error) else { return }
             if phase == .ready { notice = APIError.wrap(error) } else { phase = .failed(APIError.wrap(error)) }
             return
         }
-        guard isCurrentLogin(attempt, generation: generation, origin: origin) else { return }
-
-        let oldSession: BoundSession?
-        var stagedDevice: StoredReceiptDeviceToken?
-        let committed: BoundSession
+        guard isCurrent(attempt), OriginMatcher.matches(origin, activeOrigin) else { return }
+        let commit: LoginCommit
         do {
-            if retryInvalidation { try clearInvalidatedSession() }
-            oldSession = sessionStore.currentSnapshot()
-            committed = try sessionStore.commitAuthoritative(origin: origin, actor: actor, token: token) { replacement in
-                stagedDevice = try receiptPairing.prepareForLogin(from: oldSession, to: replacement)
-            }
+            commit = try commitLogin(origin: origin, actor: credentials.actor, token: credentials.token)
         } catch {
             reportSessionStorageFailure(error)
             return
         }
+        await finishInitialAuth(using: commit.hydration)
+        await commit.cleanup?.value
+        guard attempt.id == authAttempt, sessionStore.currentSnapshot() == commit.session, !Task.isCancelled else { return }
+        await pairReceiptsAfterLogin(user: user, password: password, server: commit.session.origin)
+    }
+
+    func signIn(with payload: QRLoginPayload) async throws {
+        let attempt = beginAuthAttempt()
+        let target = payload.origin
+        await resetTask?.value
+        guard isCurrent(attempt) else { throw CancellationError() }
+
+        let probe: ServerFeatures
+        do {
+            probe = try await api.probeFeatures(on: target)
+        } catch {
+            guard isCurrent(attempt), !APIError.isCancellation(error) else { throw CancellationError() }
+            throw QRLoginError.failed
+        }
+        guard isCurrent(attempt) else { throw CancellationError() }
+        guard probe.supports(.qrLogin) else { throw QRLoginError.unsupported }
+        guard probe.qrOrigin == target else { throw QRLoginError.originMismatch }
+
+        let result: QRLoginResponse
+        do {
+            result = try await redeemQRLogin(target, payload.code)
+        } catch {
+            guard isCurrent(attempt), !APIError.isCancellation(error) else { throw CancellationError() }
+            throw (error as? QRLoginError) ?? .failed
+        }
+        guard isCurrent(attempt) else { throw CancellationError() }
+        guard result.ok, !result.user.isEmpty, !result.token.isEmpty else { throw QRLoginError.invalidCode }
+
+        let commit: LoginCommit
+        do {
+            commit = try commitLogin(origin: target, actor: result.user, token: result.token, preloadedProbe: probe)
+        } catch {
+            sessionStorageError = .credentialStorage
+            throw APIError.credentialStorage
+        }
+        await finishInitialAuth(using: commit.hydration)
+        await commit.cleanup?.value
+    }
+
+    private func beginAuthAttempt() -> AuthAttempt {
+        authAttempt += 1
+        return AuthAttempt(id: authAttempt, session: sessionGeneration)
+    }
+
+    private func isCurrent(_ attempt: AuthAttempt) -> Bool {
+        !Task.isCancelled && attempt.id == authAttempt && attempt.session == sessionGeneration
+    }
+
+    private func commitLogin(origin: URL, actor: String, token: String, preloadedProbe: ServerFeatures? = nil) throws -> LoginCommit {
+        if retryInvalidation { try clearInvalidatedSession() }
+        let oldSession = sessionStore.currentSnapshot()
+        var stagedDevice: StoredReceiptDeviceToken?
+        // Preserve the V2b receipt handoff across crashes. The authoritative
+        // Keychain write still precedes publishing the replacement session.
+        let committed = try sessionStore.commitAuthoritative(origin: origin, actor: actor, token: token) { replacement in
+            stagedDevice = try receiptPairing.prepareForLogin(from: oldSession, to: replacement)
+        }
         sessionGeneration += 1
-        let committedGeneration = sessionGeneration
+        sessionStorageError = nil
         needsSessionRestore = false
         if rejectedLegacyBearer {
             retryMigrationCleanup = sessionStore.retryLegacyMigrationCleanup()
             rejectedLegacyBearer = false
         }
         backendURLString = committed.origin.absoluteString
-        prepareInitialAuth()
+        prepareInitialAuth(features: preloadedProbe ?? serverFeatures)
         let detached = stagedDevice.flatMap { receiptPairing.finishStagedDetachment($0) }
         let logout = oldSession.flatMap { old -> BoundSession? in
             let sameOrigin = OriginMatcher.matches(old.origin, committed.origin)
@@ -455,34 +528,28 @@ final class AppState {
         }
         let cleanupTask = logout != nil || detached != nil
             ? scheduleCleanup(.init(oldSession: logout, detachedDevice: detached)) : nil
-        await finishInitialAuth()
-        await cleanupTask?.value
-        guard committedGeneration == sessionGeneration, !Task.isCancelled else { return }
-        await pairReceiptsAfterLogin(user: user, password: password, server: committed.origin)
+        let hydration = beginCapabilityRefresh(source: .initialAuth, preloadedProbe: preloadedProbe)
+        return LoginCommit(session: committed, hydration: hydration, cleanup: cleanupTask)
     }
 
-    private func isCurrentLogin(_ attempt: Int, generation: Int, origin: URL) -> Bool {
-        !Task.isCancelled && attempt == authAttempt && generation == sessionGeneration
-            && OriginMatcher.matches(origin, activeOrigin)
-    }
-
-    private func prepareInitialAuth(keepingFeatures: Bool = true) {
-        clearAuthorization(keeping: keepingFeatures ? serverFeatures : nil)
+    private func prepareInitialAuth(features: ServerFeatures?) {
+        clearAuthorization(keeping: features)
         phase = .connecting
     }
 
-    private func finishInitialAuth() async {
-        guard let fence = await refreshCapabilities(source: .initialAuth) else { return }
-        await finishInitialAuth(using: fence)
+    private func finishInitialAuth(using refresh: CapabilityRefresh?) async {
+        guard let refresh, let fence = await refresh.task.value else { return }
+        await finishInitialAuth(using: fence, refreshSnapshot: refresh.snapshot)
     }
 
-    private func finishInitialAuth(using fence: Fence) async {
-        guard isCurrent(fence) else { return }
+    private func finishInitialAuth(using fence: Fence, refreshSnapshot: RefreshSnapshot? = nil) async {
+        guard isCurrent(fence), matchesRefresh(refreshSnapshot) else { return }
         guard canViewIOC else {
             phase = .ready
             return
         }
-        if await loadDiscovery(failingOnTransient: true) == .loaded, isCurrentDiscovery(fence.discovery) {
+        if await loadDiscovery(failingOnTransient: true, refreshSnapshot: refreshSnapshot) == .loaded,
+           isCurrentDiscovery(fence.discovery), matchesRefresh(refreshSnapshot) {
             startEvents()
         }
     }
@@ -512,6 +579,8 @@ final class AppState {
     }
 
     private func resetLocalSession(savingOverride: URL? = nil) throws -> CleanupSnapshot {
+        // Cancel in-flight sign-in even if local persistence prevents the reset.
+        authAttempt += 1
         let originalOrigin = activeOrigin
         var stagedDevice: StoredReceiptDeviceToken?
         var preservesOrigin = false
@@ -601,11 +670,11 @@ final class AppState {
     // MARK: - Capabilities
 
     private func refreshCapabilities(source: RefreshSource) async -> Fence? {
-        guard !Task.isCancelled, let task = beginCapabilityRefresh(source: source) else { return nil }
-        return await task.value
+        guard !Task.isCancelled, let refresh = beginCapabilityRefresh(source: source) else { return nil }
+        return await refresh.task.value
     }
 
-    private func beginCapabilityRefresh(source: RefreshSource) -> Task<Fence?, Never>? {
+    private func beginCapabilityRefresh(source: RefreshSource, preloadedProbe: ServerFeatures? = nil) -> CapabilityRefresh? {
         let expectedPhase = phase
         guard expectedPhase == (source == .initialAuth ? .connecting : .ready)
                 || (source == .foreground && expectedPhase == .needsAuth) else { return nil }
@@ -613,25 +682,32 @@ final class AppState {
         // refreshes own their follow-up work, so only like denials can share it.
         if let active = activeCapabilitiesRefresh, active.snapshot == currentRefreshSnapshot,
            source == .denial, active.source == .denial {
-            return active.task
+            return active
         }
         cancelCapabilityRefresh()
         let snapshot = currentRefreshSnapshot
         let task = Task { [weak self] in
-            await self?.performCapabilityRefresh(source: source, snapshot: snapshot, phase: expectedPhase)
+            await self?.performCapabilityRefresh(source: source, snapshot: snapshot, phase: expectedPhase,
+                                                 preloadedProbe: preloadedProbe)
         }
-        activeCapabilitiesRefresh = CapabilityRefresh(source: source, snapshot: snapshot, task: task)
-        return task
+        let refresh = CapabilityRefresh(source: source, snapshot: snapshot, task: task)
+        activeCapabilitiesRefresh = refresh
+        return refresh
     }
 
-    private func performCapabilityRefresh(source: RefreshSource, snapshot: RefreshSnapshot, phase expectedPhase: Phase) async -> Fence? {
+    private func performCapabilityRefresh(source: RefreshSource, snapshot: RefreshSnapshot, phase expectedPhase: Phase,
+                                          preloadedProbe: ServerFeatures?) async -> Fence? {
         defer {
             if activeCapabilitiesRefresh?.snapshot == snapshot { activeCapabilitiesRefresh = nil }
         }
         guard isCurrent(snapshot, phase: expectedPhase) else { return nil }
         let features: ServerFeatures
         do {
-            features = try await api.probeFeatures(on: snapshot.origin)
+            if let preloadedProbe {
+                features = preloadedProbe
+            } else {
+                features = try await api.probeFeatures(on: snapshot.origin)
+            }
         } catch {
             if isCurrent(snapshot, phase: expectedPhase), source == .initialAuth, !APIError.isCancellation(error) {
                 phase = .failed(APIError.wrap(error))
@@ -714,10 +790,10 @@ final class AppState {
         }
         retrySessionPersistence()
         if !needsSessionRestore, !retryInvalidation { receiptPairing.retryInterruptedDetach() }
-        guard let task = beginCapabilityRefresh(source: .foreground) else { return }
+        guard let refresh = beginCapabilityRefresh(source: .foreground) else { return }
         let lifecycle = lifecycleGeneration
         Task { [weak self] in
-            guard let fence = await task.value, let self, isCurrent(fence), lifecycle == lifecycleGeneration,
+            guard let fence = await refresh.task.value, let self, isCurrent(fence), lifecycle == lifecycleGeneration,
                   canViewIOC else { return }
             startEvents()
         }
@@ -746,11 +822,18 @@ final class AppState {
 
     @discardableResult
     func loadDiscovery(failingOnTransient: Bool = false) async -> DiscoveryOutcome {
+        await loadDiscovery(failingOnTransient: failingOnTransient, refreshSnapshot: nil)
+    }
+
+    private func loadDiscovery(failingOnTransient: Bool, refreshSnapshot: RefreshSnapshot?) async -> DiscoveryOutcome {
         let fence = currentDiscoveryFence
-        guard isCurrentDiscovery(fence) else { return .cancelledOrStale }
+        func isCurrentLoad() -> Bool {
+            isCurrentDiscovery(fence) && matchesRefresh(refreshSnapshot)
+        }
+        guard isCurrentLoad() else { return .cancelledOrStale }
         do {
             let discovery = try await api.discovery()
-            guard isCurrentDiscovery(fence) else { return .cancelledOrStale }
+            guard isCurrentLoad() else { return .cancelledOrStale }
             rooms = RoomGroup.group(discovery)
             summary = discovery.summary
             globals = discovery.globals
@@ -759,7 +842,7 @@ final class AppState {
             if phase == .connecting { phase = .ready }
             return .loaded
         } catch {
-            guard isCurrentDiscovery(fence), !APIError.isCancellation(error) else { return .cancelledOrStale }
+            guard isCurrentLoad(), !APIError.isCancellation(error) else { return .cancelledOrStale }
             switch APIError.wrap(error) {
             case .forbidden:
                 stopForIOCDenial()
@@ -772,6 +855,10 @@ final class AppState {
                 return .transientFailure
             }
         }
+    }
+
+    private func matchesRefresh(_ snapshot: RefreshSnapshot?) -> Bool {
+        snapshot.map { $0 == currentRefreshSnapshot } ?? true
     }
 
     private func stopForIOCDenial() {

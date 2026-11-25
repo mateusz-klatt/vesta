@@ -123,8 +123,10 @@ final class ReceiptPairing {
         if active.provenance == .legacyCodeRedeem, try retainCodeCredential(active, from: old, to: new) { return nil }
 
         let sessionChanged = old.map { !OriginMatcher.matches($0.origin, new.origin) || $0.actor != new.actor } ?? false
+        let deviceOriginChanged = !OriginMatcher.matches(active.server, new.origin)
         let deviceActorChanged = active.actor.map { $0 != new.actor } ?? false
-        guard sessionChanged || deviceActorChanged || active.provenance == .legacyCodeRedeem else { return nil }
+        guard sessionChanged || deviceOriginChanged || deviceActorChanged || active.provenance == .legacyCodeRedeem
+        else { return nil }
         return try stageActiveDetachment(active)
     }
 
