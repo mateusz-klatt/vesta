@@ -1723,7 +1723,7 @@ final class AppStateTests: XCTestCase {
         let store: CredentialSessionStore
         let mock = MockHestiaAPI()
         let redeem: MockQRLogin
-        let pairingAPI = UpgradePairingAPI(failRevocation: false)
+        let pairingAPI = RecordingPairingAPI(revokeError: nil)
         let devices: MemoryDeviceTokenStore
         let app: AppState
         let previous: BoundSession?
@@ -1951,6 +1951,43 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(requests.count, 1)
         XCTAssertEqual(requests.first?.features, fixture.app.serverFeatures)
         XCTAssertEqual(fixture.app.phase, .ready)
+    }
+
+    func testCapabilities401KeepsCodePairedDeviceAfterSameActorQRSignIn() async throws {
+        for handoffFails in [false, true] {
+            let fixture = try QRFixture(oldOrigin: QRFixture.target, codePaired: true)
+            let original = try XCTUnwrap(fixture.devices.load())
+            await fixture.permitQR()
+            let capabilities = Capabilities(user: QRFixture.success.user, ownBudget: .init(
+                permissions: [.budgetReceiptsAdd], canView: false, canUseReceipts: true, canManageDevices: true
+            ))
+            await fixture.mock.setCapabilities(capabilities)
+            await fixture.app.bootstrap()
+            XCTAssertEqual(fixture.app.phase, .ready)
+            if handoffFails { fixture.devices.failNextSave() }
+
+            await fixture.mock.setCapabilitiesError(.unauthorized)
+            await fixture.app.refresh()
+            XCTAssertEqual(fixture.app.phase, .needsAuth)
+            XCTAssertNil(fixture.store.currentSnapshot())
+            XCTAssertEqual(fixture.keychain.storedData(for: .authoritative) != nil, handoffFails)
+            XCTAssertEqual(fixture.devices.load()?.credential, original.credential)
+
+            await fixture.mock.setCapabilities(capabilities)
+            try await fixture.app.signIn(with: QRFixture.payload())
+
+            let session = try XCTUnwrap(fixture.store.currentSnapshot())
+            let retained = try XCTUnwrap(fixture.app.receiptPairing.credential(for: QRFixture.target))
+            XCTAssertEqual(fixture.app.phase, .ready)
+            XCTAssertEqual(session.actor, QRFixture.success.user)
+            XCTAssertNotEqual(session.commitID, original.sessionCommitID)
+            XCTAssertEqual(retained.sessionCommitID, session.commitID)
+            XCTAssertEqual(retained.provenance, .legacyCodeRedeem)
+            XCTAssertEqual(retained.credential, original.credential)
+            XCTAssertTrue(fixture.devices.pending.isEmpty)
+            let revocations = await fixture.pairingAPI.revocations
+            XCTAssertTrue(revocations.isEmpty)
+        }
     }
 
     func testQRInvalidOkOrEmptyTokenAbortsCommit() async throws {
