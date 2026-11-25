@@ -76,6 +76,7 @@ struct Capabilities: Equatable, Sendable {
     var canMatchReceipts: Bool { effectiveDeviceReceiptPermissions.contains(.budgetReceiptsMatch) }
     var canViewIOC: Bool { isAuthOff || installation.contains(.iocView) }
     var canControlIOC: Bool { isAuthOff || installation.contains(.iocControl) }
+    var canViewCalendar: Bool { isAuthOff || installation.contains(.calendarView) }
 
     static func fromLegacyRole(role: String?, user: String?) -> Capabilities {
         let viewer: Set<Permission> = [.iocView, .calendarView, .systemAuditView]

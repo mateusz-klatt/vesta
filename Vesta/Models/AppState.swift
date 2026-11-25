@@ -73,6 +73,7 @@ final class AppState {
     /// that deferred logout would cancel the new session's login.
     private var resetTask: Task<Void, Never>?
     private weak var activeBudgetStore: BudgetStore?
+    private weak var activeAgendaStore: AgendaStore?
 
     private struct DiscoveryFence: Equatable {
         let session: Int
@@ -155,6 +156,38 @@ final class AppState {
         activeBudgetStore?.clear()
         activeBudgetStore = nil
     }
+
+    /// V2a will set this from the server's `calendar_instances` feature.
+    var nativeCalendarEnabled = false {
+        didSet { if !nativeCalendarEnabled { closeAgenda() } }
+    }
+    var calendarAPI: (any CalendarAPI)? {
+        guard nativeCalendarEnabled, capabilities?.canViewCalendar == true else { return nil }
+        return api as? any CalendarAPI
+    }
+
+    func makeAgendaStore(calendar: Calendar = .current) -> AgendaStore? {
+        guard phase == .ready, let api = calendarAPI else { return nil }
+        closeAgenda()
+        let store = AgendaStore(
+            api: api, calendar: calendar,
+            onForbidden: { [weak self] in
+                guard let self else { return }
+                closeAgenda()
+                // The discarded sheet handles the denial locally. Refresh the shared grants.
+                _ = beginCapabilityRefresh(source: .denial)
+            },
+            onUnauthorized: { [weak self] in self?.invalidateSession() }
+        )
+        activeAgendaStore = store
+        return store
+    }
+
+    func closeAgenda() {
+        activeAgendaStore?.discard()
+        activeAgendaStore = nil
+    }
+
     var hasLights: Bool { allDevices.contains { $0.device._type == "light" } }
     var hasBlinds: Bool { allDevices.contains { $0.device._type == "blind" } }
 
@@ -321,6 +354,7 @@ final class AppState {
 
     private func clearAuthorization() {
         closeBudget()
+        closeAgenda()
         activeCapabilitiesRefresh?.task.cancel()
         activeCapabilitiesRefresh = nil
         publishCapabilities(nil)
@@ -389,6 +423,7 @@ final class AppState {
             receiptAccessGeneration += 1
         }
         capabilities = published
+        if published?.canViewCalendar != true { closeAgenda() }
         applyIOCGrant(published?.canViewIOC == true)
         openReceiptFlow?.updateMatchAccess()
     }
@@ -491,6 +526,7 @@ final class AppState {
     private func fail(_ error: APIError) {
         discoveryGeneration += 1
         stopEvents()
+        closeAgenda()
         phase = .failed(error)
     }
 
