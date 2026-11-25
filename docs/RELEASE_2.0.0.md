@@ -16,30 +16,31 @@ that changes them. Tag only when every box is ticked.
 | One authoritative session record (V2b) | #24 | merged |
 | App version 2.0.0 | #26 | merged |
 | Code-paired device kept after a 401 and same-user sign-in | #28 | merged |
-| QR sign-in (V3) | #25 | reviewed, waiting for hestia authz PR 3 |
-| Device-token exchange and rotation journal (V4) | #27 | reviewed, waiting for hestia authz PR 3 |
+| QR sign-in (V3) | #25 | merged |
+| Device-token exchange and rotation journal (V4) | #27 | merged |
 
 ## Gates
 
 ### Before UAT
-- [ ] Hestia authz PR 3 (hestia `0.52.0`) is merged and deployed. Its merge SHA has been recorded here: `……`
-- [ ] The V3/V4 hand pins match the merged hestia spec, re-checked against that SHA: `qrRedeem` / `redeemQrLoginCode`, `exchangeNativeSession`, `QrRedeemRequest`, `QrRedeemSuccess`, `AuthDeviceTokenRequest`, `AuthDeviceTokenResult`, `AuthError`, and the `features` strings.
-- [ ] #25 is merged, then #27 is retargeted to `master` and merged.
+- [x] Hestia authz PR 3 (#291) is merged and deployed as `0bf8940`, contract `0.54.0`. QR and device exchange went live on prod at 2026-11-25 17:22Z (`HESTIA_PUBLIC_ORIGIN` set, `activate-sessions-v2` run). Legacy sessions keep working.
+- [x] The V3/V4 pins match the merged hestia spec, re-checked against that SHA: `qrRedeem` / `redeemQrLoginCode`, `exchangeNativeSession`, `QrRedeemRequest`, `QrRedeemSuccess`, `AuthDeviceTokenRequest`, `AuthDeviceTokenResult`, `AuthError`, and the `features` strings.
+- [x] #25 is merged (342ff9e), then #27 is retargeted to `master` and merged (7f3a261).
 - [ ] `make test` and `make coverage` are green on `master`. That includes both legacy decoder suites and the 45-locale catalog completeness test.
-- [ ] `PRIVACY.md` describes what 2.0.0 stores and sends (session record, exchanged device token, camera use for QR).
-- [ ] Xcode Cloud has built the final `master` commit and the build is in TestFlight as 2.0.0. Build number: `……`
+- [x] `PRIVACY.md` describes what 2.0.0 stores and sends (session record, exchanged device token, camera use for QR).
+- [x] Xcode Cloud built `7f3a261` at 2026-11-25 14:46Z ("Archive - iOS": success). The build number is in App Store Connect.
 
 ### Gate 1 — older hestia (0.46.0 behaviour)
 Covered by the unit tests: the features probe gets a non-200 → falls back to `whoami.role`; password sign-in, IOC, and viewer read-only all work; zero native Budget requests. There's no live 0.46.0 server any more, so this gate is satisfied by `FeaturesProbeTests`, `Legacy110ContractTests` and `LegacyReceipts090ContractTests`.
 
 ### Gate 2 — owner UAT on the phone (production hestia with PR 3)
-1. [ ] Install the 2.0.0 build over the current one. You are **still signed in**, and the receipt pairing is still there (Settings shows the iPhone as paired).
-2. [ ] Home and devices work. Toggling one light works.
-3. [ ] The **Calendar** button is visible and the agenda shows the next 30 days.
-4. [ ] Send **one receipt**. It shows up in hestia's receipts screen.
-5. [ ] In hestia's device list, the iPhone keeps the **same device** after the exchange: no second entry, and no "Nowe urządzenie" alert.
-6. [ ] Sign out in Vesta. Then, in hestia's browser UI, open the sign-in QR code and **scan it** with Vesta. Vesta asks to confirm the server, then signs in.
-7. [ ] After the QR sign-in, sending a receipt still works.
+Existing sessions keep working after `activate-sessions-v2`, so the upgrade doesn't sign you out. **Don't sign out before step 4.** In Vesta, signing out also unpairs the receipt device, and the exchange could then no longer keep the same device entry.
+1. [ ] Install the 2.0.0 build over the current one. You are **still signed in**.
+2. [ ] Toggle one light, open **Calendar** (the agenda covers the next 30 days), and send **one receipt**. Check that it shows up in hestia.
+3. [ ] In Settings, if the receipts section asks you to sign in again to update the pairing, tap Sign in and use your password. This gives Vesta a native session, and the device exchange then runs with the old token as proof.
+4. [ ] In hestia's device list (Budżet → Konta → Urządzenia), the iPhone is still **one entry, the same as before**. There is no "Nowe urządzenie" alert.
+5. [ ] Send another receipt. It works.
+6. [ ] Sign out in Vesta (this unpairs receipts, as expected). In hestia's browser UI, open the sign-in QR code and **scan it** with Vesta. Vesta shows the server address, you confirm it, and you are signed in.
+7. [ ] Pair the iPhone if Vesta asks. This time a single "Nowe urządzenie" alert is expected. Send a receipt.
 
 ### Gate 2b — spouse (delegate) UAT
 - [ ] The spouse's installed build keeps working against PR 3: sign-in, IOC and Calendar.
