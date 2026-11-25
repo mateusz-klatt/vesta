@@ -175,14 +175,33 @@ final class AppState {
     var isReadOnly: Bool { capabilities?.canControlIOC != true }
     var receiptsAPI: (any ReceiptsAPI)? {
         guard capabilities?.canUseReceipts == true, let api = api as? any ReceiptsAPI else { return nil }
+        return scopedReceiptsAPI(api, scope: currentReceiptScope)
+    }
+
+    var receiptsUseExchange: Bool { serverFeatures?.supports(.deviceExchange) == true }
+
+    private var currentReceiptScope: ReceiptSessionScope {
+        let session = sessionStore.currentSnapshot()
+        let origin = session?.origin ?? activeOrigin
+        let token = receiptPairing.credential(for: origin, session: session)
+        return .init(origin: origin, actor: session?.actor, ownerKey: token?.ownerKey, credential: token?.credential)
+    }
+
+    private func receiptScopeValidator(requiresAccess: Bool) -> @MainActor @Sendable (ReceiptSessionScope) -> Bool {
         let session = sessionGeneration
         let access = receiptAccessGeneration
-        return DenialReportingReceiptsAPI(api: api) { [weak self] in
-            guard let self, hasReceiptAccess(session: session, generation: access) else { return nil }
-            return { [weak self] in
-                guard let self, hasReceiptAccess(session: session, generation: access) else { return }
-                reportDenial()
-            }
+        return { [weak self] scope in
+            guard let self, session == sessionGeneration, scope == currentReceiptScope,
+                  capabilities?.canUseReceipts == true else { return false }
+            return !requiresAccess || hasReceiptAccess(session: session, generation: access)
+        }
+    }
+
+    private func scopedReceiptsAPI(_ api: any ReceiptsAPI, scope: ReceiptSessionScope) -> any ReceiptsAPI {
+        DenialReportingReceiptsAPI(api: api, scope: scope,
+                                   isScopeCurrent: receiptScopeValidator(requiresAccess: true),
+                                   isCleanupScopeCurrent: receiptScopeValidator(requiresAccess: false)) { [weak self] error, scope in
+            self?.handleReceiptFailure(error, scope: scope)
         }
     }
 
@@ -194,11 +213,28 @@ final class AppState {
     /// Native budget reads stay hidden until hestia advertises
     /// `budget_native_read` and capabilities grant `budget.view` (V2 plan §10).
     /// Nothing in production turns this on yet; tests do.
-    var nativeBudgetEnabled = false
+    var nativeBudgetEnabled = AppConfig.nativeBudgetEnabled
     var budgetAPI: (any BudgetAPI)? {
-        guard nativeBudgetEnabled, serverFeatures?.supports(.budgetNativeRead) == true,
-              capabilities?.effectiveDeviceEligiblePermissions.contains(.budgetView) == true else { return nil }
-        return api as? any BudgetAPI
+        guard let api = api as? any BudgetAPI, let session = sessionStore.currentSnapshot(),
+              NativeBudgetGate.isEligible(enabled: nativeBudgetEnabled, features: serverFeatures, capabilities: capabilities),
+              let token = receiptPairing.nativeBudgetCredential(for: session.origin, session: session) else { return nil }
+        return SessionBoundBudgetAPI(api: api, isCurrent: { [weak self] in
+            guard let self, session == sessionStore.currentSnapshot(),
+                  NativeBudgetGate.isEligible(enabled: nativeBudgetEnabled, features: serverFeatures,
+                                              capabilities: capabilities) else { return false }
+            return token == receiptPairing.nativeBudgetCredential(for: session.origin, session: session)
+        }, onDenial: { [weak self] error in
+            guard let self else { return }
+            closeBudget()
+            switch error {
+            case .forbidden: handleDeviceFailure(.forbidden, used: token)
+            case .expiredDeviceToken: handleDeviceFailure(.expiredDeviceToken, used: token)
+            case .revokedDeviceToken: handleDeviceFailure(.revokedDeviceToken, used: token)
+            case .invalidDeviceToken: handleDeviceFailure(.invalidDeviceToken, used: token)
+            case .unauthorized: _ = beginCapabilityRefresh(source: .denial)
+            default: break
+            }
+        })
     }
 
     func makeBudgetStore(now: Date = Date()) -> BudgetStore? {
@@ -249,14 +285,16 @@ final class AppState {
     var hasBlinds: Bool { allDevices.contains { $0.device._type == "blind" } }
 
     func makeReceiptFlow(janitor: ReceiptDraftJanitor = .shared) -> ReceiptFlow? {
-        guard let api = receiptsAPI else { return nil }
+        guard capabilities?.canUseReceipts == true, let api = api as? any ReceiptsAPI else { return nil }
         let session = sessionGeneration
         let access = receiptAccessGeneration
-        let origin = activeOrigin.absoluteString
-        let flow = ReceiptFlow(api: api, allowsMatching: { [weak self] in
+        let scope = currentReceiptScope
+        let flow = ReceiptFlow(api: scopedReceiptsAPI(api, scope: scope), allowsMatching: { [weak self] in
             guard let self, hasReceiptAccess(session: session, generation: access) else { return false }
             return capabilities?.canMatchReceipts == true
-        }, janitor: janitor, server: { origin })
+        }, janitor: janitor, scope: scope,
+                               isScopeCurrent: receiptScopeValidator(requiresAccess: true),
+                               isCleanupScopeCurrent: receiptScopeValidator(requiresAccess: false))
         openReceiptFlow = flow
         return flow
     }
@@ -544,22 +582,59 @@ final class AppState {
 
     private func finishInitialAuth(using fence: Fence, refreshSnapshot: RefreshSnapshot? = nil) async {
         guard isCurrent(fence), matchesRefresh(refreshSnapshot) else { return }
-        guard canViewIOC else {
+        if !canViewIOC {
             phase = .ready
-            return
-        }
-        if await loadDiscovery(failingOnTransient: true, refreshSnapshot: refreshSnapshot) == .loaded,
-           isCurrentDiscovery(fence.discovery), matchesRefresh(refreshSnapshot) {
+        } else if await loadDiscovery(failingOnTransient: true, refreshSnapshot: refreshSnapshot) == .loaded,
+                  isCurrentDiscovery(fence.discovery), matchesRefresh(refreshSnapshot) {
             startEvents()
         }
+        guard isCurrent(fence), matchesRefresh(refreshSnapshot) else { return }
+        try? await exchangeDeviceToken(reason: .automatic)
     }
 
     /// Admins get a receipts device token from the same credentials, so they
     /// don't have to copy a pairing code. Any failure leaves the code flow.
     private func pairReceiptsAfterLogin(user: String, password: String, server: URL) async {
-        guard capabilities?.canUseReceipts == true, receiptPairing.status != .paired else { return }
+        guard !receiptsUseExchange, capabilities?.canUseReceipts == true, receiptPairing.status != .paired else { return }
         try? await receiptPairing.pair(username: user, password: password,
                                        deviceName: ReceiptPairing.deviceName, server: server)
+    }
+
+    func pairReceiptsByExchange() async throws {
+        try await exchangeDeviceToken(reason: .manual)
+    }
+
+    @discardableResult
+    func signInAgainForDeviceExchange() -> Bool {
+        guard receiptPairing.requiresExchangeSignIn else { return false }
+        // Use the same-origin handoff so reauthentication leaves the prior device
+        // token and any unresolved rotation intact.
+        return saveAndConnect(activeOrigin.absoluteString)
+    }
+
+    private func exchangeDeviceToken(reason: ReceiptPairing.ExchangeReason, refreshOnDenial: Bool = true) async throws {
+        guard phase == .ready, receiptsUseExchange, let session = sessionStore.currentSnapshot(), let capabilities,
+              capabilities.canUseReceipts || NativeBudgetGate.isEligible(enabled: nativeBudgetEnabled,
+                                                                         features: serverFeatures, capabilities: capabilities)
+        else { return }
+        let previous = currentReceiptScope
+        let budgetToken = activeBudgetStore == nil ? nil : receiptPairing.nativeBudgetCredential(for: session.origin, session: session)
+        defer {
+            if session == sessionStore.currentSnapshot() {
+                if previous != currentReceiptScope { receiptAccessGeneration += 1 }
+                if let budgetToken, budgetToken != receiptPairing.nativeBudgetCredential(for: session.origin, session: session) {
+                    closeBudget()
+                }
+            }
+        }
+        do {
+            try await receiptPairing.exchange(session: session, capabilities: capabilities, deviceName: ReceiptPairing.deviceName,
+                                              nativeBudgetEnabled: nativeBudgetEnabled, reason: reason)
+        } catch DeviceExchangeError.http(403, "budget_forbidden") {
+            guard session == sessionStore.currentSnapshot(), !Task.isCancelled else { throw CancellationError() }
+            if refreshOnDenial { reportDenial() }
+            throw DevicePairingError.receipts(.forbidden)
+        }
     }
 
     @discardableResult
@@ -715,6 +790,9 @@ final class AppState {
             return nil
         }
         guard isCurrent(snapshot, phase: expectedPhase) else { return nil }
+        // A confirmed feature rollback is enough to stop sending exchanged bearers,
+        // even if the capability request fails or stays in flight.
+        if !features.supports(.deviceExchange) { updateReceiptPairing(features: features, capabilities: nil) }
         if expectedPhase == .needsAuth {
             publishAuthorization(features: features, capabilities: nil)
             return nil
@@ -751,11 +829,58 @@ final class AppState {
         }
         authorization = (features, published)
         receiptPairing.setUnauthenticatedOrigin(published?.isAuthOff == true ? activeOrigin : nil)
+        updateReceiptPairing(features: published == nil ? nil : features, capabilities: published)
         if published != nil { receiptPairing.refreshStatus() }
         if calendarAPI == nil { closeAgenda() }
         if budgetAPI == nil { closeBudget() }
         applyIOCGrant(published?.canViewIOC == true)
         openReceiptFlow?.updateMatchAccess()
+    }
+
+    private func updateReceiptPairing(features: ServerFeatures?, capabilities: Capabilities?) {
+        let previous = currentReceiptScope
+        receiptPairing.setServerFeatures(features, capabilities: capabilities)
+        if previous != currentReceiptScope { receiptAccessGeneration += 1 }
+        if budgetAPI == nil { closeBudget() }
+    }
+
+    private func handleReceiptFailure(_ error: ReceiptError, scope: ReceiptSessionScope) {
+        guard scope == currentReceiptScope else { return }
+        handleDeviceFailure(error, used: receiptPairing.credential(for: scope.origin))
+    }
+
+    private func handleDeviceFailure(_ error: ReceiptError, used: StoredReceiptDeviceToken?) {
+        let reason: ReceiptPairing.ExchangeReason
+        switch error {
+        case .forbidden:
+            notice = .forbidden
+            reason = .ceilingExpansion
+        case .expiredDeviceToken, .revokedDeviceToken, .invalidDeviceToken:
+            guard let used else { return }
+            let code: String
+            switch error {
+            case .expiredDeviceToken: code = "device_token_expired"
+            case .revokedDeviceToken: code = "device_token_revoked"
+            default: code = "device_token_invalid"
+            }
+            guard let rejection = receiptPairing.handleTokenRejection(used, status: 401, code: code) else { return }
+            if budgetAPI == nil { closeBudget() }
+            receiptAccessGeneration += 1
+            switch rejection {
+            case .retired: reason = .retired
+            case .rollback:
+                _ = beginCapabilityRefresh(source: .denial)
+                return
+            }
+        default:
+            return
+        }
+        guard let refresh = beginCapabilityRefresh(source: .denial) else { return }
+        Task { [weak self] in
+            guard let fence = await refresh.task.value, let self, isCurrent(fence),
+                  matchesRefresh(refresh.snapshot) else { return }
+            try? await exchangeDeviceToken(reason: reason, refreshOnDenial: false)
+        }
     }
 
     private func applyIOCGrant(_ granted: Bool) {
@@ -793,9 +918,10 @@ final class AppState {
         guard let refresh = beginCapabilityRefresh(source: .foreground) else { return }
         let lifecycle = lifecycleGeneration
         Task { [weak self] in
-            guard let fence = await refresh.task.value, let self, isCurrent(fence), lifecycle == lifecycleGeneration,
-                  canViewIOC else { return }
-            startEvents()
+            guard let fence = await refresh.task.value, let self, isCurrent(fence),
+                  lifecycle == lifecycleGeneration else { return }
+            if canViewIOC { startEvents() }
+            try? await exchangeDeviceToken(reason: .refresh)
         }
     }
 
@@ -808,7 +934,12 @@ final class AppState {
     }
 
     func refresh() async {
-        guard let fence = await refreshCapabilities(source: .userPull), isCurrent(fence), canViewIOC else { return }
+        guard let refresh = beginCapabilityRefresh(source: .userPull), let fence = await refresh.task.value,
+              isCurrent(fence), matchesRefresh(refresh.snapshot) else { return }
+        if !canViewIOC {
+            try? await exchangeDeviceToken(reason: .refresh)
+            return
+        }
         guard await loadDiscovery() == .loaded, isCurrentDiscovery(fence.discovery) else { return }
         switch eventStage {
         case nil, .backingOff:
@@ -818,6 +949,8 @@ final class AppState {
         case .opening, .connected:
             break
         }
+        guard isCurrent(fence), matchesRefresh(refresh.snapshot) else { return }
+        try? await exchangeDeviceToken(reason: .refresh)
     }
 
     @discardableResult

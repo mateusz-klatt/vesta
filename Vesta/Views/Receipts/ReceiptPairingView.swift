@@ -30,6 +30,15 @@ extension View {
             ReceiptPairingView().appLanguage(app.appLanguage)
         }
     }
+
+    func receiptNewDeviceAlert(app: AppState, enabled: Bool) -> some View {
+        alert("This iPhone was paired as a new device.", isPresented: Binding(
+            get: { enabled && app.receiptPairing.showNewDeviceAlert },
+            set: { if !$0 { app.receiptPairing.dismissNewDeviceAlert() } }
+        )) {
+            Button("OK", role: .cancel) {}
+        }
+    }
 }
 
 struct ReceiptPairingView: View {
@@ -42,25 +51,35 @@ struct ReceiptPairingView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    TextField("Pairing code", text: $code)
-                        .textInputAutocapitalization(.characters)
-                        .autocorrectionDisabled()
-                        .privacySensitive()
-                    if QRScannerView.isSupported {
-                        Button { showScanner = true } label: {
-                            Label("Scan QR", systemImage: "qrcode.viewfinder")
+                if !app.receiptsUseExchange {
+                    Section {
+                        TextField("Pairing code", text: $code)
+                            .textInputAutocapitalization(.characters)
+                            .autocorrectionDisabled()
+                            .privacySensitive()
+                        if QRScannerView.isSupported {
+                            Button { showScanner = true } label: {
+                                Label("Scan QR", systemImage: "qrcode.viewfinder")
+                            }
                         }
+                    } footer: {
+                        Text("In hestia, choose Add device to get a one-time pairing code.")
                     }
-                } footer: {
-                    Text("In hestia, choose Add device to get a one-time pairing code.")
                 }
                 if let message = message ?? app.receiptPairing.pairingNotice {
                     Text(message).foregroundStyle(Theme.textSecondary)
                 }
+                ReceiptDeviceLimitDetails(limit: app.receiptPairing.deviceLimit)
                 Section {
-                    Button("Pair iPhone") { submit() }
-                        .disabled(code.isEmpty)
+                    if app.receiptsUseExchange && app.receiptPairing.requiresExchangeSignIn {
+                        Button("Sign in") { if app.signInAgainForDeviceExchange() { dismiss() } }
+                    } else {
+                        Button { submit() } label: {
+                            if app.receiptPairing.status == .notPaired { Text("Pair iPhone") }
+                            else { Text("Pair again") }
+                        }
+                        .disabled(!app.receiptsUseExchange && code.isEmpty)
+                    }
                 }
             }
             .disabled(app.receiptPairing.isBusy)
@@ -69,7 +88,7 @@ struct ReceiptPairingView: View {
             }
             .scrollContentBackground(.hidden)
             .background(Theme.background)
-            .navigationTitle(app.receiptPairing.status == .pairAgain ? Text("Pair again") : Text("Pair iPhone"))
+            .navigationTitle(app.receiptPairing.status == .notPaired ? Text("Pair iPhone") : Text("Pair again"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -104,22 +123,48 @@ struct ReceiptPairingView: View {
     }
 
     private func submit() {
-        guard let parsed = ReceiptPairingCode(code) else {
+        let useExchange = app.receiptsUseExchange
+        let parsed = ReceiptPairingCode(code)
+        guard useExchange || parsed != nil else {
             message = "Enter the 8-character pairing code from hestia."
             return
         }
         message = nil
         Task {
             do {
-                try await app.receiptPairing.pair(code: parsed, deviceName: ReceiptPairing.deviceName)
+                if useExchange {
+                    try await app.pairReceiptsByExchange()
+                } else if let parsed {
+                    try await app.receiptPairing.pair(code: parsed, deviceName: ReceiptPairing.deviceName)
+                }
                 if app.receiptPairing.status == .paired { dismiss() }
             } catch is CancellationError {
                 dismiss()
             } catch let error as DevicePairingError {
-                message = error.message
+                message = app.receiptPairing.pairingNotice ?? error.message
             } catch {
-                message = DevicePairingError.redeemFailed.message
+                message = useExchange
+                    ? app.receiptPairing.pairingNotice ?? APIError.cannotConnect.message
+                    : DevicePairingError.redeemFailed.message
             }
+        }
+    }
+}
+
+struct ReceiptDeviceLimitDetails: View {
+    let limit: DeviceExchangeLimit?
+
+    var body: some View {
+        if let limit {
+            VStack(alignment: .leading) {
+                Text(verbatim: limit.deviceName)
+                if let tokenID = limit.tokenID {
+                    Text(verbatim: tokenID).font(.caption.monospaced())
+                }
+            }
+            .foregroundStyle(Theme.textSecondary)
+            .textSelection(.enabled)
+            .privacySensitive()
         }
     }
 }

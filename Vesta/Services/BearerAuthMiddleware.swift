@@ -8,16 +8,19 @@ import OpenAPIRuntime
 struct BearerAuthMiddleware: ClientMiddleware {
     private let session: BoundSession?
     private let receiptPairing: ReceiptPairing?
+    private let receiptScope: ReceiptSessionScope?
     // Unpair can revoke after the active pairing/backend has changed.
     private let revoking: (origin: URL, credential: ReceiptDeviceToken)?
     private let budgetEnabled: @Sendable () -> Bool
 
     init(session: BoundSession? = nil,
          receiptPairing: ReceiptPairing? = nil,
+         receiptScope: ReceiptSessionScope? = nil,
          revoking: (origin: URL, credential: ReceiptDeviceToken)? = nil,
-         budgetEnabled: @escaping @Sendable () -> Bool = { false }) {
+         budgetEnabled: @escaping @Sendable () -> Bool = { AppConfig.nativeBudgetEnabled }) {
         self.session = session
         self.receiptPairing = receiptPairing
+        self.receiptScope = receiptScope
         self.revoking = revoking
         self.budgetEnabled = budgetEnabled
     }
@@ -28,10 +31,14 @@ struct BearerAuthMiddleware: ClientMiddleware {
         // The phone does not pin the OpenAPI paths for these read operations.
         "listBudgetReceipts", "searchBudgetReceipts", "getBudgetReceiptDetail", "getBudgetReceiptImage",
     ]
-    private static let budgetReadOperations: Set<String> = [
-        Operations.GetBudgetAnalyticsMonthlyBudget.id,
-        Operations.GetBudgetAnalyticsTransactions.id,
-        Operations.GetBudgetStatus.id,
+    private static let budgetReadPaths = [
+        Operations.GetBudgetAnalyticsMonthlyBudget.id: "/api/budget/analytics/monthly-budget",
+        Operations.GetBudgetAnalyticsTransactions.id: "/api/budget/analytics/transactions",
+        Operations.GetBudgetStatus.id: "/api/budget/status",
+        // Reserved for the later native budget client. V4 does not pin or call these paths.
+        "getBudgetAnalyticsMonthlyBudgetCharts": "/api/budget/analytics/monthly-budget/charts",
+        "getBudgetAnalyticsOverview": "/api/budget/analytics/overview",
+        "getBudgetAnalyticsCategories": "/api/budget/analytics/categories",
     ]
 
     func intercept(
@@ -45,15 +52,32 @@ struct BearerAuthMiddleware: ClientMiddleware {
         let requiresDevice = Self.receiptOperations.contains(operationID)
         let issuesDeviceToken = operationID == Operations.RedeemBudgetReceiptDevice.id
             || operationID == Operations.LoginBudgetReceiptDevice.id
-        if Self.budgetReadOperations.contains(operationID) {
+        if operationID == Operations.ExchangeNativeSession.id {
             request.headerFields[.cookie] = nil
             request.headerFields[.authorization] = nil
-            guard budgetEnabled() else { throw BudgetError.forbidden }
-            // No device token means no request: the session bearer is refused
-            // here by hestia, and sending it would widen its use.
-            guard let device = await receiptPairing?.credential(for: baseURL, session: session) else {
+            guard request.method == .post, request.path == "/api/auth/device-token",
+                  let session, session.actor != nil, !session.token.isEmpty,
+                  OriginMatcher.matches(baseURL, session.origin) else { throw DeviceExchangeError.invalidSession }
+            request.headerFields[.authorization] = "Bearer \(session.token)"
+            let (response, responseBody) = try await next(request, body, baseURL)
+            let status = response.status.code
+            guard status == 200 else {
+                let code = await Self.decodeError(Components.Schemas.AuthError.self, from: responseBody)?.error.code
+                throw DeviceExchangeError.http(status: status, code: code)
+            }
+            return (response, responseBody)
+        }
+        if let readPath = Self.budgetReadPaths[operationID] {
+            request.headerFields[.cookie] = nil
+            request.headerFields[.authorization] = nil
+            guard request.method == .get,
+                  request.path?.split(separator: "?", maxSplits: 1).first.map(String.init) == readPath,
+                  budgetEnabled(),
+                  let device = await receiptPairing?.nativeBudgetCredential(for: baseURL, session: session),
+                  budgetEnabled() else {
                 throw BudgetError.forbidden
             }
+            try Task.checkCancellation()
             request.headerFields[.authorization] = "Bearer \(device.credential.token)"
             let (response, responseBody) = try await next(request, body, baseURL)
             guard response.status.code == 200 else {
@@ -83,6 +107,13 @@ struct BearerAuthMiddleware: ClientMiddleware {
                 guard let device = await receiptPairing?.credential(for: baseURL, session: session) else {
                     throw ReceiptError.pairAgain
                 }
+                if let receiptScope {
+                    try Task.checkCancellation()
+                    guard OriginMatcher.matches(baseURL, receiptScope.origin),
+                          receiptScope.matches(device, actor: session?.actor ?? device.actor) else {
+                        throw CancellationError()
+                    }
+                }
                 pairedDevice = device
                 request.headerFields[.authorization] = "Bearer \(device.credential.token)"
             }
@@ -94,15 +125,22 @@ struct BearerAuthMiddleware: ClientMiddleware {
 
         // Accept both the pinned flat error and the nested v2 error envelope.
         let code = await Self.errorCode(in: responseBody)
+        if operationID == Operations.RevokeBudgetReceiptDevice.id, revoking != nil {
+            throw DeviceRevocationError.http(status: status, code: code)
+        }
         let error = ReceiptError.from(status: status, code: code)
-        if error == .pairAgain, let pairedDevice {
+        if receiptScope == nil, error == .expiredDeviceToken || error == .revokedDeviceToken, let pairedDevice {
             await receiptPairing?.invalidate(pairedDevice)
         }
         throw error
     }
 
     private static func errorCode(in body: HTTPBody?) async -> String? {
+        await decodeError(BudgetErrorEnvelope.self, from: body)?.code
+    }
+
+    private static func decodeError<Envelope: Decodable>(_ type: Envelope.Type, from body: HTTPBody?) async -> Envelope? {
         guard let body, let data = try? await Data(collecting: body, upTo: 16 * 1024) else { return nil }
-        return (try? JSONDecoder().decode(BudgetErrorEnvelope.self, from: data))?.code
+        return try? JSONDecoder().decode(type, from: data)
     }
 }

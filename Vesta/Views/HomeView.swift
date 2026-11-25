@@ -83,6 +83,8 @@ struct HomeView: View {
             }
             .sheet(isPresented: $showSettings) { SettingsView().appLanguage(app.appLanguage) }
             .receiptPairingSheet($pairingPresentation, app: app)
+            .receiptNewDeviceAlert(app: app, enabled: !showSettings && receiptFlow == nil &&
+                                   !pairingPresentation.isPresented(accessGeneration: app.receiptAccessGeneration))
             .sheet(isPresented: Binding(get: { agendaStore != nil }, set: { if !$0 { closeAgenda() } })) {
                 if let agendaStore {
                     AgendaView(store: agendaStore, onClose: closeAgenda).appLanguage(app.appLanguage)
@@ -98,6 +100,9 @@ struct HomeView: View {
             }
             .onChange(of: app.budgetAPI == nil) { _, signedOut in
                 if signedOut { closeBudget() }
+            }
+            .onChange(of: budgetStore?.isCleared) { _, cleared in
+                if cleared == true { closeBudget() }
             }
             .onChange(of: app.calendarAPI == nil) { _, unavailable in
                 if unavailable { closeAgenda() }

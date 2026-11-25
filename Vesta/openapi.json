@@ -135,6 +135,91 @@
         "title": "AuditFeed",
         "type": "object"
       },
+      "AuthDeviceTokenRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "device_name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Device Name",
+            "type": "string"
+          },
+          "prior_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prior Token"
+          }
+        },
+        "required": [
+          "device_name"
+        ],
+        "title": "AuthDeviceTokenRequest",
+        "type": "object"
+      },
+      "AuthDeviceTokenResult": {
+        "properties": {
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "issued_permissions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Issued Permissions",
+            "type": "array"
+          },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "owner_key": {
+            "maxLength": 43,
+            "minLength": 43,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Owner Key",
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "receipts",
+              "device"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "token_id": {
+            "title": "Token Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "token_id",
+          "scope",
+          "actor",
+          "owner",
+          "owner_key",
+          "issued_permissions",
+          "expires_at"
+        ],
+        "title": "AuthDeviceTokenResult",
+        "type": "object"
+      },
       "AuthError": {
         "properties": {
           "error": {
@@ -4765,6 +4850,137 @@
           }
         },
         "summary": "Recent audit-log rows (newest first, capped 200)",
+        "x-required-role": "viewer"
+      }
+    },
+    "/api/auth/device-token": {
+      "post": {
+        "description": "Allowed on HTTP LAN. prior_token rotates or migrates a credential without widening its permission ceiling.",
+        "operationId": "exchangeNativeSession",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthDeviceTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthDeviceTokenResult"
+                }
+              }
+            },
+            "description": "device credential issued"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "invalid device name or request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "missing, stale, or non-native session (native_session_required)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "no eligible live receipt/device target"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "Budget or receipt support is disabled"
+          },
+          "408": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "request body read timed out"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "active slot limit or rejected prior_token proof"
+          },
+          "411": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "Content-Length is required"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "request body exceeds the byte limit"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "Content-Type must be application/json"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthError"
+                }
+              }
+            },
+            "description": "incompatible authorization bridge or unavailable device service"
+          }
+        },
+        "summary": "Exchange a v2 native session for a narrowed receipt/device token",
+        "x-required-permission": "authenticated",
         "x-required-role": "viewer"
       }
     },

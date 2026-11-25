@@ -33,7 +33,7 @@ struct ReceiptScanView: View {
                             .disabled(flow.isBusy)
                     }
                 }
-                if flow.step != .done && (flow.error == .pairAgain || app.receiptPairing.status == .pairAgain) {
+                if flow.step != .done && (flow.error?.requiresPairing == true || app.receiptPairing.status == .pairAgain) {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("Pair again") { pairingPresentation.present(in: app) }
                             .disabled(flow.isBusy)
@@ -46,9 +46,7 @@ struct ReceiptScanView: View {
         }
         // Cleanup runs on any dismissal; this only guards review edits from a stray swipe.
         .interactiveDismissDisabled(flow.step == .review)
-        .receiptPairingSheet($pairingPresentation, app: app, onDismiss: {
-            if app.receiptPairing.status == .paired && flow.error == .pairAgain { flow.error = nil }
-        })
+        .receiptPairingSheet($pairingPresentation, app: app)
     }
 }
 

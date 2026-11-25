@@ -9,6 +9,8 @@ accessModifier: internal
 namingStrategy: idiomatic
 typeOverrides:
   schemas:
+    # Preserve optional prior_token, which the generator drops from the nullable anyOf.
+    AuthDeviceTokenRequest: AuthDeviceTokenRequestWire
     # Preserve required nullable fields that the generator drops from anyOf unions.
     AuthFeatures: AuthFeaturesWire
     MeCapabilities: MeCapabilitiesWire

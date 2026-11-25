@@ -58,10 +58,63 @@ struct ReceiptDeviceToken: Codable, Equatable, Sendable {
     let expiresAt: DeviceTokenExpiry
 }
 
+enum DeviceTokenScope: String, Codable, Equatable, Sendable {
+    case receipts, device
+}
+
+struct ExchangedDeviceToken: Equatable, Sendable {
+    let credential: ReceiptDeviceToken
+    let scope: DeviceTokenScope
+    let actor: String
+    let owner: String
+    let ownerKey: String
+    let issuedPermissions: [String]
+}
+
+enum DeviceExchangeError: Error, Equatable {
+    case http(status: Int, code: String?)
+    case invalidSession
+
+    var isRequestRejection: Bool {
+        switch self {
+        case .http(400, _), .http(411, _), .http(413, _), .http(415, _): true
+        default: false
+        }
+    }
+
+    var rejectedBeforeRotation: Bool {
+        switch self {
+        case .invalidSession, .http(401, _), .http(403, "budget_forbidden"), .http(409, "device_token_limit_reached"): true
+        default: isRequestRejection
+        }
+    }
+}
+
+enum DeviceRevocationError: Error, Equatable {
+    case http(status: Int, code: String?)
+}
+
+struct AuthDeviceTokenRequestWire: Codable, Hashable, Sendable {
+    let deviceName: String
+    let priorToken: String?
+
+    enum CodingKeys: String, CodingKey {
+        case deviceName = "device_name"
+        case priorToken = "prior_token"
+    }
+}
+
 protocol DevicePairingAPI: Sendable {
     func redeem(code: ReceiptPairingCode, deviceName: String, server: URL) async throws -> ReceiptDeviceToken
     func login(username: String, password: String, deviceName: String, server: URL) async throws -> ReceiptDeviceToken
+    func exchange(session: BoundSession, deviceName: String, priorToken: ReceiptDeviceToken?) async throws -> ExchangedDeviceToken
     func revoke(_ token: ReceiptDeviceToken, server: URL) async throws
+}
+
+extension DevicePairingAPI {
+    func exchange(session: BoundSession, deviceName: String, priorToken: ReceiptDeviceToken?) async throws -> ExchangedDeviceToken {
+        throw DeviceExchangeError.http(status: 501, code: nil)
+    }
 }
 
 enum DevicePairingError: Error {
@@ -89,10 +142,22 @@ struct GeneratedDevicePairingAPI: DevicePairingAPI {
         return URLSession(configuration: configuration, delegate: PairingRedirectDelegate(), delegateQueue: nil)
     }()
 
-    private let transport: URLSessionTransport
+    private static let exchangeSession: URLSession = {
+        let configuration = HTTPSession.featuresProbeConfiguration
+        configuration.timeoutIntervalForRequest = 15
+        return URLSession(configuration: configuration, delegate: UnauthenticatedAuthDelegate(
+            nonTrustDisposition: .cancelAuthenticationChallenge
+        ), delegateQueue: nil)
+    }()
 
-    init(session: URLSession = Self.session) {
-        transport = URLSessionTransport(configuration: .init(session: session, httpBodyProcessingMode: .buffered))
+    private let transport: URLSessionTransport
+    private let exchangeTransport: URLSessionTransport
+
+    init(session: URLSession? = nil) {
+        transport = URLSessionTransport(configuration: .init(session: session ?? Self.session, httpBodyProcessingMode: .buffered))
+        exchangeTransport = URLSessionTransport(configuration: .init(
+            session: session ?? Self.exchangeSession, httpBodyProcessingMode: .buffered
+        ))
     }
 
     func redeem(code: ReceiptPairingCode, deviceName: String, server: URL) async throws -> ReceiptDeviceToken {
@@ -111,6 +176,23 @@ struct GeneratedDevicePairingAPI: DevicePairingAPI {
             try await client.loginBudgetReceiptDevice(
                 .init(body: .json(.init(deviceName: deviceName, password: password, username: username)))
             ).ok.body.json
+        }
+    }
+
+    func exchange(session: BoundSession, deviceName: String, priorToken: ReceiptDeviceToken?) async throws -> ExchangedDeviceToken {
+        let client = Client(serverURL: session.origin, transport: exchangeTransport,
+                            middlewares: [BearerAuthMiddleware(session: session)])
+        do {
+            let result = try await client.exchangeNativeSession(body: .json(.init(
+                deviceName: deviceName, priorToken: priorToken?.token
+            ))).ok.body.json
+            return ExchangedDeviceToken(
+                credential: ReceiptDeviceToken(token: result.token, tokenID: result.tokenId, expiresAt: .string(result.expiresAt)),
+                scope: result.scope == .device ? .device : .receipts,
+                actor: result.actor, owner: result.owner, ownerKey: result.ownerKey, issuedPermissions: result.issuedPermissions
+            )
+        } catch let error as ClientError {
+            throw error.underlyingError
         }
     }
 
@@ -136,7 +218,13 @@ struct GeneratedDevicePairingAPI: DevicePairingAPI {
 
     func revoke(_ token: ReceiptDeviceToken, server: URL) async throws {
         let client = makeClient(server: server, revoking: token)
-        _ = try await client.revokeBudgetReceiptDevice(.init(body: .json(.init(tokenId: token.tokenID)))).ok
+        do {
+            _ = try await client.revokeBudgetReceiptDevice(.init(body: .json(.init(tokenId: token.tokenID)))).ok
+        } catch let error as ClientError {
+            // The HTTP status settles revocation even if the legacy response body cannot be decoded.
+            if error.response?.status.code == 200 { return }
+            throw error.underlyingError
+        }
     }
 
     private func makeClient(server: URL, revoking token: ReceiptDeviceToken? = nil) -> Client {

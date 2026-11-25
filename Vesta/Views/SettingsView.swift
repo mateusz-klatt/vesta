@@ -63,6 +63,9 @@ struct SettingsView: View {
                     Section("Receipts") {
                         if app.receiptPairing.status == .paired {
                             Text("Paired")
+                            if app.receiptsUseExchange && !app.receiptPairing.requiresExchangeSignIn {
+                                Button("Pair again") { pairingPresentation.present(in: app) }
+                            }
                             Button("Unpair iPhone", role: .destructive) {
                                 pairingMessage = nil
                                 Task {
@@ -73,7 +76,7 @@ struct SettingsView: View {
                                     }
                                 }
                             }
-                        } else {
+                        } else if !app.receiptPairing.requiresExchangeSignIn {
                             Text("Not paired")
                             Button {
                                 pairingPresentation.present(in: app)
@@ -82,9 +85,16 @@ struct SettingsView: View {
                                 else { Text("Pair iPhone") }
                             }
                         }
-                        if let notice = pairingMessage ?? app.receiptPairing.pairingNotice ?? app.receiptPairing.revocationNotice {
+                        if let notice = pairingMessage ?? app.receiptPairing.pairingNotice {
                             Text(notice).foregroundStyle(Theme.textSecondary)
                         }
+                        if let notice = app.receiptPairing.revocationNotice {
+                            Text(notice).foregroundStyle(Theme.textSecondary)
+                        }
+                        if app.receiptsUseExchange && app.receiptPairing.requiresExchangeSignIn {
+                            Button("Sign in") { if app.signInAgainForDeviceExchange() { dismiss() } }
+                        }
+                        ReceiptDeviceLimitDetails(limit: app.receiptPairing.deviceLimit)
                     }
                     .disabled(app.receiptPairing.isBusy)
                 }
@@ -106,6 +116,7 @@ struct SettingsView: View {
                 app.receiptPairing.refreshStatus()
             }
             .receiptPairingSheet($pairingPresentation, app: app)
+            .receiptNewDeviceAlert(app: app, enabled: !pairingPresentation.isPresented(accessGeneration: app.receiptAccessGeneration))
         }
     }
 }

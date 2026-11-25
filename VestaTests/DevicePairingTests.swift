@@ -12,13 +12,22 @@ final class MemoryDeviceTokenStore: DeviceTokenStoring {
     private var shouldFailSave = false
     private var shouldFailClear = false
     private var shouldFailPendingSave = false
+    private var shouldFailRotationJournalSave: (([RotationJournalRecord]) -> Bool)?
     private(set) var pending: [StoredReceiptDeviceToken] = []
+    private var overflow = false
+    private var journal: [RotationJournalRecord] = []
+    private var rollback: [StoredReceiptDeviceToken] = []
+    private var untrusted: [StoredReceiptDeviceToken] = []
+    private var limits: [DeviceExchangeLimit] = []
 
     init(_ token: StoredReceiptDeviceToken? = nil) { self.token = token }
     func load() -> StoredReceiptDeviceToken? { token }
     func failNextSave() { shouldFailSave = true }
     func failNextClear() { shouldFailClear = true }
     func failNextPendingSave() { shouldFailPendingSave = true }
+    func failNextRotationJournalSave(where shouldFail: @escaping ([RotationJournalRecord]) -> Bool) {
+        shouldFailRotationJournalSave = shouldFail
+    }
     func save(_ token: StoredReceiptDeviceToken) throws {
         if shouldFailSave {
             shouldFailSave = false
@@ -41,6 +50,22 @@ final class MemoryDeviceTokenStore: DeviceTokenStoring {
         }
         pending = tokens
     }
+    func hasPendingRevocationOverflow() -> Bool { overflow }
+    func markPendingRevocationOverflow() { overflow = true }
+    func loadRotationJournal() -> [RotationJournalRecord] { journal }
+    func saveRotationJournal(_ records: [RotationJournalRecord]) throws {
+        if shouldFailRotationJournalSave?(records) == true {
+            shouldFailRotationJournalSave = nil
+            throw DevicePairingError.storage
+        }
+        journal = records
+    }
+    func loadRollbackQuarantine() -> [StoredReceiptDeviceToken] { rollback }
+    func saveRollbackQuarantine(_ tokens: [StoredReceiptDeviceToken]) { rollback = tokens }
+    func loadUntrustedExchangeTokens() -> [StoredReceiptDeviceToken] { untrusted }
+    func saveUntrustedExchangeTokens(_ tokens: [StoredReceiptDeviceToken]) { untrusted = tokens }
+    func loadDeviceExchangeLimits() -> [DeviceExchangeLimit] { limits }
+    func saveDeviceExchangeLimits(_ limits: [DeviceExchangeLimit]) { self.limits = limits }
 }
 
 private actor MockDevicePairingAPI: DevicePairingAPI {
@@ -48,9 +73,10 @@ private actor MockDevicePairingAPI: DevicePairingAPI {
         case redeem(ReceiptPairingCode, String, URL)
         case login(String, String, String, URL)
         case revoke(ReceiptDeviceToken, URL)
+        case exchange(BoundSession, String, ReceiptDeviceToken?)
     }
     enum RevokeBehavior: Sendable {
-        case success, offline, expired, revoked, notFound, disabled, unauthorized
+        case success, offline, expired, revoked, notFound, disabled, unauthorized, invalid, unavailable
     }
 
     private(set) var calls: [Call] = []
@@ -58,6 +84,11 @@ private actor MockDevicePairingAPI: DevicePairingAPI {
     private var holdRedeem: Bool
     private var loginError: DevicePairingError?
     private var redeemGate: CheckedContinuation<Void, Never>?
+    private var exchangeResults: [Result<ExchangedDeviceToken, any Error>] = []
+    private var holdExchange = false
+    private var exchangeGate: CheckedContinuation<Void, Never>?
+    private var holdRevoke = false
+    private var revokeGate: CheckedContinuation<Void, Never>?
 
     init(failRevoke: Bool = false, holdRedeem: Bool = false) {
         revokeBehavior = failRevoke ? .offline : .success
@@ -66,6 +97,15 @@ private actor MockDevicePairingAPI: DevicePairingAPI {
 
     func setRevokeBehavior(_ behavior: RevokeBehavior) {
         revokeBehavior = behavior
+    }
+
+    func holdNextRevoke() { holdRevoke = true }
+
+    var isRevokeHeld: Bool { revokeGate != nil }
+
+    func releaseRevoke() {
+        revokeGate?.resume()
+        revokeGate = nil
     }
 
     func failLogin(with error: DevicePairingError) {
@@ -95,16 +135,44 @@ private actor MockDevicePairingAPI: DevicePairingAPI {
         redeemGate = nil
     }
 
+    func setExchangeResults(_ results: [Result<ExchangedDeviceToken, any Error>], holdFirst: Bool = false) {
+        exchangeResults = results
+        holdExchange = holdFirst
+    }
+
+    var isExchangeHeld: Bool { exchangeGate != nil }
+
+    func releaseExchange() {
+        exchangeGate?.resume()
+        exchangeGate = nil
+    }
+
+    func exchange(session: BoundSession, deviceName: String, priorToken: ReceiptDeviceToken?) async throws -> ExchangedDeviceToken {
+        calls.append(.exchange(session, deviceName, priorToken))
+        let result = exchangeResults.isEmpty ? .failure(DeviceExchangeError.http(status: 501, code: nil)) : exchangeResults.removeFirst()
+        if holdExchange {
+            holdExchange = false
+            await withCheckedContinuation { exchangeGate = $0 }
+        }
+        return try result.get()
+    }
+
     func revoke(_ token: ReceiptDeviceToken, server: URL) async throws {
         calls.append(.revoke(token, server))
+        if holdRevoke {
+            holdRevoke = false
+            await withCheckedContinuation { revokeGate = $0 }
+        }
         switch revokeBehavior {
         case .success: break
         case .offline: throw URLError(.notConnectedToInternet)
-        case .expired: throw ReceiptError.from(status: 401, code: "device_token_expired")
-        case .revoked: throw ReceiptError.from(status: 401, code: "device_token_revoked")
-        case .notFound: throw ReceiptError.from(status: 404, code: nil)
-        case .disabled: throw ReceiptError.from(status: 404, code: "budget_receipts_disabled")
-        case .unauthorized: throw ReceiptError.from(status: 401, code: nil)
+        case .expired: throw DeviceRevocationError.http(status: 401, code: "device_token_expired")
+        case .revoked: throw DeviceRevocationError.http(status: 401, code: "device_token_revoked")
+        case .notFound: throw DeviceRevocationError.http(status: 404, code: nil)
+        case .disabled: throw DeviceRevocationError.http(status: 404, code: "budget_receipts_disabled")
+        case .unauthorized: throw DeviceRevocationError.http(status: 401, code: nil)
+        case .invalid: throw DeviceRevocationError.http(status: 401, code: "device_token_invalid")
+        case .unavailable: throw DeviceRevocationError.http(status: 503, code: nil)
         }
     }
 }
@@ -451,7 +519,7 @@ final class DevicePairingTests: XCTestCase {
         await app.login(user: "owner", password: "fake-password")
 
         let calls = await api.calls
-        XCTAssertEqual(calls, [.login("owner", "fake-password", ReceiptPairing.deviceName, fakeServer)])
+        XCTAssertEqual(calls, [.login("owner", "fake-password", try ReceiptPairing.deviceName, fakeServer)])
         XCTAssertEqual(pairing.status, .paired)
         XCTAssertEqual(store.load()?.credential, fakeDeviceToken)
         XCTAssertEqual(store.load()?.provenance, .legacyPasswordLogin)
@@ -598,9 +666,9 @@ final class DevicePairingTests: XCTestCase {
         XCTAssertEqual(pairing.status, .notPaired)
     }
 
-    func testDeviceNameIsStableAndFitsHestiasLimit() {
-        let name = ReceiptPairing.deviceName
-        XCTAssertEqual(name, ReceiptPairing.deviceName)
+    func testDeviceNameIsStableAndFitsHestiasLimit() throws {
+        let name = try ReceiptPairing.deviceName
+        XCTAssertEqual(name, try ReceiptPairing.deviceName)
         XCTAssertFalse(name.isEmpty)
         XCTAssertLessThanOrEqual(name.count, 64)
         XCTAssertTrue(name.unicodeScalars.allSatisfy { $0.isASCII && !CharacterSet.controlCharacters.contains($0) })
@@ -912,8 +980,6 @@ final class DevicePairingTests: XCTestCase {
             (.success, "success"),
             (.expired, "expired"),
             (.revoked, "revoked"),
-            (.notFound, "not found"),
-            (.disabled, "receipts disabled"),
         ]
         for (behavior, name) in behaviors {
             let api = MockDevicePairingAPI(failRevoke: true)
@@ -953,7 +1019,7 @@ final class DevicePairingTests: XCTestCase {
     }
 
     func testRefreshKeepsPendingRevocationAfterAnotherFailure() async throws {
-        for behavior in [MockDevicePairingAPI.RevokeBehavior.offline, .unauthorized] {
+        for behavior in [MockDevicePairingAPI.RevokeBehavior.offline, .unauthorized, .notFound, .disabled, .invalid, .unavailable] {
             let api = MockDevicePairingAPI(failRevoke: true)
             let store = MemoryDeviceTokenStore(.init(server: fakeServer, credential: fakeDeviceToken))
             let pairing = ReceiptPairing(api: api, store: store, serverURL: { fakeServer })
@@ -1109,4 +1175,1116 @@ private func waitForRevokeCount(
         await Task.yield()
     }
     XCTFail("Timed out waiting for revoke request", file: file, line: line)
+}
+
+@MainActor
+extension DevicePairingTests {
+    @MainActor
+    private struct ExchangeFixture {
+        static let supported = ServerFeatures(authContract: 2, features: [.capabilities, .deviceExchange],
+                                              qrOrigin: nil, isLegacy: false)
+        static let rolledBack = ServerFeatures(authContract: 2, features: [.capabilities], qrOrigin: nil, isLegacy: false)
+        static let deviceName = "Test iPhone"
+        static let ownerKey = String(repeating: "a", count: 43)
+        static let add = Permission.budgetReceiptsAdd.rawValue
+
+        let defaults: UserDefaults
+        let suite = "device-exchange-\(UUID())"
+        let keychain = TestSessionKeychain()
+        let sessionStore: CredentialSessionStore
+        let session: BoundSession
+        let store: MemoryDeviceTokenStore
+        let api = MockDevicePairingAPI()
+
+        init(provenance: DeviceTokenProvenance? = .legacyCodeRedeem, actor: String = "owner") throws {
+            defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            sessionStore = CredentialSessionStore(backendURLStore: BackendURLStore(userDefaults: defaults), keychain: keychain)
+            let session = try sessionStore.commitAuthoritative(origin: fakeServer, actor: actor, token: "v2.test.mac")
+            self.session = session
+            store = MemoryDeviceTokenStore(provenance.map {
+                let code = $0 == .legacyCodeRedeem
+                let exchanged = $0 == .exchanged
+                return .init(server: fakeServer, provenance: $0,
+                             actor: code ? nil : actor, owner: exchanged ? actor : nil,
+                             ownerKey: exchanged ? Self.ownerKey : nil,
+                             issuedPermissions: exchanged ? [Self.add] : nil,
+                             lastUsableCeiling: exchanged ? [Self.add] : nil,
+                             sessionCommitID: code ? session.commitID : nil,
+                             credential: fakeDeviceToken)
+            })
+        }
+
+        func cleanUp() {
+            defaults.removePersistentDomain(forName: suite)
+        }
+
+        func pairing(features: ServerFeatures = Self.supported, grants: Capabilities? = nil,
+                     sessionStore: CredentialSessionStore? = nil) -> ReceiptPairing {
+            let pairing = ReceiptPairing(api: api, store: store, serverURL: { fakeServer })
+            pairing.bindSessionStore(sessionStore ?? self.sessionStore)
+            pairing.setServerFeatures(features, capabilities: grants ?? Self.owner())
+            pairing.refreshStatus()
+            return pairing
+        }
+
+        static func owner(budget: Bool = false) -> Capabilities {
+            Capabilities(user: "owner", ownBudget: .init(
+                permissions: budget ? [.budgetReceiptsAdd, .budgetView] : [.budgetReceiptsAdd],
+                canView: budget, canUseReceipts: true, canManageDevices: true
+            ))
+        }
+
+        static func delegate() -> Capabilities {
+            Capabilities(user: "delegate", delegatedReceipts: .init(permissions: [.budgetReceiptsAdd], canUse: true))
+        }
+
+        static func reply(actor: String = "owner", owner: String = "owner", key: String = Self.ownerKey,
+                          tokenID: String = fakeDeviceToken.tokenID,
+                          permissions: [String] = [Self.add]) -> ExchangedDeviceToken {
+            .init(credential: .init(token: "fake-exchanged-device-token", tokenID: tokenID, expiresAt: .string("new-expiry")),
+                  scope: permissions.contains(Permission.budgetView.rawValue) ? .device : .receipts,
+                  actor: actor, owner: owner, ownerKey: key, issuedPermissions: permissions)
+        }
+
+        static func exchanged(tokenID: String, server: URL = fakeServer, actor: String = "owner",
+                              owner: String? = nil, ownerKey: String = Self.ownerKey) -> StoredReceiptDeviceToken {
+            .init(server: server, provenance: .exchanged, actor: actor, owner: owner ?? actor,
+                  ownerKey: ownerKey, issuedPermissions: [Self.add],
+                  credential: .init(token: "fixture-\(tokenID)", tokenID: tokenID, expiresAt: .string("test-expiry")))
+        }
+
+        func journal(_ state: RotationJournalState, replacement: StoredReceiptDeviceToken? = nil) throws -> RotationJournalRecord {
+            let prior = try XCTUnwrap(store.load())
+            return .init(state: state, server: fakeServer, capturedActor: try XCTUnwrap(session.actor),
+                         expectedOwnerKey: prior.ownerKey, slotTokenID: prior.credential.tokenID,
+                         priorToken: prior, replacement: replacement)
+        }
+
+        func exchange(_ pairing: ReceiptPairing, grants: Capabilities? = nil,
+                      reason: ReceiptPairing.ExchangeReason = .automatic) async throws {
+            try await pairing.exchange(session: session, capabilities: grants ?? Self.owner(), deviceName: Self.deviceName,
+                                       reason: reason)
+        }
+
+        var proofCall: MockDevicePairingAPI.Call { .exchange(session, Self.deviceName, fakeDeviceToken) }
+        var freshCall: MockDevicePairingAPI.Call { .exchange(session, Self.deviceName, nil) }
+    }
+
+    func testPreSendDeathOnIntentJournalKeepsPriorTokenActive() async throws {
+        let f = try ExchangeFixture()
+        defer { f.cleanUp() }
+        let journal = try f.journal(.intent)
+        try f.store.saveRotationJournal([journal])
+
+        let pairing = f.pairing()
+        XCTAssertEqual(pairing.credential(for: fakeServer), journal.priorToken)
+        XCTAssertEqual(f.store.load(), journal.priorToken)
+        XCTAssertTrue(f.store.loadRotationJournal().isEmpty)
+        let calls = await f.api.calls
+        XCTAssertTrue(calls.isEmpty)
+    }
+
+    func testLostSuccessTimeoutSetsOutcomeUnknownQuarantinesPriorAndResolvesOnRetry() async throws {
+        let f = try ExchangeFixture()
+        defer { f.cleanUp() }
+        let original = try XCTUnwrap(f.store.load())
+        let replacement = ExchangeFixture.reply()
+        await f.api.setExchangeResults([.failure(URLError(.timedOut)), .success(replacement)])
+        let first = f.pairing()
+        do {
+            try await f.exchange(first)
+            XCTFail("Expected the exchange to time out")
+        } catch {}
+        XCTAssertEqual(f.store.loadRotationJournal().first?.state, .outcomeUnknown)
+        XCTAssertEqual(f.store.loadRotationJournal().first?.priorToken, original)
+        XCTAssertNil(first.credential(for: fakeServer))
+
+        let restarted = f.pairing()
+        XCTAssertNil(restarted.credential(for: fakeServer))
+        try await f.exchange(restarted)
+        XCTAssertEqual(restarted.credential(for: fakeServer)?.credential, replacement.credential)
+        XCTAssertEqual(f.store.load()?.provenance, .exchanged)
+        XCTAssertTrue(f.store.loadRotationJournal().isEmpty)
+        let calls = await f.api.calls
+        XCTAssertEqual(calls, [f.proofCall, f.proofCall])
+    }
+
+    func testLostSuccessOutcomeUnknownFollowedBy401Or403PersistsJournalAndQuarantineAcrossRestart() async throws {
+        for denial in [DeviceExchangeError.http(status: 401, code: nil),
+                       .http(status: 401, code: "native_session_required"), .http(status: 403, code: "budget_forbidden")] {
+            let f = try ExchangeFixture()
+            defer { f.cleanUp() }
+            let sent = try f.journal(.sent)
+            try f.store.saveRotationJournal([sent])
+            await f.api.setExchangeResults([.failure(denial), .success(ExchangeFixture.reply())])
+
+            let pairing = f.pairing()
+            XCTAssertEqual(f.store.loadRotationJournal().first?.state, .outcomeUnknown)
+            await assertExchangeError(denial, in: f, pairing: pairing)
+            if case .http(401, _) = denial { XCTAssertTrue(pairing.requiresExchangeSignIn) }
+            let retried = f.pairing()
+            XCTAssertNil(retried.credential(for: fakeServer))
+            XCTAssertEqual(f.store.loadRotationJournal().first?.state, .outcomeUnknown)
+            XCTAssertEqual(f.store.loadRotationJournal().first?.priorToken, sent.priorToken)
+
+            try await f.exchange(retried)
+            XCTAssertTrue(f.store.loadRotationJournal().isEmpty)
+            let calls = await f.api.calls
+            XCTAssertEqual(calls, [f.proofCall, f.proofCall])
+        }
+    }
+
+    func testMergedTransientExchangeStatusesPreserveQuarantinedProofUntilVerifiedRetry() async throws {
+        for status in [404, 408, 503] {
+            let f = try ExchangeFixture()
+            defer { f.cleanUp() }
+            let prior = try XCTUnwrap(f.store.load())
+            try f.store.saveRotationJournal([f.journal(.intent)])
+
+            let pairing = f.pairing()
+            XCTAssertTrue(f.store.loadRotationJournal().isEmpty, "HTTP \(status) pre-send recovery")
+            XCTAssertEqual(pairing.credential(for: fakeServer), prior)
+            let preSendCalls = await f.api.calls
+            XCTAssertTrue(preSendCalls.isEmpty)
+
+            let error = DeviceExchangeError.http(status: status, code: nil)
+            let replacement = ExchangeFixture.reply()
+            await f.api.setExchangeResults([.failure(error), .failure(error), .success(replacement)])
+            await assertExchangeError(error, in: f, pairing: pairing)
+            let unknown = try XCTUnwrap(f.store.loadRotationJournal().first)
+            XCTAssertEqual(unknown.state, .outcomeUnknown, "HTTP \(status)")
+            XCTAssertEqual(unknown.priorToken, prior)
+            XCTAssertEqual(f.store.load(), prior)
+            XCTAssertNil(pairing.credential(for: fakeServer))
+
+            let restarted = f.pairing()
+            await assertExchangeError(error, in: f, pairing: restarted)
+            XCTAssertEqual(f.store.loadRotationJournal(), [unknown])
+            XCTAssertEqual(f.store.load(), prior)
+            XCTAssertNil(restarted.credential(for: fakeServer))
+            XCTAssertTrue(f.store.pending.isEmpty)
+
+            try await f.exchange(restarted, reason: .refresh)
+            XCTAssertEqual(restarted.credential(for: fakeServer)?.credential, replacement.credential)
+            XCTAssertTrue(f.store.loadRotationJournal().isEmpty)
+            let calls = await f.api.calls
+            XCTAssertEqual(calls, [f.proofCall, f.proofCall, f.proofCall], "HTTP \(status)")
+        }
+    }
+
+    func testClientExchangeRejectionsClearInitialJournalAndWaitForManualOrRefreshRetry() async throws {
+        let cases: [(Int, ReceiptPairing.ExchangeReason)] = [(400, .refresh), (411, .manual), (413, .refresh), (415, .manual)]
+        for (status, retry) in cases {
+            // Refresh must retry even with an already usable exchanged bearer. The legacy case
+            // verifies that an otherwise eligible automatic exchange stays suppressed.
+            let f = try ExchangeFixture(provenance: retry == .refresh ? .exchanged : .legacyCodeRedeem)
+            defer { f.cleanUp() }
+            let prior = try XCTUnwrap(f.store.load())
+            let grants = ExchangeFixture.owner(budget: true)
+            let pairing = f.pairing(grants: grants)
+            let error = DeviceExchangeError.http(status: status, code: nil)
+            let replacement = ExchangeFixture.reply()
+            await f.api.setExchangeResults([.failure(error), .success(replacement)])
+            await assertExchangeError(error, in: f, pairing: pairing, grants: grants, reason: .manual)
+            XCTAssertTrue(f.store.loadRotationJournal().isEmpty, "HTTP \(status)")
+            XCTAssertEqual(pairing.credential(for: fakeServer), prior)
+            XCTAssertEqual(f.store.load(), prior)
+            XCTAssertTrue(f.store.pending.isEmpty)
+
+            for reason in [ReceiptPairing.ExchangeReason.automatic, .ceilingExpansion, .retired] {
+                try await f.exchange(pairing, grants: grants, reason: reason)
+            }
+            let blockedCalls = await f.api.calls
+            XCTAssertEqual(blockedCalls, [f.proofCall], "HTTP \(status)")
+
+            try await f.exchange(pairing, grants: grants, reason: retry)
+            XCTAssertEqual(pairing.credential(for: fakeServer)?.credential, replacement.credential)
+            XCTAssertTrue(f.store.loadRotationJournal().isEmpty)
+            let calls = await f.api.calls
+            XCTAssertEqual(calls, [f.proofCall, f.proofCall], "HTTP \(status)")
+        }
+    }
+
+    func testClientExchangeRejectionsKeepAnEarlierUnknownOutcomeQuarantined() async throws {
+        for status in [400, 411, 413, 415] {
+            let f = try ExchangeFixture()
+            defer { f.cleanUp() }
+            let journal = try f.journal(.outcomeUnknown)
+            try f.store.saveRotationJournal([journal])
+            let pairing = f.pairing()
+            let error = DeviceExchangeError.http(status: status, code: nil)
+            let replacement = ExchangeFixture.reply()
+            await f.api.setExchangeResults([.failure(error), .success(replacement)])
+            await assertExchangeError(error, in: f, pairing: pairing)
+            XCTAssertEqual(f.store.loadRotationJournal(), [journal], "HTTP \(status)")
+            XCTAssertEqual(f.store.load(), journal.priorToken)
+            XCTAssertNil(pairing.credential(for: fakeServer))
+            XCTAssertTrue(f.store.pending.isEmpty)
+
+            try await f.exchange(pairing)
+            let blockedCalls = await f.api.calls
+            XCTAssertEqual(blockedCalls, [f.proofCall], "HTTP \(status)")
+            try await f.exchange(pairing, reason: .manual)
+            XCTAssertEqual(pairing.credential(for: fakeServer)?.credential, replacement.credential)
+            XCTAssertTrue(f.store.loadRotationJournal().isEmpty)
+            let calls = await f.api.calls
+            XCTAssertEqual(calls, [f.proofCall, f.proofCall], "HTTP \(status)")
+        }
+    }
+
+    func testClientExchangeRejectionOnFreshIssuanceWaitsForManualOrRefresh() async throws {
+        let f = try ExchangeFixture(provenance: nil)
+        defer { f.cleanUp() }
+        let pairing = f.pairing()
+        let error = DeviceExchangeError.http(status: 415, code: nil)
+        let replacement = ExchangeFixture.reply()
+        await f.api.setExchangeResults([.failure(error), .success(replacement)])
+        await assertExchangeError(error, in: f, pairing: pairing)
+        XCTAssertNil(f.store.load())
+        XCTAssertTrue(f.store.loadRotationJournal().isEmpty)
+
+        try await f.exchange(pairing)
+        let blockedCalls = await f.api.calls
+        XCTAssertEqual(blockedCalls, [f.freshCall])
+        try await f.exchange(pairing, reason: .refresh)
+        XCTAssertEqual(pairing.credential(for: fakeServer)?.credential, replacement.credential)
+        let calls = await f.api.calls
+        XCTAssertEqual(calls, [f.freshCall, f.freshCall])
+    }
+
+    func testAppForegroundRetriesRejectedRotationWithEstablishedProof() async throws {
+        let f = try ExchangeFixture(provenance: .exchanged)
+        defer { f.cleanUp() }
+        let original = try XCTUnwrap(f.store.load())
+        let pairing = f.pairing()
+        let api = MockHestiaAPI()
+        await api.setFeatures(ExchangeFixture.supported)
+        await api.setCapabilities(ExchangeFixture.owner())
+        let app = AppState(api: api, receiptPairing: pairing, sessionStore: f.sessionStore, events: noEvents)
+        await app.bootstrap()
+
+        let rejection = DeviceExchangeError.http(status: 415, code: nil)
+        let replacement = ExchangeFixture.reply()
+        await f.api.setExchangeResults([.failure(rejection), .success(replacement)])
+        do {
+            try await app.pairReceiptsByExchange()
+            XCTFail("Expected the manual request to be rejected")
+        } catch {
+            XCTAssertEqual(error as? DeviceExchangeError, rejection)
+        }
+        XCTAssertTrue(f.store.loadRotationJournal().isEmpty)
+        XCTAssertEqual(pairing.credential(for: fakeServer), original)
+
+        app.enterForeground()
+        try await waitUntil("foreground recovery of the rejected rotation") {
+            pairing.credential(for: fakeServer)?.credential == replacement.credential
+        }
+        let deviceName = try ReceiptPairing.deviceName
+        let proofCall = MockDevicePairingAPI.Call.exchange(f.session, deviceName, original.credential)
+        let calls = await f.api.calls
+        XCTAssertEqual(calls, [proofCall, proofCall])
+    }
+
+    private func assertExchangeError(_ expected: DeviceExchangeError, in fixture: ExchangeFixture,
+                                     pairing: ReceiptPairing, grants: Capabilities? = nil,
+                                     reason: ReceiptPairing.ExchangeReason = .automatic,
+                                     file: StaticString = #filePath, line: UInt = #line) async {
+        do {
+            try await fixture.exchange(pairing, grants: grants, reason: reason)
+            XCTFail("Expected exchange to fail with \(expected)", file: file, line: line)
+        } catch {
+            XCTAssertEqual(error as? DeviceExchangeError, expected, file: file, line: line)
+        }
+    }
+
+    func testOutcomeUnknownJournalWithMismatchedOriginOrActorDoesNotRetryOrPromoteWrongSession() async throws {
+        let otherOrigin = try XCTUnwrap(URL(string: "https://hestia.example:8443"))
+        for (origin, actor) in [(fakeServer, "other"), (otherOrigin, "owner")] {
+            for state in [RotationJournalState.outcomeUnknown, .replaced] {
+                let f = try ExchangeFixture(provenance: .exchanged)
+                defer { f.cleanUp() }
+                let prior = try XCTUnwrap(f.store.load())
+                let replacement = StoredReceiptDeviceToken(
+                    server: fakeServer, provenance: .exchanged, actor: "owner", owner: "owner",
+                    ownerKey: ExchangeFixture.ownerKey, issuedPermissions: [ExchangeFixture.add],
+                    credential: ExchangeFixture.reply().credential
+                )
+                let journal = try f.journal(state, replacement: state == .replaced ? replacement : nil)
+                try f.store.saveRotationJournal([journal])
+                let changed = try f.sessionStore.commitAuthoritative(origin: origin, actor: actor, token: "v2.other.mac")
+                let grants = actor == "owner" ? ExchangeFixture.owner() : Capabilities(
+                    user: actor, ownBudget: .init(permissions: [.budgetReceiptsAdd], canView: false,
+                                                 canUseReceipts: true, canManageDevices: true)
+                )
+                let pairing = f.pairing(grants: grants)
+                XCTAssertNil(pairing.credential(for: origin))
+                XCTAssertEqual(f.store.load(), prior)
+                XCTAssertEqual(f.store.loadRotationJournal(), [journal])
+                await f.api.setExchangeResults([.failure(DeviceExchangeError.http(status: 401, code: nil))])
+                try? await pairing.exchange(session: changed, capabilities: grants, deviceName: ExchangeFixture.deviceName)
+                let calls = await f.api.calls
+                XCTAssertTrue(calls.allSatisfy { $0 == .exchange(changed, ExchangeFixture.deviceName, nil) })
+                XCTAssertEqual(f.store.loadRotationJournal(), [journal])
+                XCTAssertEqual(f.store.load(), prior)
+            }
+        }
+
+        for state in [RotationJournalState.outcomeUnknown, .replaced] {
+            let f = try ExchangeFixture(provenance: .exchanged)
+            defer { f.cleanUp() }
+            let active = try XCTUnwrap(f.store.load())
+            let differentSlot = ExchangeFixture.exchanged(tokenID: "other-slot")
+            for prior in [active, differentSlot] {
+                // Exercise a malformed slot reference as well as a coherent journal for
+                // a different slot owned by the same actor at the same origin.
+                let mismatchedSlot = RotationJournalRecord(
+                    state: state, server: fakeServer, capturedActor: "owner",
+                    expectedOwnerKey: active.ownerKey, slotTokenID: differentSlot.credential.tokenID, priorToken: prior,
+                    replacement: state == .replaced ? differentSlot : nil
+                )
+                try f.store.saveRotationJournal([mismatchedSlot])
+
+                let pairing = f.pairing()
+                try await f.exchange(pairing)
+                XCTAssertEqual(f.store.load(), active)
+                XCTAssertEqual(f.store.loadRotationJournal(), [mismatchedSlot])
+                let calls = await f.api.calls
+                XCTAssertTrue(calls.isEmpty)
+            }
+        }
+    }
+
+    func testFull5SlotSetStopsRetryingAndPreservesDeviceIdentifyingInfo() async throws {
+        for (isOwner, actor) in [(true, "owner"), (false, "delegate")] {
+            let f = try ExchangeFixture(provenance: isOwner ? .legacyCodeRedeem : nil, actor: actor)
+            defer { f.cleanUp() }
+            let grants = isOwner ? ExchangeFixture.owner() : ExchangeFixture.delegate()
+            let first = f.pairing(grants: grants)
+            await f.api.setExchangeResults([.failure(DeviceExchangeError.http(status: 409, code: "device_token_limit_reached"))])
+            do {
+                try await f.exchange(first, grants: grants)
+                XCTFail("Expected a full device list")
+            } catch DevicePairingError.deviceLimit {}
+            let restarted = f.pairing(grants: grants)
+            let info = try XCTUnwrap(restarted.deviceLimit)
+            XCTAssertEqual(info.actor, actor)
+            XCTAssertEqual(info.deviceName, ExchangeFixture.deviceName)
+            XCTAssertEqual(info.tokenID, isOwner ? fakeDeviceToken.tokenID : nil)
+            XCTAssertEqual(info.isOwner, isOwner)
+            let notice = try XCTUnwrap(restarted.pairingNotice)
+            XCTAssertEqual(notice.key, isOwner
+                           ? "hestia already has 5 paired devices. Remove one in hestia’s device list."
+                           : "hestia already has 5 paired devices. Ask the ledger owner to remove one.")
+            try await f.exchange(restarted, grants: grants)
+            let calls = await f.api.calls
+            XCTAssertEqual(calls, [isOwner ? f.proofCall : f.freshCall])
+        }
+    }
+
+    func testDeathAfter401Or403ClearsJournalAndKeepsPriorTokenUnchanged() async throws {
+        for denial in [DeviceExchangeError.http(status: 401, code: nil),
+                       .http(status: 401, code: "native_session_required"), .http(status: 403, code: "budget_forbidden")] {
+            let f = try ExchangeFixture()
+            defer { f.cleanUp() }
+            let original = try XCTUnwrap(f.store.load())
+            let first = f.pairing()
+            await f.api.setExchangeResults([.failure(denial)])
+            await assertExchangeError(denial, in: f, pairing: first)
+            if case .http(401, _) = denial { XCTAssertTrue(first.requiresExchangeSignIn) }
+            XCTAssertTrue(f.store.loadRotationJournal().isEmpty)
+            XCTAssertEqual(first.credential(for: fakeServer), original)
+            XCTAssertEqual(f.pairing().credential(for: fakeServer), original)
+            XCTAssertTrue(f.store.pending.isEmpty)
+            let calls = await f.api.calls
+            XCTAssertEqual(calls, [f.proofCall])
+        }
+    }
+
+    func testProofBearing200AnomalyActorOwnerKeyOrTokenIDMismatchQuarantinesNewAndKeepsOld() async throws {
+        for result in [
+            ExchangeFixture.reply(actor: "other"),
+            ExchangeFixture.reply(key: String(repeating: "b", count: 43)),
+            ExchangeFixture.reply(tokenID: "different-id"),
+        ] {
+            let f = try ExchangeFixture(provenance: .exchanged)
+            defer { f.cleanUp() }
+            let original = try XCTUnwrap(f.store.load())
+            let pairing = f.pairing()
+            await f.api.setExchangeResults([.success(result)])
+            try? await f.exchange(pairing, reason: .manual)
+            XCTAssertEqual(f.store.load(), original)
+            XCTAssertEqual(f.store.loadUntrustedExchangeTokens().map(\.credential), [result.credential])
+            XCTAssertTrue(f.store.pending.isEmpty)
+            let calls = await f.api.calls
+            XCTAssertEqual(calls, [f.proofCall])
+        }
+    }
+
+    func testProofBearing200WithoutExpectedOwnerRejectsDifferentActorAndOwner() async throws {
+        let f = try ExchangeFixture()
+        defer { f.cleanUp() }
+        let original = try XCTUnwrap(f.store.load())
+        XCTAssertNil(original.ownerKey)
+        let pairing = f.pairing()
+        let anomaly = ExchangeFixture.reply(owner: "different-owner")
+        await f.api.setExchangeResults([.success(anomaly)])
+
+        do {
+            try await f.exchange(pairing)
+            XCTFail("Expected the proof-bearing response to be rejected")
+        } catch DevicePairingError.receipts(.api(.unexpected)) {}
+
+        XCTAssertEqual(pairing.credential(for: fakeServer), original)
+        XCTAssertEqual(f.store.load(), original)
+        XCTAssertTrue(f.store.loadRotationJournal().isEmpty)
+        XCTAssertEqual(f.store.loadUntrustedExchangeTokens().map(\.credential), [anomaly.credential])
+        XCTAssertTrue(f.store.pending.isEmpty)
+        let calls = await f.api.calls
+        XCTAssertEqual(calls, [f.proofCall])
+    }
+
+    func testProofBearing200AnomalyOnOutcomeUnknownKeepsExactJournal() async throws {
+        let f = try ExchangeFixture(provenance: .exchanged)
+        defer { f.cleanUp() }
+        let journal = try f.journal(.outcomeUnknown)
+        try f.store.saveRotationJournal([journal])
+        let pairing = f.pairing()
+        let anomaly = ExchangeFixture.reply(tokenID: "unrelated-slot")
+        await f.api.setExchangeResults([.success(anomaly)])
+
+        do {
+            try await f.exchange(pairing)
+            XCTFail("Expected the proof-bearing response to be rejected")
+        } catch DevicePairingError.receipts(.api(.unexpected)) {}
+
+        XCTAssertEqual(f.store.loadRotationJournal(), [journal])
+        XCTAssertEqual(f.store.load(), journal.priorToken)
+        XCTAssertNil(pairing.credential(for: fakeServer))
+        XCTAssertEqual(f.store.loadUntrustedExchangeTokens().map(\.credential), [anomaly.credential])
+        XCTAssertTrue(f.store.pending.isEmpty)
+        let calls = await f.api.calls
+        XCTAssertEqual(calls, [f.proofCall])
+    }
+
+    func testManualExchangeReplacesUnattributedLegacyTokenWithoutProofOrRevoke() async throws {
+        let f = try ExchangeFixture(provenance: nil)
+        defer { f.cleanUp() }
+        let unattributed = StoredReceiptDeviceToken(server: fakeServer, provenance: .legacyMigrated1x,
+                                                   credential: fakeDeviceToken)
+        try f.store.save(unattributed)
+        let pairing = f.pairing()
+        try await f.exchange(pairing)
+        XCTAssertEqual(f.store.load(), unattributed)
+        let automaticCalls = await f.api.calls
+        XCTAssertTrue(automaticCalls.isEmpty)
+
+        let response = ExchangeFixture.reply(tokenID: "fresh-id")
+        await f.api.setExchangeResults([.success(response)])
+        try await f.exchange(pairing, reason: .manual)
+
+        XCTAssertEqual(pairing.credential(for: fakeServer)?.credential, response.credential)
+        XCTAssertEqual(f.store.loadUntrustedExchangeTokens(), [unattributed])
+        XCTAssertTrue(f.store.pending.isEmpty)
+        let calls = await f.api.calls
+        XCTAssertEqual(calls, [f.freshCall])
+    }
+
+    func testPriorToken409PriorInvalidFreshExchangeAndRevokesOldWithFullBearerAndOrigin() async throws {
+        let f = try ExchangeFixture()
+        defer { f.cleanUp() }
+        let result = ExchangeFixture.reply(tokenID: "fresh-id")
+        await f.api.setExchangeResults([
+            .failure(DeviceExchangeError.http(status: 409, code: "device_token_prior_invalid")), .success(result),
+        ])
+        let pairing = f.pairing()
+        try await f.exchange(pairing)
+        XCTAssertEqual(pairing.credential(for: fakeServer)?.credential, result.credential)
+        XCTAssertTrue(f.store.loadRotationJournal().isEmpty)
+        XCTAssertTrue(f.store.pending.isEmpty)
+        XCTAssertEqual(pairing.pairingNotice?.key, "This iPhone was paired as a new device.")
+        XCTAssertTrue(pairing.showNewDeviceAlert)
+        pairing.dismissNewDeviceAlert()
+        XCTAssertFalse(pairing.showNewDeviceAlert)
+        XCTAssertNil(pairing.pairingNotice)
+        let calls = await f.api.calls
+        XCTAssertEqual(calls, [f.proofCall, f.freshCall, .revoke(fakeDeviceToken, fakeServer)])
+    }
+
+    func testReplacedJournalPromotesOnRestartAfterActiveStoreWriteFails() async throws {
+        let f = try ExchangeFixture()
+        defer { f.cleanUp() }
+        let pairing = f.pairing()
+        let result = ExchangeFixture.reply()
+        await f.api.setExchangeResults([.success(result)])
+        f.store.failNextSave()
+        do {
+            try await f.exchange(pairing)
+            XCTFail("Expected active-slot persistence to fail")
+        } catch DevicePairingError.storage {}
+        XCTAssertEqual(f.store.loadRotationJournal().first?.state, .replaced)
+        XCTAssertEqual(f.store.loadRotationJournal().first?.replacement?.credential, result.credential)
+        XCTAssertNil(pairing.credential(for: fakeServer))
+
+        let restarted = f.pairing()
+        XCTAssertEqual(restarted.credential(for: fakeServer)?.credential, result.credential)
+        XCTAssertTrue(f.store.loadRotationJournal().isEmpty)
+        let calls = await f.api.calls
+        XCTAssertEqual(calls, [f.proofCall])
+    }
+
+    func testDeviceEligibleCeilingTracksBudgetViewSeparatelyFromReceiptAccess() async throws {
+        let f = try ExchangeFixture(provenance: .exchanged)
+        defer { f.cleanUp() }
+        let grants = ExchangeFixture.owner(budget: true)
+        let budgetOnly = Capabilities(user: "owner", ownBudget: .init(
+            permissions: [.budgetView], canView: true, canUseReceipts: false, canManageDevices: true
+        ))
+        XCTAssertFalse(budgetOnly.canUseReceipts)
+        XCTAssertEqual(budgetOnly.effectiveDeviceEligiblePermissions, [.budgetView])
+        await f.api.setExchangeResults([.success(ExchangeFixture.reply(
+            permissions: [ExchangeFixture.add, Permission.budgetView.rawValue, Permission.budgetEdit.rawValue]
+        ))])
+        let pairing = f.pairing(grants: grants)
+        try await f.exchange(pairing, grants: grants, reason: .ceilingExpansion)
+        let usable = try XCTUnwrap(pairing.credential(for: fakeServer))
+        XCTAssertEqual(Set(usable.lastUsableCeiling ?? []), [ExchangeFixture.add, Permission.budgetView.rawValue])
+        try await f.exchange(pairing, grants: grants, reason: .ceilingExpansion)
+        let calls = await f.api.calls
+        XCTAssertEqual(calls, [f.proofCall])
+    }
+
+    func testRollbackQuarantineSeparatesPR3TokenFromLegacySlot() async throws {
+        for probeFirst in [true, false] {
+            let f = try ExchangeFixture(provenance: .exchanged)
+            defer { f.cleanUp() }
+            let exchanged = try XCTUnwrap(f.store.load())
+            let pairing = f.pairing()
+            XCTAssertEqual(pairing.credential(for: fakeServer), exchanged)
+            if probeFirst {
+                pairing.setServerFeatures(ExchangeFixture.rolledBack, capabilities: ExchangeFixture.owner())
+                XCTAssertNil(pairing.handleTokenRejection(exchanged, status: 401, code: "device_token_invalid"))
+            } else {
+                XCTAssertEqual(pairing.handleTokenRejection(exchanged, status: 401, code: "device_token_invalid"), .rollback)
+                XCTAssertNil(pairing.credential(for: fakeServer))
+                pairing.setServerFeatures(ExchangeFixture.rolledBack, capabilities: ExchangeFixture.owner())
+            }
+            XCTAssertEqual(f.store.loadRollbackQuarantine(), [exchanged])
+            XCTAssertTrue(f.store.pending.isEmpty)
+            XCTAssertNil(f.store.load())
+
+            let restarted = f.pairing(features: ExchangeFixture.rolledBack)
+            let code = try XCTUnwrap(ReceiptPairingCode("ABCD2345"))
+            try await restarted.pair(code: code, deviceName: ExchangeFixture.deviceName)
+            XCTAssertEqual(restarted.credential(for: fakeServer)?.provenance, .legacyCodeRedeem)
+            XCTAssertEqual(f.store.loadRollbackQuarantine(), [exchanged])
+            let calls = await f.api.calls
+            XCTAssertEqual(calls, [.redeem(code, ExchangeFixture.deviceName, fakeServer)])
+        }
+    }
+
+    func testVerifiedRotationPrunesOnlySupersededQuarantineAndUnknownJournalAfterRollback() async throws {
+        try await assertVerifiedRotationCleansOnlyPromotedSlot(interruptCleanup: false)
+    }
+
+    func testVerifiedRotationReplaysJournalCleanupAfterRollbackWrite() async throws {
+        try await assertVerifiedRotationCleansOnlyPromotedSlot(interruptCleanup: true)
+    }
+
+    func testRollbackProofIsNeverRevokedWhilePendingCleanupAndForegroundExchangeOverlap() async throws {
+        let f = try ExchangeFixture(provenance: .exchanged)
+        defer { f.cleanUp() }
+        let prior = try XCTUnwrap(f.store.load())
+        let blocker = ExchangeFixture.exchanged(tokenID: "detached-slot")
+        let pairing = f.pairing()
+        let api = MockHestiaAPI()
+        await api.setFeatures(ExchangeFixture.supported)
+        await api.setCapabilities(ExchangeFixture.owner())
+        let app = AppState(api: api, receiptPairing: pairing, sessionStore: f.sessionStore, events: noEvents)
+        await app.bootstrap()
+
+        try f.store.savePendingRevocations([blocker])
+        await f.api.holdNextRevoke()
+        pairing.refreshStatus()
+        defer { Task { await f.api.releaseRevoke(); await f.api.releaseExchange() } }
+        try await waitUntil("the pending cleanup is holding an unrelated revoke") { await f.api.isRevokeHeld }
+
+        f.keychain.failNext(.delete(.authoritative))
+        let signedOut = await app.signOut()
+        XCTAssertFalse(signedOut)
+        XCTAssertEqual(pairing.credential(for: fakeServer), prior)
+        XCTAssertEqual(f.store.pending, [blocker, prior])
+
+        await api.setReceiptParseError(.invalidDeviceToken)
+        let receipts = try XCTUnwrap(app.receiptsAPI)
+        f.store.failNextPendingSave()
+        do {
+            _ = try await receipts.parseReceiptText("test", source: .paste)
+            XCTFail("Expected rollback rejection")
+        } catch ReceiptError.invalidDeviceToken {}
+        XCTAssertNil(f.store.load())
+        XCTAssertEqual(f.store.loadRollbackQuarantine(), [prior])
+        XCTAssertEqual(f.store.pending, [blocker, prior])
+
+        let replacement = ExchangeFixture.reply()
+        await f.api.setExchangeResults([.success(replacement)], holdFirst: true)
+        app.enterForeground()
+        try await waitUntil("the foreground exchange is holding the rollback proof") { await f.api.isExchangeHeld }
+        await f.api.releaseRevoke()
+        try await waitUntil("the unrelated revoke clears from the queue") { f.store.pending == [prior] }
+        try await pairing.revokeDetached(prior)
+        XCTAssertEqual(f.store.loadRotationJournal().first?.state, .sent)
+        XCTAssertEqual(f.store.loadRollbackQuarantine(), [prior])
+        let proofCall = MockDevicePairingAPI.Call.exchange(f.session, try ReceiptPairing.deviceName, prior.credential)
+        let beforeVerification = await f.api.calls
+        XCTAssertEqual(beforeVerification, [.revoke(blocker.credential, fakeServer), proofCall])
+
+        await f.api.releaseExchange()
+        try await waitUntil("the verified response removes the staged duplicate") {
+            f.store.load()?.credential == replacement.credential && f.store.pending.isEmpty
+        }
+        XCTAssertTrue(f.store.loadRollbackQuarantine().isEmpty)
+        XCTAssertTrue(f.store.loadRotationJournal().isEmpty)
+        let calls = await f.api.calls
+        XCTAssertEqual(calls, beforeVerification)
+    }
+
+    func testExchangeDefersProofWhileAnotherBearerForTheSameSlotIsBeingRevoked() async throws {
+        let f = try ExchangeFixture(provenance: nil)
+        defer { f.cleanUp() }
+        let pairing = f.pairing()
+        let old = ExchangeFixture.exchanged(tokenID: fakeDeviceToken.tokenID)
+        let prior = StoredReceiptDeviceToken(server: fakeServer, provenance: .exchanged, actor: "owner", owner: "owner",
+                                             ownerKey: ExchangeFixture.ownerKey, credential: fakeDeviceToken)
+        await f.api.setRevokeBehavior(.offline)
+        await f.api.holdNextRevoke()
+        let revoke = Task { try await pairing.revokeDetached(old) }
+        defer { Task { await f.api.releaseRevoke() } }
+        try await waitUntil("the older bearer holds the slot in the transport") { await f.api.isRevokeHeld }
+
+        f.store.saveRollbackQuarantine([prior])
+        try f.store.savePendingRevocations([prior])
+        let replacement = ExchangeFixture.reply()
+        await f.api.setExchangeResults([.success(replacement)])
+        try await f.exchange(pairing)
+        XCTAssertTrue(f.store.loadRotationJournal().isEmpty)
+        XCTAssertEqual(f.store.loadRollbackQuarantine(), [prior])
+        let heldCalls = await f.api.calls
+        XCTAssertEqual(heldCalls, [.revoke(old.credential, fakeServer)])
+
+        await f.api.releaseRevoke()
+        try await revoke.value
+        XCTAssertEqual(f.store.pending, [prior])
+        try await f.exchange(pairing)
+        XCTAssertEqual(pairing.credential(for: fakeServer)?.credential, replacement.credential)
+        XCTAssertTrue(f.store.pending.isEmpty)
+        let calls = await f.api.calls
+        XCTAssertEqual(calls, heldCalls + [f.proofCall])
+    }
+
+    func testPendingRevokesHonorJournalIntentAndReplacementReferences() async throws {
+        let f = try ExchangeFixture(provenance: nil)
+        defer { f.cleanUp() }
+        let pairing = f.pairing()
+        let prior = ExchangeFixture.exchanged(tokenID: fakeDeviceToken.tokenID)
+        let replacement = StoredReceiptDeviceToken(server: fakeServer, provenance: .exchanged, actor: "owner", owner: "owner",
+                                                   ownerKey: ExchangeFixture.ownerKey, credential: fakeDeviceToken)
+        let journal = RotationJournalRecord(state: .intent, server: fakeServer, capturedActor: "owner",
+                                            expectedOwnerKey: prior.ownerKey, slotTokenID: prior.credential.tokenID, priorToken: prior)
+        try f.store.savePendingRevocations([prior, replacement])
+        try f.store.saveRotationJournal([journal])
+        try await pairing.revokeDetached(prior)
+
+        try f.store.saveRotationJournal([journal.transitioning(to: .replaced, replacement: replacement)])
+        try await pairing.revokeDetached(replacement)
+
+        XCTAssertEqual(f.store.pending, [prior, replacement])
+        let calls = await f.api.calls
+        XCTAssertTrue(calls.isEmpty)
+    }
+
+    func testReturnedReplacementSurvivesFailuresWritingReplacedJournal() async throws {
+        let f = try ExchangeFixture()
+        defer { f.cleanUp() }
+        let prior = try XCTUnwrap(f.store.load())
+        let pairing = f.pairing()
+        let replacement = ExchangeFixture.reply()
+        await f.api.setExchangeResults([.success(replacement)])
+        f.store.failNextRotationJournalSave { $0.contains { $0.state == .replaced } }
+        do {
+            try await f.exchange(pairing)
+            XCTFail("Expected the replaced journal write to fail")
+        } catch DevicePairingError.storage {}
+
+        let sent = try XCTUnwrap(f.store.loadRotationJournal().first)
+        XCTAssertEqual(sent.state, .sent)
+        XCTAssertEqual(sent.priorToken, prior)
+        XCTAssertEqual(f.store.load(), prior)
+        XCTAssertNil(pairing.credential(for: fakeServer))
+
+        f.store.failNextRotationJournalSave { $0.contains { $0.state == .replaced } }
+        pairing.refreshStatus()
+        XCTAssertEqual(f.store.loadRotationJournal(), [sent])
+        XCTAssertEqual(f.store.load(), prior)
+
+        pairing.refreshStatus()
+        XCTAssertEqual(pairing.credential(for: fakeServer)?.credential, replacement.credential)
+        XCTAssertTrue(f.store.loadRotationJournal().isEmpty)
+        XCTAssertTrue(f.store.pending.isEmpty)
+        let calls = await f.api.calls
+        XCTAssertEqual(calls, [f.proofCall])
+    }
+
+    private func assertVerifiedRotationCleansOnlyPromotedSlot(interruptCleanup: Bool) async throws {
+        let f = try ExchangeFixture(provenance: nil)
+        defer { f.cleanUp() }
+        let rolledBackSlot = ExchangeFixture.exchanged(tokenID: "old-exchanged-slot")
+        try f.store.save(rolledBackSlot)
+        let pairing = f.pairing()
+        let grants = ExchangeFixture.owner()
+        pairing.setServerFeatures(ExchangeFixture.rolledBack, capabilities: grants)
+        XCTAssertEqual(f.store.loadRollbackQuarantine(), [rolledBackSlot])
+
+        let otherOrigin = try XCTUnwrap(URL(string: "https://hestia.example:8443"))
+        let retained = [
+            rolledBackSlot,
+            ExchangeFixture.exchanged(tokenID: "pending-slot"),
+            ExchangeFixture.exchanged(tokenID: "different-origin", server: otherOrigin),
+            ExchangeFixture.exchanged(tokenID: "different-actor", actor: "delegate"),
+            ExchangeFixture.exchanged(tokenID: "different-owner", owner: "other-owner",
+                                      ownerKey: String(repeating: "b", count: 43)),
+        ]
+        let superseded = ExchangeFixture.exchanged(tokenID: fakeDeviceToken.tokenID)
+        let journals = try (retained + [superseded]).map { token in
+            RotationJournalRecord(state: .outcomeUnknown, server: token.server, capturedActor: try XCTUnwrap(token.actor),
+                                  expectedOwnerKey: token.ownerKey, slotTokenID: token.credential.tokenID,
+                                  priorToken: token)
+        }
+        f.store.saveRollbackQuarantine(retained + [superseded])
+        try f.store.saveRotationJournal(journals)
+
+        let code = try XCTUnwrap(ReceiptPairingCode("ABCD2345"))
+        try await pairing.pair(code: code, deviceName: ExchangeFixture.deviceName)
+        let legacy = try XCTUnwrap(pairing.credential(for: fakeServer))
+        XCTAssertEqual(legacy.provenance, .legacyCodeRedeem)
+        XCTAssertNotEqual(legacy.credential.tokenID, rolledBackSlot.credential.tokenID)
+        XCTAssertEqual(legacy.credential.tokenID, superseded.credential.tokenID)
+
+        pairing.setServerFeatures(ExchangeFixture.supported, capabilities: grants)
+        let response = ExchangeFixture.reply(tokenID: legacy.credential.tokenID)
+        await f.api.setExchangeResults([.success(response)])
+        let settled: ReceiptPairing
+        if interruptCleanup {
+            let slotID = legacy.credential.tokenID
+            // The rotation writes .intent, .sent and .replaced. Fail the next
+            // journal write only when cleanup tries to remove the promoted slot.
+            f.store.failNextRotationJournalSave { records in
+                !records.contains { $0.slotTokenID == slotID }
+            }
+            do {
+                try await f.exchange(pairing)
+                XCTFail("Expected the final journal write to fail")
+            } catch DevicePairingError.storage {}
+            XCTAssertEqual(f.store.load()?.credential, response.credential)
+            XCTAssertEqual(f.store.loadRollbackQuarantine(), retained)
+            let pending = f.store.loadRotationJournal()
+            XCTAssertEqual(Array(pending.dropLast()), journals)
+            XCTAssertEqual(pending.last?.slotTokenID, slotID)
+            XCTAssertEqual(pending.last?.state, .replaced)
+            XCTAssertEqual(pending.last?.replacement?.credential, response.credential)
+            settled = f.pairing()
+            // A further refresh must leave the recovered records unchanged.
+            settled.refreshStatus()
+        } else {
+            try await f.exchange(pairing)
+            settled = pairing
+        }
+
+        XCTAssertEqual(settled.credential(for: fakeServer)?.credential, response.credential)
+        XCTAssertEqual(f.store.loadRollbackQuarantine(), retained)
+        XCTAssertEqual(f.store.loadRotationJournal(), Array(journals.dropLast()))
+        XCTAssertTrue(f.store.pending.isEmpty)
+        let calls = await f.api.calls
+        XCTAssertEqual(calls, [.redeem(code, ExchangeFixture.deviceName, fakeServer), f.proofCall])
+    }
+
+    func testCapabilities401OnExchangeServerRetainsCodeTokenForSameActorReloginAndRotation() async throws {
+        let f = try ExchangeFixture()
+        defer { f.cleanUp() }
+        let original = try XCTUnwrap(f.store.load())
+        let actor = try XCTUnwrap(f.session.actor)
+        let pairing = f.pairing()
+        let api = MockHestiaAPI()
+        await api.setFeatures(ExchangeFixture.supported)
+        await api.setCapabilitiesError(.unauthorized)
+        let app = AppState(api: api, receiptPairing: pairing, sessionStore: f.sessionStore, events: noEvents)
+
+        await app.bootstrap()
+        XCTAssertEqual(app.phase, .needsAuth)
+        XCTAssertNil(f.sessionStore.currentSnapshot())
+        XCTAssertEqual(f.store.load()?.provenance, .legacyCodeRedeem)
+        XCTAssertEqual(f.store.load()?.credential, original.credential)
+        XCTAssertEqual(f.store.load()?.codeSessionHandoff?.actor, actor)
+        XCTAssertTrue(f.store.pending.isEmpty)
+
+        let response = ExchangeFixture.reply()
+        await f.api.setExchangeResults([.success(response)])
+        await api.setCapabilities(ExchangeFixture.owner())
+        await app.login(user: actor, password: "fixture")
+
+        XCTAssertEqual(app.phase, .ready)
+        let session = try XCTUnwrap(f.sessionStore.currentSnapshot())
+        XCTAssertEqual(session.actor, actor)
+        XCTAssertNotEqual(session.commitID, f.session.commitID)
+        XCTAssertEqual(pairing.credential(for: fakeServer)?.provenance, .exchanged)
+        XCTAssertEqual(pairing.credential(for: fakeServer)?.credential, response.credential)
+        XCTAssertTrue(f.store.pending.isEmpty)
+        XCTAssertTrue(f.store.loadRotationJournal().isEmpty)
+        let calls = await f.api.calls
+        XCTAssertEqual(calls, [.exchange(session, try ReceiptPairing.deviceName, original.credential)])
+    }
+
+    func testInstalledOwnerMigratesLegacyTokenAtBootstrapAndRetainsItAcrossFailures() async throws {
+        for provenance in [DeviceTokenProvenance.legacyCodeRedeem, .legacyMigrated1x] {
+            let f = try ExchangeFixture(provenance: provenance)
+            defer { f.cleanUp() }
+            let before = try XCTUnwrap(f.store.load())
+            let api = MockHestiaAPI()
+            await api.setFeatures(ExchangeFixture.supported)
+            await api.setCapabilities(ExchangeFixture.owner())
+            let store = f.sessionStore
+            let pairing = ReceiptPairing(api: f.api, store: f.store, serverURL: { fakeServer })
+            let app = AppState(api: api, receiptPairing: pairing, sessionStore: store, events: noEvents)
+            let result = ExchangeFixture.reply()
+            await f.api.setExchangeResults([
+                .failure(DeviceExchangeError.http(status: 401, code: nil)),
+                .failure(DeviceExchangeError.http(status: 403, code: "budget_forbidden")),
+                .failure(DeviceExchangeError.http(status: 503, code: nil)),
+                .failure(URLError(.timedOut)),
+                .failure(DeviceExchangeError.http(status: 401, code: nil)),
+                .success(result),
+            ])
+
+            await app.bootstrap()
+            XCTAssertEqual(app.phase, .ready)
+            XCTAssertTrue(pairing.requiresExchangeSignIn)
+            XCTAssertEqual(pairing.credential(for: fakeServer), before)
+            await app.refresh()
+            XCTAssertEqual(pairing.credential(for: fakeServer), before)
+            await app.refresh()
+            XCTAssertNil(pairing.credential(for: fakeServer))
+            XCTAssertEqual(f.store.loadRotationJournal().first?.priorToken, before)
+            await app.refresh()
+            await app.refresh()
+            XCTAssertEqual(f.store.loadRotationJournal().first?.state, .outcomeUnknown)
+            XCTAssertEqual(f.store.loadRotationJournal().first?.priorToken, before)
+
+            let restartedStore = CredentialSessionStore(backendURLStore: store.backendURLStore, keychain: f.keychain)
+            let restarted = ReceiptPairing(api: f.api, store: f.store, serverURL: { fakeServer })
+            let restartedApp = AppState(api: api, receiptPairing: restarted, sessionStore: restartedStore, events: noEvents)
+            await restartedApp.bootstrap()
+            XCTAssertEqual(restarted.credential(for: fakeServer)?.credential, result.credential)
+            XCTAssertTrue(f.store.loadRotationJournal().isEmpty)
+            XCTAssertTrue(f.store.pending.isEmpty)
+            let calls = await f.api.calls
+            XCTAssertEqual(calls.count, 6)
+            let deviceName = try ReceiptPairing.deviceName
+            XCTAssertTrue(calls.allSatisfy { $0 == .exchange(f.session, deviceName, before.credential) })
+        }
+    }
+
+    func testInFlightExchangeDoesNotPublishAfterAccountOrOriginSwitch() async throws {
+        enum Transition: CaseIterable { case signOut, account, origin }
+
+        let otherOrigin = try XCTUnwrap(URL(string: "https://hestia.example:8443"))
+        for transition in Transition.allCases {
+            let f = try ExchangeFixture(provenance: .exchanged)
+            defer { f.cleanUp() }
+            let prior = try XCTUnwrap(f.store.load())
+            let pairing = f.pairing()
+            let api = MockHestiaAPI()
+            await api.setFeatures(ExchangeFixture.supported)
+            await api.setCapabilities(ExchangeFixture.owner())
+            let app = AppState(api: api, receiptPairing: pairing, sessionStore: f.sessionStore, events: noEvents)
+            await app.bootstrap()
+            XCTAssertEqual(app.phase, .ready)
+            XCTAssertEqual(pairing.credential(for: fakeServer), prior)
+
+            let response = ExchangeFixture.reply()
+            await f.api.setExchangeResults([.success(response)], holdFirst: true)
+            let rotation = Task { try await app.pairReceiptsByExchange() }
+            defer { Task { await f.api.releaseExchange() } }
+            try await waitUntil("exchange request is in flight") { await f.api.isExchangeHeld }
+            XCTAssertEqual(f.store.loadRotationJournal().first?.state, .sent)
+
+            let origin: URL
+            switch transition {
+            case .signOut:
+                origin = fakeServer
+                let signedOut = await app.signOut()
+                XCTAssertTrue(signedOut)
+                XCTAssertEqual(app.phase, .needsAuth)
+                XCTAssertNil(f.sessionStore.currentSnapshot())
+            case .account:
+                origin = fakeServer
+                await api.setCapabilities(ExchangeFixture.delegate())
+                await app.login(user: "delegate", password: "fixture")
+                XCTAssertEqual(app.phase, .ready)
+                XCTAssertEqual(f.sessionStore.currentSnapshot()?.origin, origin)
+                XCTAssertEqual(f.sessionStore.currentSnapshot()?.actor, "delegate")
+            case .origin:
+                origin = otherOrigin
+                await api.setCapabilitiesError(.unauthorized)
+                XCTAssertTrue(app.saveAndConnect(origin.absoluteString))
+                try await waitUntil("new backend requires sign-in") { app.phase == .needsAuth }
+                await api.setCapabilities(ExchangeFixture.owner())
+                await app.login(user: "owner", password: "fixture")
+                XCTAssertEqual(app.phase, .ready)
+                XCTAssertEqual(f.sessionStore.currentSnapshot()?.origin, origin)
+                XCTAssertEqual(f.sessionStore.currentSnapshot()?.actor, "owner")
+            }
+
+            await f.api.releaseExchange()
+            do {
+                try await rotation.value
+                XCTFail("Expected stale publication to be discarded")
+            } catch is CancellationError {}
+            XCTAssertEqual(f.store.load(), prior)
+            XCTAssertNil(pairing.credential(for: origin))
+            XCTAssertTrue(f.store.pending.isEmpty)
+            XCTAssertEqual(f.store.loadRotationJournal().first?.state, .outcomeUnknown)
+            XCTAssertEqual(f.store.loadRotationJournal().first?.priorToken, prior)
+            XCTAssertEqual(f.store.loadUntrustedExchangeTokens().map(\.credential), [response.credential])
+            let calls = await f.api.calls
+            XCTAssertEqual(calls, [.exchange(f.session, try ReceiptPairing.deviceName, prior.credential)])
+        }
+    }
+
+    func testFailedRevocationQueueKeepsFiveAndRestoresOverflowNotice() async throws {
+        let f = try ExchangeFixture(provenance: nil)
+        defer { f.cleanUp() }
+        let pairing = f.pairing()
+        await f.api.setRevokeBehavior(.unavailable)
+        let detached = (1...6).map { index in
+            StoredReceiptDeviceToken(server: fakeServer, credential: .init(
+                token: "detached-test-token-\(index)", tokenID: "detached-id-\(index)", expiresAt: .string("test-expiry")
+            ))
+        }
+        for token in detached {
+            try await pairing.revokeDetached(token)
+        }
+        XCTAssertEqual(f.store.pending, Array(detached.suffix(5)))
+        XCTAssertTrue(pairing.hasEvictedPendingRevocations)
+        await f.api.setRevokeBehavior(.success)
+        let restarted = f.pairing()
+        await waitUntil { f.store.pending.isEmpty }
+        XCTAssertTrue(restarted.hasEvictedPendingRevocations)
+        XCTAssertNotNil(restarted.revocationNotice)
+    }
+
+    func testAppRuntime403RefreshesOnceAndRotatesOnlyForAnExpandedCeiling() async throws {
+        for grantRemoved in [true, false] {
+            let f = try ExchangeFixture(provenance: .exchanged)
+            defer { f.cleanUp() }
+            let api = MockHestiaAPI()
+            await api.setFeatures(ExchangeFixture.supported)
+            await api.setCapabilities(ExchangeFixture.owner())
+            let pairing = f.pairing()
+            let app = AppState(api: api, receiptPairing: pairing, sessionStore: f.sessionStore, events: noEvents)
+            await app.bootstrap()
+            let revised = grantRemoved ? Capabilities(user: "owner") : ExchangeFixture.owner(budget: true)
+            await api.setCapabilities(revised)
+            let replacement = ExchangeFixture.reply(permissions: [ExchangeFixture.add, Permission.budgetView.rawValue])
+            await f.api.setExchangeResults([.success(replacement)])
+            let receipts = try XCTUnwrap(app.receiptsAPI)
+            do {
+                _ = try await receipts.parseReceiptText("test", source: .paste)
+                XCTFail("Expected the receipt denial")
+            } catch ReceiptError.forbidden {}
+            try await waitUntil("the denial refresh updates receipt access") {
+                app.capabilities == revised && (grantRemoved || f.store.load()?.credential == replacement.credential)
+            }
+            let capabilityCalls = await api.count(.capabilities)
+            let exchangeCalls = await f.api.calls
+            XCTAssertEqual(capabilityCalls, 2)
+            if grantRemoved {
+                XCTAssertNil(app.receiptsAPI)
+                XCTAssertTrue(exchangeCalls.isEmpty)
+            } else {
+                XCTAssertEqual(exchangeCalls, [.exchange(f.session, try ReceiptPairing.deviceName, fakeDeviceToken)])
+            }
+        }
+    }
+
+    func testAppRuntimeExpiryRefreshesAndIssuesFreshWithoutRevokingOldBearer() async throws {
+        let f = try ExchangeFixture(provenance: .exchanged)
+        defer { f.cleanUp() }
+        let api = MockHestiaAPI()
+        await api.setFeatures(ExchangeFixture.supported)
+        await api.setCapabilities(ExchangeFixture.owner())
+        await api.setReceiptParseError(.expiredDeviceToken)
+        let pairing = f.pairing()
+        let app = AppState(api: api, receiptPairing: pairing, sessionStore: f.sessionStore, events: noEvents)
+        await app.bootstrap()
+        let replacement = ExchangeFixture.reply(tokenID: "fresh-id")
+        await f.api.setExchangeResults([.success(replacement)])
+        let receipts = try XCTUnwrap(app.receiptsAPI)
+        do {
+            _ = try await receipts.parseReceiptText("test", source: .paste)
+            XCTFail("Expected the receipt token expiry")
+        } catch ReceiptError.expiredDeviceToken {}
+        try await waitUntil("the refreshed session has a new device token") { f.store.load()?.credential == replacement.credential }
+        let capabilityCalls = await api.count(.capabilities)
+        let exchangeCalls = await f.api.calls
+        XCTAssertEqual(capabilityCalls, 2)
+        XCTAssertEqual(exchangeCalls, [.exchange(f.session, try ReceiptPairing.deviceName, nil)])
+        XCTAssertTrue(f.store.pending.isEmpty)
+    }
+
+    func testAppRollbackQuarantinesBeforeCapabilityResponseOrAfterReceiptRejection() async throws {
+        for probeFirst in [true, false] {
+            let f = try ExchangeFixture(provenance: .exchanged)
+            defer { f.cleanUp() }
+            let prior = try XCTUnwrap(f.store.load())
+            let api = MockHestiaAPI()
+            await api.setFeatures(ExchangeFixture.supported)
+            await api.setCapabilities(ExchangeFixture.owner())
+            let pairing = f.pairing()
+            let app = AppState(api: api, receiptPairing: pairing, sessionStore: f.sessionStore, events: noEvents)
+            await app.bootstrap()
+            await api.setFeatures(ExchangeFixture.rolledBack)
+            await api.setHoldCapabilities()
+            let receipts = try XCTUnwrap(app.receiptsAPI)
+            let refresh: Task<Void, Never>?
+            if probeFirst {
+                refresh = Task { await app.refresh() }
+            } else {
+                refresh = nil
+                await api.setReceiptParseError(.invalidDeviceToken)
+                do {
+                    _ = try await receipts.parseReceiptText("test", source: .paste)
+                    XCTFail("Expected the receipt token to be rejected after rollback")
+                } catch ReceiptError.invalidDeviceToken {}
+            }
+            try await waitUntil("the rollback capabilities request is in flight") { await api.isCapabilitiesHeld }
+            XCTAssertNil(pairing.credential(for: fakeServer))
+            XCTAssertEqual(f.store.loadRollbackQuarantine(), [prior])
+            XCTAssertTrue(f.store.pending.isEmpty)
+            if probeFirst {
+                do {
+                    _ = try await receipts.parseReceiptText("test", source: .paste)
+                    XCTFail("Expected the old scope to be rejected before dispatch")
+                } catch is CancellationError {}
+            }
+            await api.releaseCapabilities()
+            await refresh?.value
+            try await waitUntil("the rollback capabilities are published") { app.serverFeatures == ExchangeFixture.rolledBack }
+
+            let code = try XCTUnwrap(ReceiptPairingCode("ABCD2345"))
+            try await pairing.pair(code: code, deviceName: ExchangeFixture.deviceName)
+            let calls = await f.api.calls
+            XCTAssertEqual(calls, [.redeem(code, ExchangeFixture.deviceName, fakeServer)])
+            XCTAssertEqual(pairing.credential(for: fakeServer)?.provenance, .legacyCodeRedeem)
+            XCTAssertEqual(f.store.loadRollbackQuarantine(), [prior])
+        }
+    }
 }

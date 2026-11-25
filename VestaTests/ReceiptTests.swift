@@ -771,6 +771,23 @@ final class ReceiptsClientTests: XCTestCase {
         XCTAssertNil(transport.last)
     }
 
+    func testScopedReceiptRejectsAReplacedCredentialBeforeSending() async throws {
+        let origin = URL(string: "https://hestia.example")!
+        let replacement = ReceiptDeviceToken(token: "fake-new-device", tokenID: "replacement", expiresAt: .number(1))
+        let store = MemoryDeviceTokenStore(.init(server: origin, credential: replacement))
+        let pairing = ReceiptPairing(store: store, serverURL: { origin })
+        let transport = CapturingTransport(status: 200, body: sampleParseJSON)
+        let api = APIClient(transport: transport, receiptPairing: pairing)
+        let oldScope = ReceiptSessionScope(origin: origin, actor: nil, ownerKey: nil, credential: fakeDeviceToken)
+
+        do {
+            _ = try await api.parseReceiptText("Receipt text", source: .paste, scope: oldScope)
+            XCTFail("The old operation must not send the replacement credential")
+        } catch is CancellationError {
+            XCTAssertNil(transport.last)
+        }
+    }
+
     func testExpiredTokenIsRemovedAndRequiresPairingAgain() async {
         let store = MemoryDeviceTokenStore(.init(server: AppConfig.serverURL, credential: fakeDeviceToken))
         let pairing = ReceiptPairing(store: store)
@@ -973,6 +990,7 @@ final class ReceiptFormTests: XCTestCase {
 actor MockReceiptsAPI: ReceiptsAPI {
     enum Call: Equatable { case parse(String, ReceiptSourceKind = .paste), confirm(String?), delete(String, Int) }
     private(set) var calls: [Call] = []
+    private(set) var scopes: [ReceiptSessionScope?] = []
     private var parseError: ReceiptError?
     private var deleteError: ReceiptError?
     private var parseGate: CheckedContinuation<Void, Never>?
@@ -987,8 +1005,9 @@ actor MockReceiptsAPI: ReceiptsAPI {
     func holdNextDelete() { holdDelete = true }
     func releaseDelete() { deleteGate?.resume(); deleteGate = nil }
 
-    func parseReceiptText(_ text: String, source: ReceiptSourceKind) async throws -> ReceiptParseResult {
+    func parseReceiptText(_ text: String, source: ReceiptSourceKind, scope: ReceiptSessionScope?) async throws -> ReceiptParseResult {
         calls.append(.parse(text, source))
+        scopes.append(scope)
         if holdParse {
             holdParse = false
             await withCheckedContinuation { parseGate = $0 }
@@ -997,18 +1016,37 @@ actor MockReceiptsAPI: ReceiptsAPI {
         return try JSONDecoder().decode(ReceiptParseResult.self, from: Data(sampleParseJSON.utf8))
     }
 
-    func confirmReceipt(_ request: ReceiptConfirmRequest) async throws -> ReceiptDetail {
+    func confirmReceipt(_ request: ReceiptConfirmRequest, scope: ReceiptSessionScope?) async throws -> ReceiptDetail {
         calls.append(.confirm(request.link?.entryReference))
+        scopes.append(scope)
         return try JSONDecoder().decode(ReceiptParseResult.self, from: Data(sampleParseJSON.utf8)).draft
     }
 
-    func deleteReceipt(id: String, expectedVersion: Int) async throws {
+    func deleteReceipt(id: String, expectedVersion: Int, scope: ReceiptSessionScope?) async throws {
         calls.append(.delete(id, expectedVersion))
+        scopes.append(scope)
         if holdDelete {
             holdDelete = false
             await withCheckedContinuation { deleteGate = $0 }
         }
         if let deleteError { throw deleteError }
+    }
+}
+
+extension ReceiptSessionScope {
+    static func testScope(origin: URL = URL(string: "https://hestia.example")!) -> Self {
+        .init(origin: origin, actor: nil, ownerKey: nil, credential: nil)
+    }
+}
+
+extension ReceiptFlow {
+    convenience init(api: any ReceiptsAPI,
+                     recognizer: any ReceiptTextRecognizing = VisionReceiptRecognizer(),
+                     allowsMatching: @escaping @MainActor () -> Bool = { true },
+                     janitor: ReceiptDraftJanitor = ReceiptDraftJanitor(),
+                     scope: ReceiptSessionScope = .testScope()) {
+        self.init(api: api, recognizer: recognizer, allowsMatching: allowsMatching, janitor: janitor,
+                  scope: scope, isScopeCurrent: { $0 == scope }, isCleanupScopeCurrent: { $0 == scope })
     }
 }
 
@@ -1022,6 +1060,33 @@ final class ReceiptTests: XCTestCase {
     @MainActor
     private final class MatchGrant {
         var isGranted = true
+    }
+
+    func test409AlreadySubmittedAndLegacyLinkNullConfirm() async throws {
+        let origin = URL(string: "https://hestia.example")!
+        let store = MemoryDeviceTokenStore(.init(server: origin, credential: fakeDeviceToken))
+        let pairing = ReceiptPairing(store: store, serverURL: { origin })
+        let transport = AlreadySubmittedTransport()
+        let api = APIClient(transport: transport, receiptPairing: pairing)
+        let scope = ReceiptSessionScope(origin: origin, actor: nil, ownerKey: nil, credential: fakeDeviceToken)
+        let flow = ReceiptFlow(api: api, scope: scope)
+        flow.useText("BIEDRONKA")
+        await flow.send()
+        flow.form.payment = .cash
+
+        await flow.confirm()
+        await flow.confirm()
+        await flow.abandon()
+
+        XCTAssertEqual(flow.step, .done)
+        XCTAssertNil(flow.parsed)
+        XCTAssertNil(flow.error)
+        let operations = await transport.operations
+        XCTAssertEqual(operations, [Operations.ParseBudgetReceiptText.id, Operations.ConfirmBudgetReceipt.id])
+        let sent = await transport.confirmBody
+        let body = try XCTUnwrap(sent)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertTrue(object["link"] is NSNull)
     }
 
     func testMatchLossClearsOpenReviewCandidatesAndFormSelection() async throws {
@@ -1068,6 +1133,29 @@ final class ReceiptTests: XCTestCase {
     }
 }
 
+private actor AlreadySubmittedTransport: ClientTransport {
+    private(set) var operations: [String] = []
+    private(set) var confirmBody: Data?
+
+    func send(_ request: HTTPRequest, body: HTTPBody?, baseURL: URL, operationID: String) async throws -> (HTTPResponse, HTTPBody?) {
+        operations.append(operationID)
+        var response: HTTPResponse
+        let json: String
+        if operationID == Operations.ParseBudgetReceiptText.id {
+            response = HTTPResponse(status: .ok)
+            json = sampleParseJSON
+        } else {
+            if operationID == Operations.ConfirmBudgetReceipt.id, let body {
+                confirmBody = try await Data(collecting: body, upTo: 1 << 20)
+            }
+            response = HTTPResponse(status: .conflict)
+            json = #"{"error":{"code":"already_submitted"}}"#
+        }
+        response.headerFields[.contentType] = "application/json"
+        return (response, HTTPBody(json))
+    }
+}
+
 @MainActor
 final class ReceiptFlowTests: XCTestCase {
     private func image() -> CGImage {
@@ -1095,7 +1183,9 @@ final class ReceiptFlowTests: XCTestCase {
         let recognizer = StubRecognizer(fragments: [
             TextFragment(text: "OCR text", box: CGRect(x: 0.1, y: 0.2, width: 0.5, height: 0.02)),
         ])
-        let flow = ReceiptFlow(api: api, recognizer: recognizer, janitor: ReceiptDraftJanitor())
+        let scope = ReceiptSessionScope(origin: AppConfig.serverURL, actor: nil, ownerKey: nil,
+                                        credential: fakeDeviceToken)
+        let flow = ReceiptFlow(api: api, recognizer: recognizer, scope: scope)
         await flow.recognize([image()])
         flow.text = "Edited OCR text"
         await flow.send()
@@ -1104,7 +1194,7 @@ final class ReceiptFlowTests: XCTestCase {
                        ["text": "Edited OCR text", "source_kind": "local_ocr"])
         XCTAssertEqual(flow.step, .review)
 
-        let pasteFlow = ReceiptFlow(api: api, janitor: ReceiptDraftJanitor())
+        let pasteFlow = ReceiptFlow(api: api, scope: scope)
         pasteFlow.useText("Pasted text")
         await pasteFlow.send()
         let paste = try XCTUnwrap(transport.last)
@@ -1175,22 +1265,21 @@ final class ReceiptFlowTests: XCTestCase {
     func testQueuedDeletesOnlyGoToTheirOwnServer() async {
         let api = MockReceiptsAPI()
         let janitor = ReceiptDraftJanitor()
-        var origin = "https://a.example"
-        let flow = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: []), janitor: janitor) { origin }
+        let scope = ReceiptSessionScope.testScope()
+        let otherScope = ReceiptSessionScope.testScope(origin: URL(string: "https://hestia.example:8443")!)
+        let flow = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: []), janitor: janitor, scope: scope)
         flow.useText("A")
         await flow.send()
         await api.failDelete(.api(.offline))
         await flow.abandon()                       // A's draft stays queued
         await api.failDelete(nil)
-        origin = "https://b.example"
-        let onB = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: []), janitor: janitor) { origin }
+        let onB = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: []), janitor: janitor, scope: otherScope)
         await onB.abandon()
         var deletes = await api.calls.filter { if case .delete = $0 { true } else { false } }
         XCTAssertEqual(deletes.count, 1)           // nothing sent to B
         let queued = await janitor.pendingCount
         XCTAssertEqual(queued, 1)
-        origin = "https://a.example"
-        let backOnA = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: []), janitor: janitor) { origin }
+        let backOnA = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: []), janitor: janitor, scope: scope)
         await backOnA.abandon()
         deletes = await api.calls.filter { if case .delete = $0 { true } else { false } }
         XCTAssertEqual(deletes.count, 2)
@@ -1201,7 +1290,7 @@ final class ReceiptFlowTests: XCTestCase {
     func testCancelDuringCleanupSendsNoText() async {
         let api = MockReceiptsAPI()
         let janitor = ReceiptDraftJanitor()
-        await janitor.enqueue(id: "old", version: 1, server: AppConfig.serverURL.absoluteString)
+        await janitor.enqueue(.init(id: "old", version: 1, scope: .testScope()))
         await api.holdNextDelete()
         let flow = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: []), janitor: janitor)
         flow.useText("A")

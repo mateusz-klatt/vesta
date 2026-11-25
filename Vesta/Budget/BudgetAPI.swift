@@ -9,6 +9,9 @@ protocol BudgetAPI: Sendable {
 
 enum BudgetError: LocalizedError, Equatable {
     case unauthorized
+    case expiredDeviceToken
+    case revokedDeviceToken
+    case invalidDeviceToken
     case forbidden
     case unavailable
     case staleCursor
@@ -16,7 +19,7 @@ enum BudgetError: LocalizedError, Equatable {
 
     var title: LocalizedStringResource {
         switch self {
-        case .unauthorized: APIError.unauthorized.title
+        case .unauthorized, .expiredDeviceToken, .revokedDeviceToken, .invalidDeviceToken: APIError.unauthorized.title
         case .forbidden: "Not allowed"
         case .unavailable: "Budget unavailable"
         case .staleCursor, .failed: APIError.cannotConnect.title
@@ -25,7 +28,7 @@ enum BudgetError: LocalizedError, Equatable {
 
     var message: LocalizedStringResource {
         switch self {
-        case .unauthorized: APIError.unauthorized.message
+        case .unauthorized, .expiredDeviceToken, .revokedDeviceToken, .invalidDeviceToken: APIError.unauthorized.message
         case .forbidden: "Only an admin can view the household budget."
         case .unavailable: ReceiptError.unavailable.message
         case .staleCursor, .failed: APIError.cannotConnect.message
@@ -36,6 +39,9 @@ enum BudgetError: LocalizedError, Equatable {
 
     static func from(status: Int, code: String? = nil) -> BudgetError {
         switch (status, code) {
+        case (401, "device_token_expired"): .expiredDeviceToken
+        case (401, "device_token_revoked"): .revokedDeviceToken
+        case (401, "device_token_invalid"): .invalidDeviceToken
         case (401, _): .unauthorized
         case (403, _): .forbidden
         case (404, _), (503, _): .unavailable
@@ -54,5 +60,12 @@ enum BudgetError: LocalizedError, Equatable {
         }
         if let api = error as? APIError, api == .unauthorized { return .unauthorized }
         return .failed
+    }
+
+    var isAccessDenial: Bool {
+        switch self {
+        case .unauthorized, .expiredDeviceToken, .revokedDeviceToken, .invalidDeviceToken, .forbidden: true
+        case .unavailable, .staleCursor, .failed: false
+        }
     }
 }

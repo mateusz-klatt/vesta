@@ -71,6 +71,72 @@ final class DeviceTokenKeychainTests: XCTestCase {
                        kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String)
     }
 
+    func testRotationJournalUsesDedicatedWhenUnlockedThisDeviceOnlyItem() throws {
+        let keychain = ScriptedKeychain()
+        let store = KeychainDeviceTokenStore(keychain: keychain)
+        keychain.updateStatuses = [errSecItemNotFound]
+        let record = RotationJournalRecord(state: .sent, server: token.server, capturedActor: "owner",
+                                           expectedOwnerKey: nil, slotTokenID: token.credential.tokenID, priorToken: token)
+        try store.saveRotationJournal([record])
+
+        guard case .add(let item) = try XCTUnwrap(keychain.writes.last) else {
+            return XCTFail("Expected a new Keychain item for the rotation journal")
+        }
+        XCTAssertEqual(item[kSecAttrAccount as String] as? String, "receipts-rotation-journal")
+        XCTAssertEqual(item[kSecAttrAccessible as String] as? String,
+                       kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String)
+        keychain.readStatus = errSecSuccess
+        keychain.readData = try XCTUnwrap(item[kSecValueData as String] as? Data)
+        XCTAssertEqual(try store.loadRotationJournal(), [record])
+        keychain.readStatus = errSecInteractionNotAllowed
+        assertStorageError { _ = try store.loadRotationJournal() }
+    }
+
+    func testDeviceNameSuffixDoesNotReturnAnIdentityWhileKeychainLocked() {
+        let keychain = ScriptedKeychain()
+        let store = KeychainDeviceTokenStore(keychain: keychain)
+        keychain.readStatus = errSecInteractionNotAllowed
+
+        assertStorageError { _ = try store.deviceNameSuffix() }
+        XCTAssertTrue(keychain.writes.isEmpty)
+
+        keychain.readStatus = errSecItemNotFound
+        keychain.updateStatuses = [errSecItemNotFound]
+        keychain.addStatus = errSecInteractionNotAllowed
+
+        assertStorageError { _ = try store.deviceNameSuffix() }
+        XCTAssertEqual(keychain.writes.count, 2)
+    }
+
+    func testDeviceNameSuffixReusesStoredIdentityAfterCreatingIt() throws {
+        let keychain = ScriptedKeychain()
+        let store = KeychainDeviceTokenStore(keychain: keychain)
+        keychain.updateStatuses = [errSecItemNotFound]
+
+        let suffix = try store.deviceNameSuffix()
+        guard case .add(let item) = try XCTUnwrap(keychain.writes.last) else {
+            return XCTFail("Expected the generated device name to be persisted")
+        }
+        XCTAssertEqual(item[kSecAttrAccount as String] as? String, "receipts-device-name")
+        XCTAssertEqual(suffix.count, 32)
+        keychain.readStatus = errSecSuccess
+        keychain.readData = try XCTUnwrap(item[kSecValueData as String] as? Data)
+        XCTAssertEqual(keychain.readData, Data(suffix.utf8))
+
+        XCTAssertEqual(try store.deviceNameSuffix(), suffix)
+        XCTAssertEqual(keychain.writes.count, 2)
+    }
+
+    func testDeviceNameSuffixRejectsMalformedStoredIdentity() {
+        let keychain = ScriptedKeychain()
+        let store = KeychainDeviceTokenStore(keychain: keychain)
+        keychain.readStatus = errSecSuccess
+        keychain.readData = Data("not-a-device-name-suffix".utf8)
+
+        assertStorageError { _ = try store.deviceNameSuffix() }
+        XCTAssertTrue(keychain.writes.isEmpty)
+    }
+
     func testDeviceKeychainRejectsFailedWritesAndDeletesWithoutRemovingTheItem() {
         for status in [errSecInteractionNotAllowed, errSecNotAvailable] {
             let keychain = ScriptedKeychain()
@@ -115,12 +181,13 @@ private final class ScriptedKeychain: DeviceTokenKeychain {
     }
 
     var readStatus = errSecItemNotFound
+    var readData: Data?
     var updateStatuses: [OSStatus] = []
     var addStatus = errSecSuccess
     var deleteStatus = errSecSuccess
     private(set) var writes: [Write] = []
 
-    func copyMatching(_ query: [String: Any]) -> (status: OSStatus, item: CFTypeRef?) { (readStatus, nil) }
+    func copyMatching(_ query: [String: Any]) -> (status: OSStatus, item: CFTypeRef?) { (readStatus, readData as NSData?) }
 
     func update(_ query: [String: Any], attributes: [String: Any]) -> OSStatus {
         writes.append(.update(query, attributes))

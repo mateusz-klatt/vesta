@@ -27,11 +27,16 @@ home data (devices, rooms, temperatures, etc.) lives on that server, which you o
 the person who set it up control. Vesta sends commands to, and reads status from,
 that server and nowhere else.
 
-## Receipts (optional, admin accounts only)
+## Receipts (optional)
 
-If your hestia server has its budget module and receipts turned on, an admin can
-add a paper receipt from Vesta:
+If your hestia server has its budget module and receipts turned on, an account
+with receipt access can add a paper receipt from Vesta:
 
+- **Device pairing.** On supported servers, Vesta sends your sign-in token, a
+  generated device name, and the previous device token if available to your
+  hestia server to exchange for a scoped device token. Vesta keeps the device
+  token, the account and ledger identifiers, its permissions, and any pending
+  rotation or revocation records in the device-only iOS Keychain.
 - **Camera and photos.** Vesta asks for camera access only to scan a receipt (or
   you can pick a photo you already have). The image is used **only on your
   device** to read the text, and is then discarded — it is not saved by Vesta
@@ -48,8 +53,10 @@ add a paper receipt from Vesta:
 
 ## Removing your data
 
-Signing out clears the stored token. Deleting the app removes the server address,
-token, and preferences from your device.
+Signing out clears the sign-in token and ends receipt access for that session.
+Device credential records may remain in the Keychain for rotation recovery or
+revocation. You can manage paired devices in your hestia server’s device list.
+Deleting the app removes its local settings.
 
 ## Contact
 

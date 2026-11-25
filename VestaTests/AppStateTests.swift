@@ -114,6 +114,7 @@ actor MockHestiaAPI: HestiaAPI, ReceiptsAPI {
         discoveryGate = nil
     }
     func setReceiptParseResult(_ result: ReceiptParseResult) { receiptParseResult = .success(result) }
+    func setReceiptParseError(_ error: ReceiptError) { receiptParseResult = .failure(error) }
     func setHoldReceiptParse() { holdReceiptParse = true }
     var isReceiptParseHeld: Bool { receiptParseGate != nil }
     func releaseReceiptParse() {
@@ -190,7 +191,7 @@ actor MockHestiaAPI: HestiaAPI, ReceiptsAPI {
     func setThermostatPower(node: Int, on: Bool) async throws { calls.append(.setThermostatPower(node, on)) }
     func sendIR(file: String, button: String) async throws { calls.append(.sendIR(file, button)) }
 
-    func parseReceiptText(_ text: String, source: ReceiptSourceKind) async throws -> ReceiptParseResult {
+    func parseReceiptText(_ text: String, source: ReceiptSourceKind, scope: ReceiptSessionScope?) async throws -> ReceiptParseResult {
         calls.append(.parseReceipt)
         let result = receiptParseResult
         if holdReceiptParse {
@@ -200,8 +201,13 @@ actor MockHestiaAPI: HestiaAPI, ReceiptsAPI {
         return try result.get()
     }
 
-    func confirmReceipt(_ request: ReceiptConfirmRequest) async throws -> ReceiptDetail { throw ReceiptError.forbidden }
-    func deleteReceipt(id: String, expectedVersion: Int) async throws { throw ReceiptError.forbidden }
+    func confirmReceipt(_ request: ReceiptConfirmRequest, scope: ReceiptSessionScope?) async throws -> ReceiptDetail {
+        throw ReceiptError.forbidden
+    }
+
+    func deleteReceipt(id: String, expectedVersion: Int, scope: ReceiptSessionScope?) async throws {
+        throw ReceiptError.forbidden
+    }
 }
 
 private actor MockQRLogin {
