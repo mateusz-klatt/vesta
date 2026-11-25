@@ -13,6 +13,7 @@ enum APIError: LocalizedError, Equatable {
     case offline
     case tls
     case cannotConnect
+    case credentialStorage
     case http(Int)
     case unexpected(String)
 
@@ -26,7 +27,7 @@ enum APIError: LocalizedError, Equatable {
         case .tls: "Secure connection problem"
         case .cannotConnect: "Couldn’t reach server"
         case .http: "Server error"
-        case .unexpected: "Couldn’t connect"
+        case .credentialStorage, .unexpected: "Couldn’t connect"
         }
     }
 
@@ -39,6 +40,7 @@ enum APIError: LocalizedError, Equatable {
         case .offline: "Your iPhone appears to be offline."
         case .tls: "The server’s certificate could not be verified."
         case .cannotConnect: "Check the address and that the server is running."
+        case .credentialStorage: DevicePairingError.storage.message
         case .http(let code): "The server returned an error (\(code))."
         case .unexpected: "Check the address and try again."
         }
@@ -60,6 +62,8 @@ enum APIError: LocalizedError, Equatable {
         if let api = error as? APIError { return api }
         // The generated client wraps transport failures in ClientError.
         if let clientError = error as? ClientError { return wrap(clientError.underlyingError) }
+        if (error as? SessionKeychainError) == .locked { return .credentialStorage }
+        if case .storage = error as? DevicePairingError { return .credentialStorage }
         if let urlError = error as? URLError {
             switch urlError.code {
             case .cannotFindHost, .dnsLookupFailed: return .serverNotFound

@@ -106,20 +106,29 @@ final class CredentialSessionStore: @unchecked Sendable {
 
     @MainActor
     @discardableResult
-    func commitAuthoritative(origin: URL, actor: String?, token: String) throws -> BoundSession {
+    func commitAuthoritative(origin: URL, actor: String?, token: String,
+                             beforeWrite: (BoundSession) throws -> Void = { _ in }) throws -> BoundSession {
         guard let origin = BackendURLStore.canonicalize(origin.absoluteString), !token.isEmpty else {
             throw CredentialSessionStoreError.invalidRecord
         }
         let record = AuthoritativeSessionRecord(commitID: UUID(), origin: origin, actor: actor, token: token)
+        try beforeWrite(record.snapshot)
         try keychain.write(JSONEncoder().encode(record), to: .authoritative)
         reconcile(record)
         return record.snapshot
     }
 
+    /// Retry cleanup after committing a replacement or otherwise retiring the legacy bearer.
+    @MainActor
+    func retryLegacyMigrationCleanup() -> Bool {
+        needsCleanupRetry()
+    }
+
     /// Capture the old bearer, then clear the persisted session before changing the selected origin.
     @MainActor
     @discardableResult
-    func clearAuthoritative(savingOverride newOrigin: URL? = nil) throws -> BoundSession? {
+    func clearAuthoritative(savingOverride newOrigin: URL? = nil,
+                            beforeClear: (BoundSession?) throws -> Void = { _ in }) throws -> BoundSession? {
         let record = try loadAuthoritative()
         let migrated = try keychain.read(.legacyMigrated) != nil
         let override = backendURLStore.loadOverrideRecord()
@@ -129,6 +138,7 @@ final class CredentialSessionStore: @unchecked Sendable {
             oldSession = try legacySnapshot(data, override: override)
         }
 
+        try beforeClear(oldSession)
         try finalizeLegacyMigration(marked: migrated)
         // Keep the current authoritative record intact if either preceding operation failed.
         if record != nil { try keychain.delete(.authoritative) }
@@ -176,9 +186,10 @@ final class CredentialSessionStore: @unchecked Sendable {
         try keychain.write(Data([1]), to: .legacyMigrated)
     }
 
-    private func needsCleanupRetry(marked migrated: Bool) -> Bool {
+    private func needsCleanupRetry(marked migrated: Bool? = nil) -> Bool {
         do {
-            try finalizeLegacyMigration(marked: migrated)
+            let marked = try migrated ?? (keychain.read(.legacyMigrated) != nil)
+            try finalizeLegacyMigration(marked: marked)
             return false
         } catch {
             return true

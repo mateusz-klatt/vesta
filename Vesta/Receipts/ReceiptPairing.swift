@@ -42,6 +42,10 @@ final class ReceiptPairing {
         refreshDisplayedStatus()
     }
 
+    func retryInterruptedDetach() {
+        schedulePendingRevocationRetry(interruptedOnly: true)
+    }
+
     private func refreshDisplayedStatus() {
         guard !isBusy, status != .pairAgain else { return }
         status = credential(for: server) == nil ? .notPaired : .paired
@@ -69,20 +73,24 @@ final class ReceiptPairing {
             guard token.provenance != .exchanged, token.sessionCommitID == nil else { return nil }
             return token
         }
+        return isBound(token, to: session) ? token : nil
+    }
+
+    private func isBound(_ token: StoredReceiptDeviceToken, to session: BoundSession?) -> Bool {
         if let session {
-            guard OriginMatcher.matches(server, session.origin) else { return nil }
+            guard OriginMatcher.matches(token.server, session.origin) else { return false }
         } else {
-            guard let unauthenticatedOrigin, OriginMatcher.matches(server, unauthenticatedOrigin) else { return nil }
+            guard let unauthenticatedOrigin, OriginMatcher.matches(token.server, unauthenticatedOrigin) else { return false }
         }
         switch token.provenance {
         case .legacyCodeRedeem:
-            if let session, session.commitID == nil { return nil }
-            return token.sessionCommitID == session?.commitID ? token : nil
+            if let session { return session.commitID.map(token.isCodeBound(to:)) ?? false }
+            return token.sessionCommitID == nil
         case .legacyPasswordLogin, .legacyMigrated1x:
-            return token.actor == session?.actor ? token : nil
+            return token.actor == session?.actor
         case .exchanged:
             // V4 will select exchanged tokens using an explicit owner key.
-            return nil
+            return false
         }
     }
 
@@ -93,12 +101,50 @@ final class ReceiptPairing {
         try store.save(active.withScope(actor: actor))
     }
 
-    func retainCodeCredential(from old: BoundSession, to new: BoundSession) throws {
-        guard let actor = old.actor, actor == new.actor, OriginMatcher.matches(old.origin, new.origin),
-              let oldCommitID = old.commitID, let newCommitID = new.commitID,
+    /// A same-origin reset saves the previously verified actor before clearing auth.
+    /// The credential itself still has no verified actor or owner.
+    func prepareCodeReauthentication(from session: BoundSession?) throws {
+        guard let session, let actor = session.actor, let commitID = session.commitID,
               let active = try store.load(), active.provenance == .legacyCodeRedeem,
-              active.sessionCommitID == oldCommitID, OriginMatcher.matches(old.origin, active.server) else { return }
-        try store.save(active.withScope(actor: nil, sessionCommitID: newCommitID))
+              isBound(active, to: session) else { return }
+        try store.removePendingRevocation(active)
+        let handoff = ReceiptCodeSessionHandoff(actor: actor, previousCommitID: commitID)
+        try store.save(active.withScope(actor: nil, sessionCommitID: commitID, codeSessionHandoff: handoff))
+    }
+
+    func prepareForLogin(from old: BoundSession?, to new: BoundSession) throws -> StoredReceiptDeviceToken? {
+        guard let active = try store.load() else { return nil }
+        let alreadyStaged = try store.loadPendingRevocations().contains(where: active.matchesBearer)
+        if alreadyStaged, !isBound(active, to: old) {
+            // Finish a previous reset before the replacement session can make
+            // the pending credential usable again (for example for the same actor).
+            return try finishActiveDetachment(active)
+        }
+        if active.provenance == .legacyCodeRedeem, try retainCodeCredential(active, from: old, to: new) { return nil }
+
+        let sessionChanged = old.map { !OriginMatcher.matches($0.origin, new.origin) || $0.actor != new.actor } ?? false
+        let deviceActorChanged = active.actor.map { $0 != new.actor } ?? false
+        guard sessionChanged || deviceActorChanged || active.provenance == .legacyCodeRedeem else { return nil }
+        return try stageActiveDetachment(active)
+    }
+
+    private func retainCodeCredential(_ active: StoredReceiptDeviceToken, from old: BoundSession?, to new: BoundSession) throws -> Bool {
+        guard let actor = new.actor, let newCommitID = new.commitID,
+              OriginMatcher.matches(active.server, new.origin) else { return false }
+        let previousCommitID: UUID
+        if let old {
+            guard old.actor == actor, let oldCommitID = old.commitID, isBound(active, to: old) else { return false }
+            previousCommitID = oldCommitID
+        } else {
+            guard let handoff = active.codeSessionHandoff, handoff.actor == actor else { return false }
+            previousCommitID = handoff.previousCommitID
+        }
+        // Both IDs belong to the same verified actor and origin. Keeping the old
+        // binding usable lets a failed authoritative write leave the old session intact.
+        try store.removePendingRevocation(active)
+        let handoff = ReceiptCodeSessionHandoff(actor: actor, previousCommitID: previousCommitID)
+        try store.save(active.withScope(actor: nil, sessionCommitID: newCommitID, codeSessionHandoff: handoff))
+        return true
     }
 
     func currentActiveToken() throws -> StoredReceiptDeviceToken? {
@@ -108,13 +154,33 @@ final class ReceiptPairing {
     /// Save the full issuing credential for exact revocation before clearing
     /// the active slot. A crash after either operation leaves a copy for cleanup.
     func detachActive(_ expected: StoredReceiptDeviceToken?) throws -> StoredReceiptDeviceToken? {
+        try finishActiveDetachment(stageActiveDetachment(expected))
+    }
+
+    func stageActiveDetachment(_ expected: StoredReceiptDeviceToken?) throws -> StoredReceiptDeviceToken? {
+        guard let expected, try store.load() == expected else { return nil }
+        try store.addPendingRevocation(expected, preservingExisting: true)
+        return expected
+    }
+
+    func finishStagedDetachment(_ expected: StoredReceiptDeviceToken?) -> StoredReceiptDeviceToken? {
+        do {
+            return try finishActiveDetachment(expected)
+        } catch {
+            // The full credential is already in the pending list. A later retry
+            // can clear the duplicate active item and revoke it.
+            revocationNotice = DevicePairingError.storage.message
+            return nil
+        }
+    }
+
+    private func finishActiveDetachment(_ expected: StoredReceiptDeviceToken?) throws -> StoredReceiptDeviceToken? {
         pairingCancelled = true
         status = .notPaired
         pairingNotice = nil
-        guard let expected, try store.load() == expected else { return nil }
         do {
-            try store.addPendingRevocation(expected, preservingExisting: true)
-            try store.clear()
+            guard let expected else { return nil }
+            if try store.load() == expected { try store.clear() }
             return expected
         } catch {
             refreshDisplayedStatus()
@@ -242,9 +308,15 @@ final class ReceiptPairing {
         updateRevocationNotice()
     }
 
-    private func schedulePendingRevocationRetry() {
+    private func schedulePendingRevocationRetry(interruptedOnly: Bool = false) {
         guard !isRetryingPendingRevocations, !isPairing,
-              let pending = try? store.loadPendingRevocations(), !pending.isEmpty else { return }
+              var pending = try? store.loadPendingRevocations() else { return }
+        if interruptedOnly {
+            guard let active = try? store.load(), sessionStore != nil,
+                  !isBound(active, to: sessionStore?.currentSnapshot()) else { return }
+            pending = pending.filter { $0.matchesBearer(active) }
+        }
+        guard !pending.isEmpty else { return }
         revocationNotice = Self.failedRevocationNotice
         isRetryingPendingRevocations = true
         Task { [weak self] in
@@ -257,10 +329,18 @@ final class ReceiptPairing {
         for token in pending {
             do {
                 guard try store.loadPendingRevocations().contains(token) else { continue }
-                // A failed detach can leave the same token in both slots.
-                if let active = try store.load(), active.matchesDevice(token) { continue }
+                if let active = try store.load(), active.matchesDevice(token) {
+                    // A staged detach must leave the old credential alone while its
+                    // session is still authoritative (for example after a failed reset).
+                    guard active.matchesBearer(token), sessionStore != nil,
+                          !isBound(active, to: sessionStore?.currentSnapshot()) else { continue }
+                    guard try finishActiveDetachment(active) != nil else { continue }
+                }
                 try await revokeDetached(token)
-            } catch { break }
+            } catch {
+                revocationNotice = DevicePairingError.storage.message
+                return
+            }
         }
         updateRevocationNotice()
     }

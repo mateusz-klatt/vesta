@@ -309,6 +309,7 @@ struct StoredReceiptDeviceToken: Codable, Equatable, Sendable {
 ```
 - **Decoder default:** Missing `"provenance"` on existing `1.x` active and `pendingRevocations` records decodes safely as `.legacyMigrated1x`.
 - **`.legacyCodeRedeem` provenance:** `device-token/redeem` returns no actor/owner; store `provenance: .legacyCodeRedeem` (`actor: nil, owner: nil`) without stamping `currentUser`; usable on matching origin for that session on legacy servers and cleared on `signOut()`, server switch, or user change.
+  - Saving the same origin keeps a Keychain handoff from the prior verified session. A successful login for the same actor at that origin rebinds the code credential to the new commit ID. The previous commit ID stays valid until the authoritative session write succeeds. Sign-out, a different origin, or a different actor stages the full credential for revocation before changing the session. Recovery finishes a staged detach once the old credential has no current session binding.
 - **Exchanged `(origin, actor, owner_key)` lookup:** Latest `200` from `POST /api/auth/device-token` establishes active `ownerKey` for `(origin, actor)`. Legacy `1.x` self-owner tokens migrate via `prior_token` (`Part C §8`, `actor == owner` only) in `V4` and stay quarantined (exact-ID self-revoke only) on legacy servers.
 
 ### 6.3 V2b Concrete Tests

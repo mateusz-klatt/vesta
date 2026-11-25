@@ -10,11 +10,15 @@ let fakeDeviceToken = ReceiptDeviceToken(token: "fake-device-token", tokenID: "f
 final class MemoryDeviceTokenStore: DeviceTokenStoring {
     private var token: StoredReceiptDeviceToken?
     private var shouldFailSave = false
+    private var shouldFailClear = false
+    private var shouldFailPendingSave = false
     private(set) var pending: [StoredReceiptDeviceToken] = []
 
     init(_ token: StoredReceiptDeviceToken? = nil) { self.token = token }
     func load() -> StoredReceiptDeviceToken? { token }
     func failNextSave() { shouldFailSave = true }
+    func failNextClear() { shouldFailClear = true }
+    func failNextPendingSave() { shouldFailPendingSave = true }
     func save(_ token: StoredReceiptDeviceToken) throws {
         if shouldFailSave {
             shouldFailSave = false
@@ -22,9 +26,21 @@ final class MemoryDeviceTokenStore: DeviceTokenStoring {
         }
         self.token = token
     }
-    func clear() { token = nil }
+    func clear() throws {
+        if shouldFailClear {
+            shouldFailClear = false
+            throw DevicePairingError.storage
+        }
+        token = nil
+    }
     func loadPendingRevocations() -> [StoredReceiptDeviceToken] { pending }
-    func savePendingRevocations(_ tokens: [StoredReceiptDeviceToken]) { pending = tokens }
+    func savePendingRevocations(_ tokens: [StoredReceiptDeviceToken]) throws {
+        if shouldFailPendingSave {
+            shouldFailPendingSave = false
+            throw DevicePairingError.storage
+        }
+        pending = tokens
+    }
 }
 
 private actor MockDevicePairingAPI: DevicePairingAPI {
@@ -173,6 +189,203 @@ private final class DevicePairingURLProtocol: URLProtocol, @unchecked Sendable {
 
 @MainActor
 final class DevicePairingTests: XCTestCase {
+    @MainActor
+    private struct CodeSessionFixture {
+        let defaults: UserDefaults
+        let keychain = TestSessionKeychain()
+        let session: CredentialSessionStore
+        let oldSession: BoundSession
+        let oldDevice: StoredReceiptDeviceToken
+        let devices: MemoryDeviceTokenStore
+        let pairingAPI = MockDevicePairingAPI()
+        let homeAPI = MockHestiaAPI()
+
+        init() throws {
+            defaults = try XCTUnwrap(UserDefaults(suiteName: "device-reset-\(UUID())"))
+            session = CredentialSessionStore(backendURLStore: BackendURLStore(userDefaults: defaults), keychain: keychain)
+            oldSession = try session.commitAuthoritative(origin: fakeServer, actor: "owner", token: "old-session")
+            oldDevice = StoredReceiptDeviceToken(server: fakeServer, provenance: .legacyCodeRedeem,
+                                                 sessionCommitID: oldSession.commitID, credential: fakeDeviceToken)
+            devices = MemoryDeviceTokenStore(oldDevice)
+        }
+
+        func makeApp(session: CredentialSessionStore) -> AppState {
+            let pairing = ReceiptPairing(api: pairingAPI, store: devices,
+                                         serverURL: { session.backendURLStore.currentEffectiveURL() })
+            return AppState(api: homeAPI, receiptPairing: pairing, sessionStore: session, events: noEvents)
+        }
+
+        func makeRestartedSession() -> CredentialSessionStore {
+            CredentialSessionStore(backendURLStore: BackendURLStore(userDefaults: defaults), keychain: keychain)
+        }
+    }
+
+    func testSameOriginResetAndRelaunchRebindsCodeCredentialOnlyForSameActor() async throws {
+        for actor in ["owner", "other"] {
+            let fixture = try CodeSessionFixture()
+            let app = fixture.makeApp(session: fixture.session)
+            await fixture.homeAPI.setCapabilitiesError(.unauthorized)
+
+            XCTAssertTrue(app.saveAndConnect("https://hestia.example:443"))
+            try await waitUntil("same-origin reset to reach sign-in") { app.phase == .needsAuth }
+            XCTAssertNil(fixture.session.currentSnapshot())
+            XCTAssertEqual(fixture.devices.load()?.sessionCommitID, fixture.oldSession.commitID)
+            XCTAssertNil(app.receiptPairing.credential(for: fakeServer))
+
+            let restarted = fixture.makeRestartedSession()
+            let relaunched = fixture.makeApp(session: restarted)
+            await relaunched.bootstrap()
+            XCTAssertEqual(relaunched.phase, .needsAuth)
+            await fixture.homeAPI.setCapabilities(Capabilities(user: actor))
+            await relaunched.login(user: actor, password: "fake-password")
+
+            let replacement = try XCTUnwrap(restarted.currentSnapshot())
+            XCTAssertNotEqual(replacement.commitID, fixture.oldSession.commitID)
+            XCTAssertEqual(replacement.actor, actor)
+            XCTAssertEqual(relaunched.phase, .ready)
+            let calls = await fixture.pairingAPI.calls
+            if actor == "owner" {
+                let retained = try XCTUnwrap(relaunched.receiptPairing.credential(for: replacement.origin))
+                XCTAssertEqual(retained.credential, fakeDeviceToken)
+                XCTAssertEqual(retained.sessionCommitID, replacement.commitID)
+                XCTAssertNil(retained.actor)
+                XCTAssertNil(retained.owner)
+                XCTAssertTrue(calls.isEmpty)
+            } else {
+                XCTAssertNil(fixture.devices.load())
+                XCTAssertEqual(calls, [.revoke(fakeDeviceToken, fakeServer)])
+            }
+            XCTAssertTrue(fixture.devices.pending.isEmpty)
+        }
+    }
+
+    func testCodeHandoffWriteFailureAbortsResetAndRebindWriteFailureAbortsLogin() async throws {
+        let fixture = try CodeSessionFixture()
+        let app = fixture.makeApp(session: fixture.session)
+        await fixture.homeAPI.setCapabilities(Capabilities(user: "owner"))
+        await app.bootstrap()
+
+        fixture.devices.failNextSave()
+        XCTAssertFalse(app.saveAndConnect(fakeServer.absoluteString))
+        XCTAssertEqual(app.sessionStorageError, .credentialStorage)
+        XCTAssertEqual(fixture.session.currentSnapshot(), fixture.oldSession)
+        XCTAssertEqual(app.receiptPairing.credential(for: fakeServer), fixture.oldDevice)
+
+        await fixture.homeAPI.setCapabilitiesError(.unauthorized)
+        XCTAssertTrue(app.saveAndConnect(fakeServer.absoluteString))
+        try await waitUntil("sign-in after retrying the same-origin reset") { app.phase == .needsAuth }
+        await fixture.homeAPI.setCapabilities(Capabilities(user: "owner"))
+        fixture.devices.failNextSave()
+        await app.login(user: "owner", password: "fake-password")
+        XCTAssertEqual(app.sessionStorageError, .credentialStorage)
+        XCTAssertNil(fixture.session.currentSnapshot())
+        XCTAssertNil(fixture.keychain.storedData(for: .authoritative))
+        XCTAssertEqual(fixture.devices.load()?.sessionCommitID, fixture.oldSession.commitID)
+
+        await app.login(user: "owner", password: "fake-password")
+        let replacement = try XCTUnwrap(fixture.session.currentSnapshot())
+        XCTAssertEqual(app.receiptPairing.credential(for: fakeServer)?.sessionCommitID, replacement.commitID)
+        XCTAssertEqual(app.phase, .ready)
+    }
+
+    func testFailedAuthoritativeWriteKeepsPreviousCodeBindingUntilRetry() async throws {
+        let fixture = try CodeSessionFixture()
+        let app = fixture.makeApp(session: fixture.session)
+        await fixture.homeAPI.setCapabilities(Capabilities(user: "owner"))
+        await app.bootstrap()
+        fixture.keychain.failNext(.write(.authoritative))
+
+        await app.login(user: "owner", password: "fake-password")
+
+        XCTAssertEqual(fixture.session.currentSnapshot(), fixture.oldSession)
+        XCTAssertEqual(app.receiptPairing.credential(for: fakeServer)?.credential, fakeDeviceToken)
+        XCTAssertNotNil(app.sessionStorageError)
+        await app.login(user: "owner", password: "fake-password")
+        let replacement = try XCTUnwrap(fixture.session.currentSnapshot())
+        XCTAssertNotEqual(replacement.commitID, fixture.oldSession.commitID)
+        XCTAssertEqual(app.receiptPairing.credential(for: fakeServer)?.sessionCommitID, replacement.commitID)
+    }
+
+    func testSignOutAndSwitchAbortWhenDetachCannotBeStaged() async throws {
+        let newOrigin = URL(string: "https://hestia.example:8443")!
+        for switchServer in [false, true] {
+            let fixture = try CodeSessionFixture()
+            let app = fixture.makeApp(session: fixture.session)
+            await fixture.homeAPI.setCapabilities(Capabilities(user: "owner"))
+            await app.bootstrap()
+            fixture.devices.failNextPendingSave()
+
+            let changed: Bool
+            if switchServer { changed = app.saveAndConnect(newOrigin.absoluteString) }
+            else { changed = await app.signOut() }
+
+            XCTAssertFalse(changed)
+            XCTAssertEqual(app.phase, .ready)
+            XCTAssertEqual(app.sessionStorageError, .credentialStorage)
+            XCTAssertEqual(fixture.session.currentSnapshot(), fixture.oldSession)
+            XCTAssertEqual(fixture.session.backendURLStore.currentEffectiveURL(), fakeServer)
+            XCTAssertEqual(app.receiptPairing.credential(for: fakeServer), fixture.oldDevice)
+            XCTAssertTrue(fixture.devices.pending.isEmpty)
+            let calls = await fixture.pairingAPI.calls
+            XCTAssertTrue(calls.isEmpty)
+        }
+    }
+
+    func testSignOutClearFailureLeavesDurableDetachForForegroundRetry() async throws {
+        let fixture = try CodeSessionFixture()
+        let app = fixture.makeApp(session: fixture.session)
+        await fixture.homeAPI.setCapabilities(Capabilities(user: "owner"))
+        await app.bootstrap()
+        fixture.devices.failNextClear()
+
+        let signedOut = await app.signOut()
+
+        XCTAssertTrue(signedOut)
+        XCTAssertEqual(app.phase, .needsAuth)
+        XCTAssertEqual(app.receiptPairing.revocationNotice?.key, DevicePairingError.storage.message.key)
+        XCTAssertNil(fixture.session.currentSnapshot())
+        XCTAssertEqual(fixture.devices.load(), fixture.oldDevice)
+        XCTAssertEqual(fixture.devices.pending, [fixture.oldDevice])
+        XCTAssertNil(app.receiptPairing.credential(for: fakeServer))
+
+        app.enterForeground()
+        try await waitUntil("the interrupted detach to clear its pending copy") { fixture.devices.pending.isEmpty }
+        XCTAssertNil(fixture.devices.load())
+        XCTAssertNil(app.receiptPairing.revocationNotice)
+        let calls = await fixture.pairingAPI.calls
+        XCTAssertEqual(calls, [.revoke(fakeDeviceToken, fakeServer)])
+    }
+
+    func testBootstrapFinishesInterruptedDetachOnlyAfterOldBindingIsGone() async throws {
+        for hasAuthority in [true, false] {
+            let fixture = try CodeSessionFixture()
+            try fixture.devices.savePendingRevocations([fixture.oldDevice])
+            if hasAuthority {
+                await fixture.homeAPI.setCapabilities(Capabilities(user: "owner"))
+            } else {
+                try fixture.session.clearAuthoritative()
+                await fixture.homeAPI.setCapabilitiesError(.unauthorized)
+            }
+            let restarted = fixture.makeRestartedSession()
+            let app = fixture.makeApp(session: restarted)
+
+            await app.bootstrap()
+
+            if hasAuthority {
+                XCTAssertEqual(app.receiptPairing.credential(for: fakeServer), fixture.oldDevice)
+                XCTAssertEqual(fixture.devices.pending, [fixture.oldDevice])
+                let calls = await fixture.pairingAPI.calls
+                XCTAssertTrue(calls.isEmpty)
+            } else {
+                try await waitUntil("the relaunched app to finish detaching") { fixture.devices.pending.isEmpty }
+                XCTAssertNil(fixture.devices.load())
+                XCTAssertNil(app.receiptPairing.revocationNotice)
+                let calls = await fixture.pairingAPI.calls
+                XCTAssertEqual(calls, [.revoke(fakeDeviceToken, fakeServer)])
+            }
+        }
+    }
+
     func testTypedCodeIsCrockfordBase32AndNormalizesLikeHestia() {
         for input in ["ABCD2345", "abcd2345", " ab cd-23 45 "] {
             XCTAssertEqual(ReceiptPairingCode(input)?.value, "ABCD2345")
@@ -466,7 +679,7 @@ final class DevicePairingTests: XCTestCase {
         let pending = StoredReceiptDeviceToken(server: try XCTUnwrap(URL(string: "https://hestia.example:8443")),
             credential: .init(token: "pending-token", tokenID: "pending-id", expiresAt: .number(1_700_000_000)))
         let store = MemoryDeviceTokenStore(legacy)
-        store.savePendingRevocations([pending])
+        try store.savePendingRevocations([pending])
         let pairing = ReceiptPairing(store: store, serverURL: { fakeServer })
         store.failNextSave()
 
@@ -531,13 +744,16 @@ final class DevicePairingTests: XCTestCase {
         restored.bindSessionStore(restartedStore)
         XCTAssertEqual(restored.credential(for: fakeServer), original)
 
-        let renewed = try restartedStore.commitAuthoritative(origin: fakeServer, actor: "first", token: "renewed-session")
-        try restored.retainCodeCredential(from: old, to: renewed)
+        let renewed = try restartedStore.commitAuthoritative(origin: fakeServer, actor: "first", token: "renewed-session") {
+            XCTAssertNil(try restored.prepareForLogin(from: old, to: $0))
+        }
         XCTAssertEqual(restored.credential(for: fakeServer)?.sessionCommitID, renewed.commitID)
         XCTAssertNil(restored.credential(for: fakeServer)?.actor)
 
-        let switched = try restartedStore.commitAuthoritative(origin: fakeServer, actor: "second", token: "new-session")
-        try restored.retainCodeCredential(from: renewed, to: switched)
+        let switched = try restartedStore.commitAuthoritative(origin: fakeServer, actor: "second", token: "new-session") {
+            let staged = try restored.prepareForLogin(from: renewed, to: $0)
+            XCTAssertEqual(staged?.credential, original.credential)
+        }
         XCTAssertNil(restored.credential(for: fakeServer, session: switched))
         XCTAssertNil(restored.credential(for: fakeServer, session: renewed))
         XCTAssertEqual(restoredDeviceStore.load()?.credential, original.credential)
@@ -653,7 +869,7 @@ final class DevicePairingTests: XCTestCase {
             ))
         }
         let store = MemoryDeviceTokenStore(active)
-        store.savePendingRevocations(pending)
+        try store.savePendingRevocations(pending)
         let pairing = ReceiptPairing(api: MockDevicePairingAPI(), store: store, serverURL: { fakeServer })
 
         let detached = try XCTUnwrap(pairing.detachActive(try pairing.currentActiveToken()))
@@ -725,7 +941,7 @@ final class DevicePairingTests: XCTestCase {
         let app = AppState(api: MockHestiaAPI(), receiptPairing: pairing, events: noEvents)
         await app.signOut()
         let pending = StoredReceiptDeviceToken(server: fakeServer, credential: fakeDeviceToken)
-        store.savePendingRevocations([pending])
+        try store.savePendingRevocations([pending])
 
         app.enterForeground()
         XCTAssertNil(pairing.revocationNotice)

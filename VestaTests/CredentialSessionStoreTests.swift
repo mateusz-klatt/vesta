@@ -184,7 +184,7 @@ final class CredentialSessionStoreTests: XCTestCase {
         let app = makeApp(sessionStore: fixture.store, transport: SessionCleanupTransport())
 
         XCTAssertFalse(app.saveAndConnect(otherOrigin.absoluteString))
-        XCTAssertNotNil(app.sessionStorageError)
+        XCTAssertEqual(app.sessionStorageError, .credentialStorage)
         XCTAssertEqual(fixture.restart().backendURLStore.currentEffectiveURL(), origin)
         XCTAssertEqual(fixture.keychain.storedData(for: .authoritative), rawRecord)
         XCTAssertEqual(fixture.keychain.mutations, mutations)
@@ -256,6 +256,52 @@ final class CredentialSessionStoreTests: XCTestCase {
                 XCTAssertEqual(restarted.currentSnapshot(), fixture.store.currentSnapshot())
             }
             assertMigrated(fixture, session: restarted.currentSnapshot())
+        }
+    }
+
+    func testLoginAfterLegacyUnauthorizedRetiresTheRawBearerAndRetriesCleanupFaultsOnForeground() async throws {
+        let faults: [TestSessionKeychain.Mutation?] = [nil, .write(.legacyMigrated), .delete(.legacy)]
+        for fault in faults {
+            let fixture = Fixture(legacyOrigin: origin, legacyToken: legacyToken)
+            let transport = StubTransport { request in
+                switch request.path {
+                case "/api/login":
+                    XCTAssertNil(request.headerFields[.authorization])
+                    return (200, Data(#"{"ok":true,"token":"replacement-token","user":"replacement"}"#.utf8))
+                case "/api/whoami" where request.headerFields[.authorization] == "Bearer replacement-token":
+                    return (200, Data(#"{"user":"replacement"}"#.utf8))
+                case "/api/whoami":
+                    XCTAssertEqual(request.headerFields[.authorization], "Bearer legacy-token")
+                    return (401, nil)
+                default:
+                    return (404, nil)
+                }
+            }
+            let app = AppState(api: APIClient(transport: transport, sessionStore: fixture.store),
+                               receiptPairing: ReceiptPairing(store: MemoryDeviceTokenStore()), sessionStore: fixture.store)
+
+            await app.bootstrap()
+
+            XCTAssertEqual(app.phase, .needsAuth)
+            XCTAssertEqual(fixture.keychain.storedData(for: .legacy), Data(legacyToken.utf8))
+            XCTAssertTrue(fixture.keychain.mutations.isEmpty)
+            if let fault { fixture.keychain.failNext(fault) }
+
+            await app.login(user: "replacement", password: "fake-password")
+
+            XCTAssertEqual(app.phase, .ready)
+            let session = try XCTUnwrap(fixture.store.currentSnapshot())
+            XCTAssertEqual(session.token, "replacement-token")
+            XCTAssertEqual(session.actor, "replacement")
+            XCTAssertEqual(fixture.keychain.mutations.first, .write(.authoritative))
+            XCTAssertEqual(fixture.keychain.mutations.dropFirst().first, .write(.legacyMigrated))
+            if fault != nil {
+                XCTAssertNotNil(fixture.keychain.storedData(for: .legacy))
+                app.enterForeground()
+            }
+            XCTAssertNotNil(fixture.keychain.storedData(for: .legacyMigrated))
+            XCTAssertNil(fixture.keychain.storedData(for: .legacy))
+            XCTAssertEqual(fixture.store.currentSnapshot(), session)
         }
     }
 

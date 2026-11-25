@@ -147,6 +147,34 @@ final class HomeAndSettingsTests: XCTestCase {
         XCTAssertNil(openReview.form.candidate)
     }
 
+    func testReceiptFlowQueuesDraftCleanupAtBoundSessionOrigin() async throws {
+        let origin = URL(string: "https://hestia.example:8443")!
+        let otherOrigin = URL(string: "https://hestia.example:9443")!
+        let session = try testCredentialSessionStore(origin: origin, token: "bound-session")
+        let api = MockHestiaAPI()
+        await api.setCapabilities(receiptGrant(user: "u"))
+        let draft = try sampleReceipt()
+        await api.setReceiptParseResult(draft)
+        let app = AppState(api: api, sessionStore: session, events: { AsyncStream { $0.finish() } })
+        await app.connect()
+
+        let janitor = ReceiptDraftJanitor()
+        let flow = try XCTUnwrap(app.makeReceiptFlow(janitor: janitor))
+        session.backendURLStore.saveOverride(otherOrigin)
+        flow.useText("Receipt text")
+        await flow.send()
+        XCTAssertEqual(flow.step, .review)
+        await flow.abandon()
+
+        let cleanupAPI = MockReceiptsAPI()
+        await janitor.drain(using: cleanupAPI, server: otherOrigin.absoluteString)
+        let wrongOriginCalls = await cleanupAPI.calls
+        XCTAssertTrue(wrongOriginCalls.isEmpty)
+        await janitor.drain(using: cleanupAPI, server: origin.absoluteString)
+        let cleanupCalls = await cleanupAPI.calls
+        XCTAssertEqual(cleanupCalls, [.delete(draft.receiptId, draft.version)])
+    }
+
     func testPausedReceiptDenialDoesNotRefreshANewerSession() async throws {
         let api = MockHestiaAPI()
         let app = AppState(api: api, receiptPairing: ReceiptPairing(store: MemoryDeviceTokenStore()))

@@ -827,6 +827,39 @@ final class CalendarAccessTests: XCTestCase {
         XCTAssertEqual(sessionCalls, [.capabilities])
     }
 
+    func testLateAgendaDenialsAfterSessionReplacementLeaveNewSessionUntouched() async throws {
+        for error in [CalendarError.forbidden, .unauthorized] {
+            let api = MockHestiaAPI()
+            let calendar = PausedCalendarAPI()
+            await api.setFeatures([.capabilities, .calendarInstances])
+            await api.setCapabilities(grant)
+            await api.setCalendarStub(calendar)
+            let session = try testCredentialSessionStore(token: "original-session")
+            let app = AppState(api: api, sessionStore: session, events: { AsyncStream { $0.finish() } })
+            await app.connect()
+
+            let oldAgenda = try XCTUnwrap(app.makeAgendaStore())
+            let load = Task { await oldAgenda.load() }
+            await calendar.waitForCalls(1)
+
+            await app.signOut()
+            await app.login(user: "new-user", password: "fake-password")
+            let newAgenda = try XCTUnwrap(app.makeAgendaStore())
+            let authenticated = try XCTUnwrap(session.currentSnapshot())
+            let capabilitiesCalls = await api.count(.capabilities)
+
+            await calendar.failNext(with: error)
+            await load.value
+
+            XCTAssertTrue(oldAgenda.isDiscarded)
+            XCTAssertFalse(newAgenda.isDiscarded)
+            XCTAssertEqual(app.phase, .ready)
+            XCTAssertEqual(session.currentSnapshot(), authenticated)
+            let finalCapabilitiesCalls = await api.count(.capabilities)
+            XCTAssertEqual(finalCapabilitiesCalls, capabilitiesCalls)
+        }
+    }
+
     func testClosingAgendaDiscardsALateResponse() async throws {
         let mock = MockHestiaAPI()
         let calendar = PausedCalendarAPI()

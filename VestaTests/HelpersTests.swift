@@ -237,6 +237,14 @@ final class APIErrorTests: XCTestCase {
         XCTAssertEqual(APIError.wrap(APIError.http(500)), .http(500))
     }
 
+    func testWrapUsesLocalizedUnlockGuidanceForCredentialStorageErrors() {
+        for error in [SessionKeychainError.locked as any Error, DevicePairingError.storage] {
+            let wrapped = APIError.wrap(error)
+            XCTAssertEqual(wrapped, .credentialStorage)
+            XCTAssertEqual(wrapped.message.key, DevicePairingError.storage.message.key)
+        }
+    }
+
     func testWrapUnknownBecomesUnexpectedWithDetail() {
         let wrapped = APIError.wrap(URLError(.badURL))
         guard case .unexpected = wrapped else { return XCTFail("expected .unexpected") }
@@ -244,7 +252,10 @@ final class APIErrorTests: XCTestCase {
     }
 
     func testEveryErrorHasTitleAndMessage() {
-        let cases: [APIError] = [.unauthorized, .serverNotFound, .timedOut, .offline, .tls, .cannotConnect, .http(503), .unexpected("x")]
+        let cases: [APIError] = [
+            .unauthorized, .serverNotFound, .timedOut, .offline, .tls, .cannotConnect, .credentialStorage,
+            .http(503), .unexpected("x"),
+        ]
         for error in cases {
             XCTAssertFalse(String(localized: error.title).isEmpty)
             XCTAssertFalse(String(localized: error.message).isEmpty)

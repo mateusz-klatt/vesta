@@ -73,6 +73,7 @@ final class AppState {
     private var needsSessionRestore = true
     private var isRestoringSession = false
     private var retryMigrationCleanup = false
+    private var rejectedLegacyBearer = false
     private var retryInvalidation = false
     private var authAttempt = 0
     /// Bumped on sign-out and backend change so a login still in flight
@@ -203,15 +204,19 @@ final class AppState {
     func makeAgendaStore(calendar: Calendar = .current) -> AgendaStore? {
         guard phase == .ready, let api = calendarAPI else { return nil }
         closeAgenda()
+        let session = sessionGeneration
         let store = AgendaStore(
             api: api, calendar: calendar,
             onForbidden: { [weak self] in
-                guard let self else { return }
+                guard let self, sessionGeneration == session else { return }
                 closeAgenda()
                 // The discarded sheet handles the denial locally. Refresh the shared grants.
                 _ = beginCapabilityRefresh(source: .denial)
             },
-            onUnauthorized: { [weak self] in self?.invalidateSession() }
+            onUnauthorized: { [weak self] in
+                guard let self, sessionGeneration == session else { return }
+                invalidateSession()
+            }
         )
         activeAgendaStore = store
         return store
@@ -225,14 +230,15 @@ final class AppState {
     var hasLights: Bool { allDevices.contains { $0.device._type == "light" } }
     var hasBlinds: Bool { allDevices.contains { $0.device._type == "blind" } }
 
-    func makeReceiptFlow() -> ReceiptFlow? {
+    func makeReceiptFlow(janitor: ReceiptDraftJanitor = .shared) -> ReceiptFlow? {
         guard let api = receiptsAPI else { return nil }
         let session = sessionGeneration
         let access = receiptAccessGeneration
+        let origin = activeOrigin.absoluteString
         let flow = ReceiptFlow(api: api, allowsMatching: { [weak self] in
             guard let self, hasReceiptAccess(session: session, generation: access) else { return false }
             return capabilities?.canMatchReceipts == true
-        })
+        }, janitor: janitor, server: { origin })
         openReceiptFlow = flow
         return flow
     }
@@ -346,6 +352,7 @@ final class AppState {
             if failure == .unauthorized {
                 // A rejected bearer stays on disk until an explicit reset or successful login.
                 needsSessionRestore = false
+                rejectedLegacyBearer = true
                 publishAuthorization(features: features, capabilities: nil)
                 phase = .needsAuth
             } else {
@@ -370,6 +377,7 @@ final class AppState {
         needsSessionRestore = false
         sessionStorageError = nil
         backendURLString = activeOrigin.absoluteString
+        receiptPairing.retryInterruptedDetach()
     }
 
     private func isCurrentRestore(_ snapshot: RefreshSnapshot, attempt: Int) -> Bool {
@@ -418,10 +426,12 @@ final class AppState {
         guard isCurrentLogin(attempt, generation: generation, origin: origin) else { return }
 
         let oldSession = sessionStore.currentSnapshot()
-        let oldDevice = try? receiptPairing.currentActiveToken()
+        var stagedDevice: StoredReceiptDeviceToken?
         let committed: BoundSession
         do {
-            committed = try sessionStore.commitAuthoritative(origin: origin, actor: actor, token: token)
+            committed = try sessionStore.commitAuthoritative(origin: origin, actor: actor, token: token) { replacement in
+                stagedDevice = try receiptPairing.prepareForLogin(from: oldSession, to: replacement)
+            }
         } catch {
             reportSessionStorageFailure(error)
             return
@@ -430,19 +440,20 @@ final class AppState {
         let committedGeneration = sessionGeneration
         needsSessionRestore = false
         retryInvalidation = false
+        if rejectedLegacyBearer {
+            retryMigrationCleanup = sessionStore.retryLegacyMigrationCleanup()
+            rejectedLegacyBearer = false
+        }
         backendURLString = committed.origin.absoluteString
         prepareInitialAuth()
-        var cleanupTask: Task<Void, Never>?
-        if let oldSession {
-            let sameOrigin = OriginMatcher.matches(oldSession.origin, committed.origin)
-            if sameOrigin, oldSession.actor == committed.actor {
-                try? receiptPairing.retainCodeCredential(from: oldSession, to: committed)
-            } else {
-                let detached = try? receiptPairing.detachActive(oldDevice)
-                let logout = sameOrigin && oldSession.token == committed.token ? nil : oldSession
-                cleanupTask = scheduleCleanup(.init(oldSession: logout, detachedDevice: detached))
-            }
+        let detached = stagedDevice.flatMap { receiptPairing.finishStagedDetachment($0) }
+        let logout = oldSession.flatMap { old -> BoundSession? in
+            let sameOrigin = OriginMatcher.matches(old.origin, committed.origin)
+            guard !sameOrigin || (old.actor != committed.actor && old.token != committed.token) else { return nil }
+            return old
         }
+        let cleanupTask = logout != nil || detached != nil
+            ? scheduleCleanup(.init(oldSession: logout, detachedDevice: detached)) : nil
         await finishInitialAuth()
         await cleanupTask?.value
         guard committedGeneration == sessionGeneration, !Task.isCancelled else { return }
@@ -501,15 +512,23 @@ final class AppState {
 
     private func resetLocalSession(savingOverride: URL? = nil) throws -> CleanupSnapshot {
         let originalOrigin = activeOrigin
-        let device = try receiptPairing.currentActiveToken()
-        let oldSession = try sessionStore.clearAuthoritative(savingOverride: savingOverride)
+        var stagedDevice: StoredReceiptDeviceToken?
+        var preservesOrigin = false
+        let oldSession = try sessionStore.clearAuthoritative(savingOverride: savingOverride) { old in
+            preservesOrigin = savingOverride.map { OriginMatcher.matches($0, old?.origin ?? originalOrigin) } ?? false
+            if preservesOrigin {
+                try receiptPairing.prepareCodeReauthentication(from: old)
+            } else {
+                stagedDevice = try receiptPairing.stageActiveDetachment(receiptPairing.currentActiveToken())
+            }
+        }
         sessionGeneration += 1
         needsSessionRestore = false
         retryMigrationCleanup = false
+        rejectedLegacyBearer = false
         retryInvalidation = false
         backendURLString = activeOrigin.absoluteString
-        let detachDevice = savingOverride.map { !OriginMatcher.matches($0, oldSession?.origin ?? originalOrigin) } ?? true
-        let detachedDevice = detachDevice ? try? receiptPairing.detachActive(device) : nil
+        let detachedDevice = preservesOrigin ? nil : receiptPairing.finishStagedDetachment(stagedDevice)
         return CleanupSnapshot(oldSession: oldSession, detachedDevice: detachedDevice)
     }
 
@@ -542,6 +561,7 @@ final class AppState {
         sessionGeneration += 1
         clearAuthorization(keeping: features ?? serverFeatures)
         phase = .needsAuth
+        if !retryInvalidation { receiptPairing.retryInterruptedDetach() }
     }
 
     private func reportSessionStorageFailure(_ error: any Error) {
@@ -557,9 +577,7 @@ final class AppState {
                 retryInvalidation = false
             } catch { return }
         } else if retryMigrationCleanup {
-            if case .ready(let retryCleanup) = try? sessionStore.bootstrap() {
-                retryMigrationCleanup = retryCleanup
-            }
+            retryMigrationCleanup = sessionStore.retryLegacyMigrationCleanup()
         }
     }
 
@@ -690,6 +708,7 @@ final class AppState {
             return
         }
         retrySessionPersistence()
+        if !needsSessionRestore, !retryInvalidation { receiptPairing.retryInterruptedDetach() }
         guard let task = beginCapabilityRefresh(source: .foreground) else { return }
         let lifecycle = lifecycleGeneration
         Task { [weak self] in
