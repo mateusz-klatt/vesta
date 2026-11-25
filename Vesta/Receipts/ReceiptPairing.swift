@@ -11,6 +11,7 @@ final class ReceiptPairing {
 
     private static let failedRevocationNotice: LocalizedStringResource =
         "Couldn't reach hestia. Remove this iPhone in hestia's device list."
+    private static let newDeviceNotice: LocalizedStringResource = "This iPhone was paired as a new device."
 
     private(set) var status: Status = .notPaired
     private(set) var revocationNotice: LocalizedStringResource?
@@ -107,6 +108,7 @@ final class ReceiptPairing {
 
     func dismissNewDeviceAlert() {
         showNewDeviceAlert = false
+        if pairingNotice?.key == Self.newDeviceNotice.key { pairingNotice = nil }
     }
 
     func bindSessionStore(_ store: CredentialSessionStore) {
@@ -282,7 +284,10 @@ final class ReceiptPairing {
     /// hestia rotates the token of an unrevoked device with the same name, so
     /// the name stays stable for this install and differs between two iPhones.
     static var deviceName: String {
-        "\(UIDevice.current.model) \(KeychainDeviceTokenStore().deviceNameSuffix().prefix(12))"
+        get throws {
+            let suffix = try KeychainDeviceTokenStore().deviceNameSuffix()
+            return "\(UIDevice.current.model) \(suffix.prefix(12))"
+        }
     }
 
     /// The backend pairing requests go to right now.
@@ -497,6 +502,9 @@ extension ReceiptPairing {
 
         let active = try store.load()
         let journal = try matchingRotation(for: session, active: active)
+        let hasUnattributedActive = active.map {
+            $0.provenance == .legacyMigrated1x && $0.actor == nil && OriginMatcher.matches($0.server, session.origin)
+        } ?? false
         let hasOwnReceipts = canUseOwnReceipts(capabilities)
         let selfSlotEligible = hasOwnReceipts || budgetEligible
         let knownOwner = hasOwnReceipts || (budgetEligible && !capabilities.canUseReceipts)
@@ -504,7 +512,9 @@ extension ReceiptPairing {
             isBound(token, to: session) && (token.provenance == .exchanged || selfSlotEligible) ? token : nil
         }
         let prior: StoredReceiptDeviceToken?
-        if let journal {
+        if reason == .manual, hasUnattributedActive {
+            prior = nil
+        } else if let journal {
             prior = journal.priorToken
         } else if reason == .retired {
             prior = nil
@@ -523,10 +533,8 @@ extension ReceiptPairing {
                 guard !capabilities.effectiveDeviceEligiblePermissions.isSubset(of: ceiling) else { return }
             }
         }
-        if let active, active.provenance == .legacyMigrated1x, active.actor == nil,
-           OriginMatcher.matches(active.server, session.origin), prior == nil {
-            // The verified 1.x migration is the only path that can associate an
-            // identity with a record that predates the authoritative session.
+        if hasUnattributedActive, prior == nil, reason != .manual {
+            // Wait for an explicit pairing tap before replacing a record with no actor binding.
             return
         }
 
@@ -619,13 +627,17 @@ extension ReceiptPairing {
 
         let old = invalidPrior ?? startingActive
         do {
+            if let old, old.provenance == .legacyMigrated1x, old.actor == nil {
+                // Keep the issuing bearer for exact-device recovery without associating it with this session.
+                try quarantineUntrusted(old)
+            }
             try store.save(replacement)
         } catch {
             try quarantineUntrusted(replacement)
             throw DevicePairingError.storage
         }
         status = .paired
-        pairingNotice = invalidPrior == nil ? nil : "This iPhone was paired as a new device."
+        pairingNotice = invalidPrior == nil ? nil : Self.newDeviceNotice
         showNewDeviceAlert = invalidPrior != nil
         try clearDeviceLimit(for: session)
         if let old, !old.matchesDevice(replacement), try !protectsFromUse(old),
@@ -792,9 +804,29 @@ extension ReceiptPairing {
         status = .paired
         pairingNotice = nil
         requiresExchangeSignIn = false
-        try removeRollbackToken(record.priorToken)
         if let session = sessionStore?.currentSnapshot() { try clearDeviceLimit(for: session) }
-        try removeRotation(record)
+        try removeSupersededRotations(after: record, replacement: replacement)
+    }
+
+    private func removeSupersededRotations(after record: RotationJournalRecord, replacement: StoredReceiptDeviceToken) throws {
+        let journal = try store.loadRotationJournal()
+        let remaining = journal.filter { candidate in
+            guard candidate.capturedActor == record.capturedActor, OriginMatcher.matches(candidate.server, record.server) else { return true }
+            if candidate.priorToken.matchesBearer(record.priorToken) { return false }
+            guard candidate.state == .outcomeUnknown, candidate.matchesPriorScope else { return true }
+            let sameLedger = candidate.expectedOwnerKey.map { $0 == replacement.ownerKey } ?? (replacement.actor == replacement.owner)
+            return !sameLedger || candidate.priorToken.matchesBearer(replacement) ||
+                candidate.replacement?.matchesBearer(replacement) == true
+        }
+        let rollback = try store.loadRollbackQuarantine()
+        let retained = rollback.filter { token in
+            guard token.actor == record.capturedActor, OriginMatcher.matches(token.server, record.server),
+                  token.ownerKey == replacement.ownerKey, !token.matchesBearer(replacement) else { return true }
+            return remaining.contains { token.matchesBearer($0.priorToken) || $0.replacement.map(token.matchesBearer) == true }
+        }
+        // Keep the replaced journal durable until both cleanup writes have succeeded. Recovery can replay either write.
+        if retained != rollback { try store.saveRollbackQuarantine(retained) }
+        if remaining != journal { try store.saveRotationJournal(remaining) }
     }
 
     private func discardInvalidPrior(_ record: RotationJournalRecord) throws {

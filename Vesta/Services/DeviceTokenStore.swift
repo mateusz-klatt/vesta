@@ -278,14 +278,15 @@ extension KeychainDeviceTokenStore {
     /// A random per-install suffix for the receipts device name. It lives in a
     /// this-device-only Keychain item, so a backup restored onto another phone
     /// gets its own suffix instead of rotating the original phone's token.
-    func deviceNameSuffix() -> String {
+    func deviceNameSuffix() throws -> String {
         let query = itemQuery(account: "\(account)-device-name")
-        if let data = try? loadData(query), let stored = String(data: data, encoding: .utf8),
-           stored.count == 32, stored.allSatisfy(\.isHexDigit) {
+        if let data = try loadData(query) {
+            guard let stored = String(data: data, encoding: .utf8), stored.count == 32,
+                  stored.allSatisfy({ $0.isASCII && $0.isHexDigit }) else { throw DevicePairingError.storage }
             return stored
         }
         let suffix = UUID().uuidString.replacingOccurrences(of: "-", with: "")
-        try? saveData(Data(suffix.utf8), query: query)
+        try saveData(Data(suffix.utf8), query: query)
         return suffix
     }
 }

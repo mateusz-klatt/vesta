@@ -494,7 +494,7 @@ final class DevicePairingTests: XCTestCase {
         await app.login(user: "owner", password: "fake-password")
 
         let calls = await api.calls
-        XCTAssertEqual(calls, [.login("owner", "fake-password", ReceiptPairing.deviceName, fakeServer)])
+        XCTAssertEqual(calls, [.login("owner", "fake-password", try ReceiptPairing.deviceName, fakeServer)])
         XCTAssertEqual(pairing.status, .paired)
         XCTAssertEqual(store.load()?.credential, fakeDeviceToken)
         XCTAssertEqual(store.load()?.provenance, .legacyPasswordLogin)
@@ -641,9 +641,9 @@ final class DevicePairingTests: XCTestCase {
         XCTAssertEqual(pairing.status, .notPaired)
     }
 
-    func testDeviceNameIsStableAndFitsHestiasLimit() {
-        let name = ReceiptPairing.deviceName
-        XCTAssertEqual(name, ReceiptPairing.deviceName)
+    func testDeviceNameIsStableAndFitsHestiasLimit() throws {
+        let name = try ReceiptPairing.deviceName
+        XCTAssertEqual(name, try ReceiptPairing.deviceName)
         XCTAssertFalse(name.isEmpty)
         XCTAssertLessThanOrEqual(name.count, 64)
         XCTAssertTrue(name.unicodeScalars.allSatisfy { $0.isASCII && !CharacterSet.controlCharacters.contains($0) })
@@ -1221,6 +1221,13 @@ extension DevicePairingTests {
                   actor: actor, owner: owner, ownerKey: key, issuedPermissions: permissions)
         }
 
+        static func exchanged(tokenID: String, server: URL = fakeServer, actor: String = "owner",
+                              owner: String? = nil, ownerKey: String = Self.ownerKey) -> StoredReceiptDeviceToken {
+            .init(server: server, provenance: .exchanged, actor: actor, owner: owner ?? actor,
+                  ownerKey: ownerKey, issuedPermissions: [Self.add],
+                  credential: .init(token: "fixture-\(tokenID)", tokenID: tokenID, expiresAt: .string("test-expiry")))
+        }
+
         func journal(_ state: RotationJournalState, replacement: StoredReceiptDeviceToken? = nil) throws -> RotationJournalRecord {
             let prior = try XCTUnwrap(store.load())
             return .init(state: state, server: fakeServer, capturedActor: try XCTUnwrap(session.actor),
@@ -1334,6 +1341,30 @@ extension DevicePairingTests {
                 XCTAssertEqual(f.store.load(), prior)
             }
         }
+
+        for state in [RotationJournalState.outcomeUnknown, .replaced] {
+            let f = try ExchangeFixture(provenance: .exchanged)
+            defer { f.cleanUp() }
+            let active = try XCTUnwrap(f.store.load())
+            let differentSlot = ExchangeFixture.exchanged(tokenID: "other-slot")
+            for prior in [active, differentSlot] {
+                // Exercise a malformed slot reference as well as a coherent journal for
+                // a different slot owned by the same actor at the same origin.
+                let mismatchedSlot = RotationJournalRecord(
+                    state: state, server: fakeServer, capturedActor: "owner",
+                    expectedOwnerKey: active.ownerKey, slotTokenID: differentSlot.credential.tokenID, priorToken: prior,
+                    replacement: state == .replaced ? differentSlot : nil
+                )
+                f.store.saveRotationJournal([mismatchedSlot])
+
+                let pairing = f.pairing()
+                try await f.exchange(pairing)
+                XCTAssertEqual(f.store.load(), active)
+                XCTAssertEqual(f.store.loadRotationJournal(), [mismatchedSlot])
+                let calls = await f.api.calls
+                XCTAssertTrue(calls.isEmpty)
+            }
+        }
     }
 
     func testFull5SlotSetStopsRetryingAndPreservesDeviceIdentifyingInfo() async throws {
@@ -1403,6 +1434,75 @@ extension DevicePairingTests {
         }
     }
 
+    func testProofBearing200WithoutExpectedOwnerRejectsDifferentActorAndOwner() async throws {
+        let f = try ExchangeFixture()
+        defer { f.cleanUp() }
+        let original = try XCTUnwrap(f.store.load())
+        XCTAssertNil(original.ownerKey)
+        let pairing = f.pairing()
+        let anomaly = ExchangeFixture.reply(owner: "different-owner")
+        await f.api.setExchangeResults([.success(anomaly)])
+
+        do {
+            try await f.exchange(pairing)
+            XCTFail("Expected the proof-bearing response to be rejected")
+        } catch DevicePairingError.receipts(.api(.unexpected)) {}
+
+        XCTAssertEqual(pairing.credential(for: fakeServer), original)
+        XCTAssertEqual(f.store.load(), original)
+        XCTAssertTrue(f.store.loadRotationJournal().isEmpty)
+        XCTAssertEqual(f.store.loadUntrustedExchangeTokens().map(\.credential), [anomaly.credential])
+        XCTAssertTrue(f.store.pending.isEmpty)
+        let calls = await f.api.calls
+        XCTAssertEqual(calls, [f.proofCall])
+    }
+
+    func testProofBearing200AnomalyOnOutcomeUnknownKeepsExactJournal() async throws {
+        let f = try ExchangeFixture(provenance: .exchanged)
+        defer { f.cleanUp() }
+        let journal = try f.journal(.outcomeUnknown)
+        f.store.saveRotationJournal([journal])
+        let pairing = f.pairing()
+        let anomaly = ExchangeFixture.reply(tokenID: "unrelated-slot")
+        await f.api.setExchangeResults([.success(anomaly)])
+
+        do {
+            try await f.exchange(pairing)
+            XCTFail("Expected the proof-bearing response to be rejected")
+        } catch DevicePairingError.receipts(.api(.unexpected)) {}
+
+        XCTAssertEqual(f.store.loadRotationJournal(), [journal])
+        XCTAssertEqual(f.store.load(), journal.priorToken)
+        XCTAssertNil(pairing.credential(for: fakeServer))
+        XCTAssertEqual(f.store.loadUntrustedExchangeTokens().map(\.credential), [anomaly.credential])
+        XCTAssertTrue(f.store.pending.isEmpty)
+        let calls = await f.api.calls
+        XCTAssertEqual(calls, [f.proofCall])
+    }
+
+    func testManualExchangeReplacesUnattributedLegacyTokenWithoutProofOrRevoke() async throws {
+        let f = try ExchangeFixture(provenance: nil)
+        defer { f.cleanUp() }
+        let unattributed = StoredReceiptDeviceToken(server: fakeServer, provenance: .legacyMigrated1x,
+                                                   credential: fakeDeviceToken)
+        try f.store.save(unattributed)
+        let pairing = f.pairing()
+        try await f.exchange(pairing)
+        XCTAssertEqual(f.store.load(), unattributed)
+        let automaticCalls = await f.api.calls
+        XCTAssertTrue(automaticCalls.isEmpty)
+
+        let response = ExchangeFixture.reply(tokenID: "fresh-id")
+        await f.api.setExchangeResults([.success(response)])
+        try await f.exchange(pairing, reason: .manual)
+
+        XCTAssertEqual(pairing.credential(for: fakeServer)?.credential, response.credential)
+        XCTAssertEqual(f.store.loadUntrustedExchangeTokens(), [unattributed])
+        XCTAssertTrue(f.store.pending.isEmpty)
+        let calls = await f.api.calls
+        XCTAssertEqual(calls, [f.freshCall])
+    }
+
     func testPriorToken409PriorInvalidFreshExchangeAndRevokesOldWithFullBearerAndOrigin() async throws {
         let f = try ExchangeFixture()
         defer { f.cleanUp() }
@@ -1417,6 +1517,9 @@ extension DevicePairingTests {
         XCTAssertTrue(f.store.pending.isEmpty)
         XCTAssertEqual(pairing.pairingNotice?.key, "This iPhone was paired as a new device.")
         XCTAssertTrue(pairing.showNewDeviceAlert)
+        pairing.dismissNewDeviceAlert()
+        XCTAssertFalse(pairing.showNewDeviceAlert)
+        XCTAssertNil(pairing.pairingNotice)
         let calls = await f.api.calls
         XCTAssertEqual(calls, [f.proofCall, f.freshCall, .revoke(fakeDeviceToken, fakeServer)])
     }
@@ -1493,6 +1596,89 @@ extension DevicePairingTests {
         }
     }
 
+    func testVerifiedRotationPrunesOnlySupersededQuarantineAndUnknownJournalAfterRollback() async throws {
+        let f = try ExchangeFixture(provenance: nil)
+        defer { f.cleanUp() }
+        let obsolete = ExchangeFixture.exchanged(tokenID: "old-exchanged-slot")
+        try f.store.save(obsolete)
+        let pairing = f.pairing()
+        let obsoleteJournal = try f.journal(.outcomeUnknown)
+        let grants = ExchangeFixture.owner()
+        pairing.setServerFeatures(ExchangeFixture.rolledBack, capabilities: grants)
+        XCTAssertEqual(f.store.loadRollbackQuarantine(), [obsolete])
+
+        let otherOrigin = try XCTUnwrap(URL(string: "https://hestia.example:8443"))
+        let live = ExchangeFixture.exchanged(tokenID: "pending-slot")
+        let unrelated = [
+            ExchangeFixture.exchanged(tokenID: "different-origin", server: otherOrigin),
+            ExchangeFixture.exchanged(tokenID: "different-actor", actor: "delegate"),
+            ExchangeFixture.exchanged(tokenID: "different-owner", owner: "other-owner",
+                                      ownerKey: String(repeating: "b", count: 43)),
+        ]
+        let retainedJournals = try (unrelated + [live]).map { token in
+            RotationJournalRecord(state: token == live ? .sent : .outcomeUnknown,
+                                  server: token.server, capturedActor: try XCTUnwrap(token.actor),
+                                  expectedOwnerKey: token.ownerKey, slotTokenID: token.credential.tokenID,
+                                  priorToken: token)
+        }
+        f.store.saveRollbackQuarantine([obsolete] + unrelated + [live])
+        f.store.saveRotationJournal([obsoleteJournal] + retainedJournals)
+
+        let code = try XCTUnwrap(ReceiptPairingCode("ABCD2345"))
+        try await pairing.pair(code: code, deviceName: ExchangeFixture.deviceName)
+        let legacy = try XCTUnwrap(pairing.credential(for: fakeServer))
+        XCTAssertEqual(legacy.provenance, .legacyCodeRedeem)
+        XCTAssertNotEqual(legacy.credential.tokenID, obsolete.credential.tokenID)
+
+        pairing.setServerFeatures(ExchangeFixture.supported, capabilities: grants)
+        let response = ExchangeFixture.reply(tokenID: legacy.credential.tokenID)
+        await f.api.setExchangeResults([.success(response)])
+        try await f.exchange(pairing)
+
+        XCTAssertEqual(pairing.credential(for: fakeServer)?.credential, response.credential)
+        XCTAssertEqual(f.store.loadRollbackQuarantine(), unrelated + [live])
+        XCTAssertEqual(f.store.loadRotationJournal(), retainedJournals)
+        XCTAssertTrue(f.store.pending.isEmpty)
+        let calls = await f.api.calls
+        XCTAssertEqual(calls, [.redeem(code, ExchangeFixture.deviceName, fakeServer), f.proofCall])
+    }
+
+    func testCapabilities401OnExchangeServerRetainsCodeTokenForSameActorReloginAndRotation() async throws {
+        let f = try ExchangeFixture()
+        defer { f.cleanUp() }
+        let original = try XCTUnwrap(f.store.load())
+        let actor = try XCTUnwrap(f.session.actor)
+        let pairing = f.pairing()
+        let api = MockHestiaAPI()
+        await api.setFeatures(ExchangeFixture.supported)
+        await api.setCapabilitiesError(.unauthorized)
+        let app = AppState(api: api, receiptPairing: pairing, sessionStore: f.sessionStore, events: noEvents)
+
+        await app.bootstrap()
+        XCTAssertEqual(app.phase, .needsAuth)
+        XCTAssertNil(f.sessionStore.currentSnapshot())
+        XCTAssertEqual(f.store.load()?.provenance, .legacyCodeRedeem)
+        XCTAssertEqual(f.store.load()?.credential, original.credential)
+        XCTAssertEqual(f.store.load()?.codeSessionHandoff?.actor, actor)
+        XCTAssertTrue(f.store.pending.isEmpty)
+
+        let response = ExchangeFixture.reply()
+        await f.api.setExchangeResults([.success(response)])
+        await api.setCapabilities(ExchangeFixture.owner())
+        await app.login(user: actor, password: "fixture")
+
+        XCTAssertEqual(app.phase, .ready)
+        let session = try XCTUnwrap(f.sessionStore.currentSnapshot())
+        XCTAssertEqual(session.actor, actor)
+        XCTAssertNotEqual(session.commitID, f.session.commitID)
+        XCTAssertEqual(pairing.credential(for: fakeServer)?.provenance, .exchanged)
+        XCTAssertEqual(pairing.credential(for: fakeServer)?.credential, response.credential)
+        XCTAssertTrue(f.store.pending.isEmpty)
+        XCTAssertTrue(f.store.loadRotationJournal().isEmpty)
+        let calls = await f.api.calls
+        XCTAssertEqual(calls, [.exchange(session, try ReceiptPairing.deviceName, original.credential)])
+    }
+
     func testInstalledOwnerMigratesLegacyTokenAtBootstrapAndRetainsItAcrossFailures() async throws {
         for provenance in [DeviceTokenProvenance.legacyCodeRedeem, .legacyMigrated1x] {
             let f = try ExchangeFixture(provenance: provenance)
@@ -1537,7 +1723,8 @@ extension DevicePairingTests {
             XCTAssertTrue(f.store.pending.isEmpty)
             let calls = await f.api.calls
             XCTAssertEqual(calls.count, 6)
-            XCTAssertTrue(calls.allSatisfy { $0 == .exchange(f.session, ReceiptPairing.deviceName, before.credential) })
+            let deviceName = try ReceiptPairing.deviceName
+            XCTAssertTrue(calls.allSatisfy { $0 == .exchange(f.session, deviceName, before.credential) })
         }
     }
 
@@ -1618,7 +1805,7 @@ extension DevicePairingTests {
                 XCTAssertNil(app.receiptsAPI)
                 XCTAssertTrue(exchangeCalls.isEmpty)
             } else {
-                XCTAssertEqual(exchangeCalls, [.exchange(f.session, ReceiptPairing.deviceName, fakeDeviceToken)])
+                XCTAssertEqual(exchangeCalls, [.exchange(f.session, try ReceiptPairing.deviceName, fakeDeviceToken)])
             }
         }
     }
@@ -1644,7 +1831,7 @@ extension DevicePairingTests {
         let capabilityCalls = await api.count(.capabilities)
         let exchangeCalls = await f.api.calls
         XCTAssertEqual(capabilityCalls, 2)
-        XCTAssertEqual(exchangeCalls, [.exchange(f.session, ReceiptPairing.deviceName, nil)])
+        XCTAssertEqual(exchangeCalls, [.exchange(f.session, try ReceiptPairing.deviceName, nil)])
         XCTAssertTrue(f.store.pending.isEmpty)
     }
 
