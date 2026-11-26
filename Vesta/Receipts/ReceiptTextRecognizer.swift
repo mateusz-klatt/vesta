@@ -99,7 +99,12 @@ struct ReceiptOCRAssessment {
     init(lines: [String]) {
         let itemPattern = #/(?:^|[^0-9.,\p{L}])([0-9]{1,6}(?:[.,][0-9]{1,4})?)\s*(?:L|SZT|KG|G|M)?\s*[*×X=]\s*([0-9]{1,9}[.,][0-9]{2,4})\s+([0-9]{1,9}[.,][0-9]{2}0{0,2})(?![0-9.,])/#.ignoresCase()
         let discountPattern = #/^(?:OPUST|RABAT)\b.*?([+-]?[0-9]{1,9}[.,][0-9]{2})(?:\s+PLN)?(?:\s+[A-G])?$/#
-        let discountItemPattern = #/^(?:OPUST|RABAT)\b.*?[^0-9.,\p{L}]([0-9]{1,6}(?:[.,][0-9]{1,4})?|I(?=\s*SZT\b))\s*(?:L|SZT|KG|G|M)?\s*[*×X=]\s*([0-9]{1,9}[.,][0-9]{2,4})\s+([0-9]{1,9}[.,][0-9]{2}0{0,2})(?:\s*PLN)?(?:\s*[A-G])?$/#
+        let discountItemPattern = #/
+            ^(?:OPUST|RABAT)\b.*?[^0-9.,\p{L}]
+            ([0-9]{1,6}(?:[.,][0-9]{1,4})?|I(?=\s*SZT\b))\s*(?:L|SZT|KG|G|M)?\s*[*×X=]\s*
+            ([0-9]{1,9}[.,][0-9]{2,4})\s+([0-9]{1,9}[.,][0-9]{2}0{0,2})(?:\s*PLN)?(?:\s*[A-G])?
+            (?:\s+[-−][0-9]{1,9}[.,][0-9]{2}(?:\s*PLN)?(?:\s*[A-G])?)?$
+            /#
         let totalPattern = #/^(SUMA PLN|DO ZAPLATY)\s+([0-9]{1,9}[.,][0-9]{2})\s*(?:PLN)?$/#
         for line in lines {
             let label = line.uppercased().folding(options: .diacriticInsensitive, locale: Self.locale)
@@ -149,12 +154,14 @@ struct ReceiptOCRAssessment {
     }
 
     func improves(on original: Self) -> Bool {
-        guard original.printedTotal != nil,
+        // Additional names alone cannot account for an ambiguous amount.
+        guard original.ambiguousDiscountRows == 0 || reconciles,
+              original.printedTotal != nil,
               printedTotal == original.printedTotal,
               original.payableTotal.map({ $0 == payableTotal }) ?? true,
               original.fiscalTotal.map({ $0 == fiscalTotal }) ?? true,
               inconsistentRows <= original.inconsistentRows,
-              ambiguousDiscountRows <= original.ambiguousDiscountRows,
+              ambiguousDiscountRows == 0,
               balancedRows + inconsistentRows >= original.balancedRows + original.inconsistentRows,
               namedBalancedRows >= original.namedBalancedRows,
               original.balancedAmounts.allSatisfy({ balancedAmounts[$0.key, default: 0] >= $0.value }),

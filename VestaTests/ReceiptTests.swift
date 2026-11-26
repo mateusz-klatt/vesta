@@ -590,6 +590,22 @@ final class ReceiptOCRAssessmentTests: XCTestCase {
         XCTAssertFalse(ReceiptOCRAssessment(lines: [joined]).needsRetry)
     }
 
+    func testRetryCannotTradeAnAmbiguousItemForAnUnrelatedProductName() {
+        let primary = ReceiptOCRAssessment(lines: [
+            "1szt * 4,00 4,00 A", "OPUST BATON 1szt * 7,50 7,50 A", "SUMA PLN 11,10",
+        ])
+        let incomplete = ReceiptOCRAssessment(lines: ["SOK 1szt * 4,00 4,00 A", "SUMA PLN 11,10"])
+        XCTAssertTrue(primary.needsRetry)
+        XCTAssertFalse(incomplete.improves(on: primary))
+    }
+
+    func testRetryCanSeparateAJoinedCalculationAndSignedAmount() {
+        let primary = ReceiptOCRAssessment(lines: ["OPUST BATON 1szt * 7,50 7,50 A -0,40 A", "SUMA PLN 7,10"])
+        let complete = ReceiptOCRAssessment(lines: ["BATON 1szt * 7,50 7,50 A", "OPUST BATON -0,40 A", "SUMA PLN 7,10"])
+        XCTAssertTrue(primary.needsRetry)
+        XCTAssertTrue(complete.improves(on: primary))
+    }
+
     func testRetryCannotImproveByDroppingAnItemOrIntroducingADifferentPayableTotal() {
         let primary = ReceiptOCRAssessment(lines: [
             "PALIWO 2L * 5,00 4,00 B",
