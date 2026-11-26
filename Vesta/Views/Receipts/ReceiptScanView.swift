@@ -92,8 +92,8 @@ private struct ReceiptCaptureStep: View {
             photo = nil
             Task {
                 await flow.recognize {
-                    guard let data = try? await item.loadTransferable(type: Data.self),
-                          let image = UIImage(data: data)?.uprightReceiptImage else { return [] }
+                    guard let data = try await item.loadTransferable(type: Data.self),
+                          let image = UIImage(data: data)?.uprightReceiptImage else { throw ReceiptError.photoUnavailable }
                     return [image]
                 }
             }
@@ -105,7 +105,8 @@ private struct ReceiptCaptureStep: View {
         capturedPhoto = nil
         Task {
             await flow.recognize {
-                photo.uprightReceiptImage.map { [$0] } ?? []
+                guard let image = photo.uprightReceiptImage else { throw ReceiptError.photoUnavailable }
+                return [image]
             }
         }
     }

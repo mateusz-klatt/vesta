@@ -4,6 +4,110 @@ import XCTest
 
 @MainActor
 final class ReceiptFlowRaceTests: XCTestCase {
+    func testPhotoLoadingFailureStaysAtCaptureAndAllowsRetry() async throws {
+        let api = MockReceiptsAPI()
+        let recognizer = StubRecognizer(fragments: [
+            TextFragment(text: "Receipt text", box: CGRect(x: 0.1, y: 0.5, width: 0.5, height: 0.02)),
+        ])
+        let flow = ReceiptFlow(api: api, recognizer: recognizer)
+
+        await flow.recognize { throw URLError(.notConnectedToInternet) }
+        XCTAssertEqual(flow.step, .capture)
+        XCTAssertEqual(flow.error, .photoUnavailable)
+        XCTAssertFalse(flow.isBusy)
+
+        await flow.recognize { [] }
+        XCTAssertEqual(flow.error, .photoUnavailable)
+        XCTAssertFalse(flow.isBusy)
+
+        let page = try image()
+        await flow.recognize { [page] }
+        XCTAssertEqual(flow.step, .edit)
+        XCTAssertEqual(flow.text, "Receipt text")
+        XCTAssertNil(flow.error)
+        XCTAssertFalse(flow.isBusy)
+        let calls = await api.calls
+        XCTAssertTrue(calls.isEmpty)
+    }
+
+    func testPhotoWithoutReadableTextStaysAtCaptureAndAllowsPaste() async throws {
+        let flow = ReceiptFlow(api: MockReceiptsAPI(), recognizer: StubRecognizer(fragments: [
+            TextFragment(text: " \n ", box: CGRect(x: 0.1, y: 0.5, width: 0.5, height: 0.02)),
+        ]))
+        await flow.recognize([try image()])
+
+        XCTAssertEqual(flow.step, .capture)
+        XCTAssertEqual(flow.text, "")
+        XCTAssertEqual(flow.error, .noReadableText)
+        XCTAssertFalse(flow.isBusy)
+
+        flow.useText("Pasted receipt")
+        XCTAssertEqual(flow.step, .edit)
+        XCTAssertEqual(flow.text, "Pasted receipt")
+        XCTAssertNil(flow.error)
+    }
+
+    func testLocalPhotoErrorsOfferRecoveryWithoutPairing() {
+        for (error, code) in [(ReceiptError.photoUnavailable, "photo_unavailable"), (.noReadableText, "no_readable_text")] {
+            XCTAssertEqual(String(localized: error.title), "Couldn’t read photo")
+            XCTAssertEqual(String(localized: error.message),
+                           "Choose another photo, scan again, or paste the receipt text.")
+            XCTAssertNil(error.technical)
+            XCTAssertFalse(error.requiresPairing)
+            XCTAssertFalse(error.isAccessDenial)
+            XCTAssertEqual(error.reviewCode, code)
+        }
+    }
+
+    func testCancelledPhotoLoadingIsSilent() async {
+        for cancellation in [CancellationError() as any Error, URLError(.cancelled), CocoaError(.userCancelled)] {
+            let flow = ReceiptFlow(api: MockReceiptsAPI())
+            await flow.recognize { throw cancellation }
+            XCTAssertEqual(flow.step, .capture)
+            XCTAssertNil(flow.error)
+            XCTAssertFalse(flow.isBusy)
+        }
+    }
+
+    func testLatePhotoLoadFailureDoesNotReplacePastedText() async {
+        let gate = OperationGate()
+        let flow = ReceiptFlow(api: MockReceiptsAPI())
+        let loading = Task {
+            await flow.recognize {
+                await gate.pause()
+                throw ReceiptError.photoUnavailable
+            }
+        }
+        await gate.waitUntilPaused()
+        flow.useText("Pasted receipt")
+        await gate.resume()
+        await loading.value
+
+        XCTAssertEqual(flow.step, .edit)
+        XCTAssertEqual(flow.text, "Pasted receipt")
+        XCTAssertNil(flow.error)
+        XCTAssertFalse(flow.isBusy)
+    }
+
+    func testAbandonedPhotoLoadingDoesNotPublishError() async {
+        let gate = OperationGate()
+        let flow = ReceiptFlow(api: MockReceiptsAPI())
+        let loading = Task {
+            await flow.recognize {
+                await gate.pause()
+                throw ReceiptError.photoUnavailable
+            }
+        }
+        await gate.waitUntilPaused()
+        await flow.abandon()
+        await gate.resume()
+        await loading.value
+
+        XCTAssertNil(flow.error)
+        XCTAssertFalse(flow.isBusy)
+        XCTAssertEqual(flow.step, .capture)
+    }
+
     func testAbandonDuringConfirmKeepsTheSavedReceipt() async {
         let api = PausedConfirmAPI()
         let janitor = ReceiptDraftJanitor()
@@ -137,6 +241,13 @@ final class ReceiptFlowRaceTests: XCTestCase {
         XCTAssertEqual(confirmCalls, [.delete("second-old-draft", 1), .parse("Old receipt"), .confirm("tx1")])
         let confirmScopes = await confirmAPI.mock.scopes
         XCTAssertTrue(confirmScopes.allSatisfy { $0 == old })
+    }
+
+    private func image() throws -> CGImage {
+        let context = try XCTUnwrap(CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8,
+                                              bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        return try XCTUnwrap(context.makeImage())
     }
 }
 

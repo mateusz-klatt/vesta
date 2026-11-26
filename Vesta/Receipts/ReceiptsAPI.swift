@@ -119,6 +119,10 @@ struct DenialReportingReceiptsAPI: ReceiptsAPI {
 /// Receipt failures, mapped from hestia's status + `BudgetError.error` code to
 /// copy the user can act on.
 enum ReceiptError: LocalizedError, Equatable {
+    /// The selected photo could not be loaded, decoded or read on this device.
+    case photoUnavailable
+    /// OCR completed without finding readable text.
+    case noReadableText
     /// 404 `budget_receipts_disabled` / `budget_disabled`: the owner has not
     /// enabled receipts (or the budget module).
     case disabled
@@ -162,6 +166,7 @@ enum ReceiptError: LocalizedError, Equatable {
 
     var title: LocalizedStringResource {
         switch self {
+        case .photoUnavailable, .noReadableText: "Couldn’t read photo"
         case .disabled: "Receipts are turned off"
         case .notFound: "Draft no longer exists"
         case .forbidden: APIError.forbidden.title
@@ -184,6 +189,7 @@ enum ReceiptError: LocalizedError, Equatable {
 
     var message: LocalizedStringResource {
         switch self {
+        case .photoUnavailable, .noReadableText: "Choose another photo, scan again, or paste the receipt text."
         case .disabled: "The server owner has not enabled receipts yet."
         case .notFound: "Drafts expire after 48 hours. Scan the receipt again."
         case .forbidden: APIError.forbidden.message

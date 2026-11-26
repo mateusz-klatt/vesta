@@ -336,25 +336,35 @@ final class ReceiptFlow {
     }
 
     /// Photo loading and recognition share one busy interval and capture generation.
-    func recognize(loading loadPages: @MainActor () async -> [CGImage]) async {
+    func recognize(loading loadPages: @MainActor () async throws -> [CGImage]) async {
         guard step == .capture, !isBusy, !abandoned, isCurrent else { return }
         let generation = captureGeneration
         isBusy = true
         defer { isBusy = false }
-        let pages = await loadPages()
-        guard !pages.isEmpty, isCurrentCapture(generation) else { return }
         error = nil
         do {
+            let pages = try await loadPages()
+            guard isCurrentCapture(generation) else { return }
+            guard !pages.isEmpty else {
+                error = .photoUnavailable
+                return
+            }
             var lines: [String] = []
             for page in pages {
                 let fragments = try await recognizer.recognize(page)
                 guard isCurrentCapture(generation) else { return }
                 lines += ReceiptLineOrdering.lines(from: fragments)
             }
-            useText(lines.joined(separator: "\n"), source: .localOcr)
+            let recognizedText = lines.joined(separator: "\n")
+            guard !recognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                error = .noReadableText
+                return
+            }
+            useText(recognizedText, source: .localOcr)
         } catch {
-            guard isCurrentCapture(generation) else { return }
-            self.error = .api(.unexpected(error.localizedDescription))
+            guard isCurrentCapture(generation), !APIError.isCancellation(error),
+                  (error as? CocoaError)?.code != .userCancelled else { return }
+            self.error = .photoUnavailable
         }
     }
 
