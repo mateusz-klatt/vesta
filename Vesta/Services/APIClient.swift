@@ -122,6 +122,18 @@ actor APIClient: HestiaAPI {
         return makeClient(on: origin ?? session?.origin ?? backendURLStore.currentEffectiveURL(), session: session)
     }
 
+    func currentBudgetScope() async -> ReceiptSessionScope? {
+        guard let session = sessionStore?.currentSnapshot(),
+              let device = await receiptPairing?.nativeBudgetCredential(for: session.origin, session: session) else { return nil }
+        return ReceiptSessionScope(
+            origin: session.origin, actor: session.actor, ownerKey: device.ownerKey, credential: device.credential
+        )
+    }
+
+    func isCurrentBudgetScope(_ scope: ReceiptSessionScope) async -> Bool {
+        await currentBudgetScope() == scope
+    }
+
     func requestReceiptClient(scope: ReceiptSessionScope?) -> Client {
         guard let scope else { return requestClient() }
         return Client(
@@ -130,7 +142,7 @@ actor APIClient: HestiaAPI {
             middlewares: [
                 ExplicitNullsMiddleware(),
                 BearerAuthMiddleware(session: sessionStore?.currentSnapshot(), receiptPairing: receiptPairing,
-                                     receiptScope: scope),
+                                     receiptScope: scope, budgetEnabled: budgetEnabled),
             ]
         )
     }

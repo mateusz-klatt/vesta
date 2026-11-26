@@ -22,3 +22,4 @@ typeOverrides:
     BudgetAnalyticsCategory: BudgetAnalyticsCategoryWire
     BudgetAnalyticsCategoryTotal: BudgetAnalyticsCategoryTotalWire
     BudgetAnalyticsMonthlyBudgetCharts: BudgetAnalyticsMonthlyBudgetChartsWire
+    BudgetAnalyticsMonthlyBudgetSeriesCategory: BudgetAnalyticsMonthlyBudgetSeriesCategoryWire

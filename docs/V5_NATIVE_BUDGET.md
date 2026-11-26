@@ -23,7 +23,7 @@ A 401, 403, feature loss, account switch, origin switch, or flag change closes B
 
 ## OpenAPI pin
 
-The hand-pinned `Vesta/openapi.json` remains `info.version: 0.9.0`; do not run `make pull-spec`. V5 appends these operations verbatim from hestia **0.55.0, commit `57a3395`**, together with their 17 missing transitive schemas:
+The hand-pinned `Vesta/openapi.json` remains `info.version: 0.9.0`; do not run `make pull-spec`. V5 appends these operations verbatim from hestia **0.55.0, commit `57a3395`**, together with their 15 reachable missing transitive schemas:
 
 - `GET /api/budget/analytics/monthly-budget/charts`
 - `GET /api/budget/analytics/overview`
@@ -31,7 +31,7 @@ The hand-pinned `Vesta/openapi.json` remains `info.version: 0.9.0`; do not run `
 
 The other native-read routes are `GET /api/budget/status`, `/api/budget/analytics/monthly-budget`, and `/api/budget/analytics/transactions`.
 
-The three pre-existing native-read path objects are not verbatim 0.55.0: each now has `x-required-permission: budget.view`, and monthly-budget has a newer description. After applying the repository's nullability normalization, the pre-existing schemas match 0.55.0 except that 0.55.0 adds `card_debt` to `BudgetAnalyticsMonthlyBudget`. V5 deliberately leaves all pre-existing entries unchanged.
+The three pre-existing native-read path objects are not verbatim 0.55.0: each now has `x-required-permission: budget.view`, and monthly-budget has a newer description. After applying the repository's nullability normalization, the pre-existing schemas match 0.55.0 except that 0.55.0 adds `card_debt` to `BudgetAnalyticsMonthlyBudget`. V5 deliberately leaves all pre-existing entries unchanged. The two CardDebt schemas are unreachable from every pinned path and are therefore excluded.
 
 The generator drops required nullable `anyOf` fields. Type overrides preserve the verbatim schema's chart series and category metadata without normalizing the new JSON.
 

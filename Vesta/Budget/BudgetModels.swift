@@ -393,6 +393,26 @@ struct BudgetAnalyticsCategoryWire: Codable, Hashable, Sendable {
         case archived, colorHue = "color_hue", createdAt = "created_at", displayName = "display_name"
         case id, name, parentId = "parent_id", translations, updatedAt = "updated_at", version
     }
+
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        archived = try values.decode(Bool.self, forKey: .archived)
+        colorHue = try values.decodeIfPresent(Int.self, forKey: .colorHue)
+        createdAt = try values.decode(Double.self, forKey: .createdAt)
+        displayName = try values.decodeIfPresent(String.self, forKey: .displayName)
+        id = try values.decode(String.self, forKey: .id)
+        name = try values.decode(String.self, forKey: .name)
+        guard values.contains(.parentId) else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.parentId,
+                .init(codingPath: values.codingPath, debugDescription: "Required parent_id is missing")
+            )
+        }
+        parentId = try values.decodeIfPresent(String.self, forKey: .parentId)
+        translations = try values.decodeIfPresent([String: String].self, forKey: .translations)
+        updatedAt = try values.decode(Double.self, forKey: .updatedAt)
+        version = try values.decode(Int.self, forKey: .version)
+    }
 }
 
 struct BudgetAnalyticsCategoryTotalWire: Codable, Hashable, Sendable {
@@ -413,9 +433,84 @@ struct BudgetAnalyticsCategoryTotalWire: Codable, Hashable, Sendable {
         case displayName = "display_name", expenses, name, netSpending = "net_spending"
         case oneOff = "one_off", oneOffKey = "one_off_key", refunds
     }
+
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        archived = try values.decode(Bool.self, forKey: .archived)
+        guard values.contains(.categoryId) else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.categoryId,
+                .init(codingPath: values.codingPath, debugDescription: "Required category_id is missing")
+            )
+        }
+        categoryId = try values.decodeIfPresent(String.self, forKey: .categoryId)
+        currency = try values.decode(String.self, forKey: .currency)
+        displayLabel = try values.decodeIfPresent(String.self, forKey: .displayLabel)
+        displayName = try values.decodeIfPresent(String.self, forKey: .displayName)
+        expenses = try values.decode(String.self, forKey: .expenses)
+        guard values.contains(.name) else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.name,
+                .init(codingPath: values.codingPath, debugDescription: "Required name is missing")
+            )
+        }
+        name = try values.decodeIfPresent(String.self, forKey: .name)
+        netSpending = try values.decode(String.self, forKey: .netSpending)
+        oneOff = try values.contains(.oneOff) ? values.decode(Bool.self, forKey: .oneOff) : nil
+        oneOffKey = try values.decodeIfPresent(String.self, forKey: .oneOffKey)
+        refunds = try values.decode(String.self, forKey: .refunds)
+    }
 }
 
 struct BudgetAnalyticsMonthlyBudgetChartsWire: Codable, Hashable, Sendable {
     let budget: Components.Schemas.BudgetAnalyticsMonthlyBudget
     let series: Components.Schemas.BudgetAnalyticsMonthlyBudgetSeries?
+
+    private enum CodingKeys: String, CodingKey {
+        case budget, series
+    }
+
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        budget = try values.decode(Components.Schemas.BudgetAnalyticsMonthlyBudget.self, forKey: .budget)
+        guard values.contains(.series) else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.series,
+                .init(codingPath: values.codingPath, debugDescription: "Required series is missing")
+            )
+        }
+        series = try values.decodeIfPresent(Components.Schemas.BudgetAnalyticsMonthlyBudgetSeries.self, forKey: .series)
+    }
+}
+
+struct BudgetAnalyticsMonthlyBudgetSeriesCategoryWire: Codable, Hashable, Sendable {
+    let categoryId: String?
+    let displayLabel: String?
+    let displayName: String?
+    let name: String?
+    let netSpending: String
+    let oneOff: Bool?
+    let oneOffKey: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case categoryId = "category_id", displayLabel = "display_label", displayName = "display_name"
+        case name, netSpending = "net_spending", oneOff = "one_off", oneOffKey = "one_off_key"
+    }
+
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        guard values.contains(.categoryId) else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.categoryId,
+                .init(codingPath: values.codingPath, debugDescription: "Required category_id is missing")
+            )
+        }
+        categoryId = try values.decodeIfPresent(String.self, forKey: .categoryId)
+        displayLabel = try values.decodeIfPresent(String.self, forKey: .displayLabel)
+        displayName = try values.decodeIfPresent(String.self, forKey: .displayName)
+        name = try values.decodeIfPresent(String.self, forKey: .name)
+        netSpending = try values.decode(String.self, forKey: .netSpending)
+        oneOff = try values.contains(.oneOff) ? values.decode(Bool.self, forKey: .oneOff) : nil
+        oneOffKey = try values.decodeIfPresent(String.self, forKey: .oneOffKey)
+    }
 }

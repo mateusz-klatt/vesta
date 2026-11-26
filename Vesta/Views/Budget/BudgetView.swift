@@ -415,7 +415,7 @@ private struct BudgetNativeCategoriesCard: View {
     }
 
     private var rows: [Row] {
-        let byID = Dictionary(uniqueKeysWithValues: definitions.map { ($0.id, $0) })
+        let byID = Dictionary(definitions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var result = overview.categories.map { total in
             let definition = total.categoryID.flatMap { byID[$0] }
             return Row(
@@ -427,7 +427,8 @@ private struct BudgetNativeCategoriesCard: View {
         result.append(contentsOf: definitions.filter { !represented.contains($0.id) }.map {
             Row(id: $0.id, title: $0.title, total: nil, colorHue: $0.colorHue, archived: $0.archived)
         })
-        return result
+        var ids = Set<String>()
+        return result.filter { ids.insert($0.id).inserted }
     }
 
     var body: some View {

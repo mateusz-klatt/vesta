@@ -89,6 +89,8 @@ final class AppState {
     private var resetTask: Task<Void, Never>?
     private weak var activeBudgetStore: BudgetStore?
     private var budgetGeneration = 0
+    private var handledBudgetDenialGeneration: Int?
+    private(set) var budgetDenialHandlingCount = 0
     private weak var activeAgendaStore: AgendaStore?
 
     private struct DiscoveryFence: Equatable {
@@ -225,12 +227,12 @@ final class AppState {
               let token = receiptPairing.nativeBudgetCredential(for: session.origin, session: session) else { return nil }
         let generation = budgetGeneration
         return SessionBoundBudgetAPI(api: api, isCurrent: { [weak self] in
-            guard let self, generation == budgetGeneration, session == sessionStore.currentSnapshot(),
-                  NativeBudgetGate.isEligible(enabled: nativeBudgetEnabled, features: serverFeatures,
-                                              capabilities: capabilities) else { return false }
-            return token == receiptPairing.nativeBudgetCredential(for: session.origin, session: session)
+            self?.isCurrentBudgetAPI(session: session, token: token, generation: generation) == true
         }, onDenial: { [weak self] error in
-            guard let self else { return }
+            guard let self, handledBudgetDenialGeneration != generation,
+                  isCurrentBudgetAPI(session: session, token: token, generation: generation) else { return false }
+            handledBudgetDenialGeneration = generation
+            budgetDenialHandlingCount += 1
             closeBudget()
             switch error {
             case .forbidden: handleDeviceFailure(.forbidden, used: token)
@@ -240,7 +242,19 @@ final class AppState {
             case .unauthorized: _ = beginCapabilityRefresh(source: .denial)
             default: break
             }
+            return true
         })
+    }
+
+    private func isCurrentBudgetAPI(
+        session: BoundSession,
+        token: StoredReceiptDeviceToken,
+        generation: Int
+    ) -> Bool {
+        guard generation == budgetGeneration, session == sessionStore.currentSnapshot(),
+              NativeBudgetGate.isEligible(enabled: nativeBudgetEnabled, features: serverFeatures,
+                                          capabilities: capabilities) else { return false }
+        return token == receiptPairing.nativeBudgetCredential(for: session.origin, session: session)
     }
 
     func makeBudgetStore(now: Date = Date()) -> BudgetStore? {
@@ -625,7 +639,7 @@ final class AppState {
                                                                          features: serverFeatures, capabilities: capabilities)
         else { return }
         let previous = currentReceiptScope
-        let budgetToken = activeBudgetStore == nil ? nil : receiptPairing.nativeBudgetCredential(for: session.origin, session: session)
+        let budgetToken = receiptPairing.nativeBudgetCredential(for: session.origin, session: session)
         defer {
             if session == sessionStore.currentSnapshot() {
                 if previous != currentReceiptScope { receiptAccessGeneration += 1 }

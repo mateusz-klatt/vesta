@@ -69,13 +69,13 @@ private enum BudgetFixtures {
 
     static let status = BudgetStatus(dataAsOf: Date(timeIntervalSince1970: 300))
 
-    static func overview(period: String = "2026-11", currency: String = "PLN") -> BudgetOverview {
+    static func overview(period: String = "2026-11", currency: String = "PLN", spent: Decimal = 500) -> BudgetOverview {
         BudgetOverview(
             period: period,
-            currencies: [BudgetCurrencyTotal(currency: currency, expenses: 600, refunds: 100, netSpending: 500, income: 2_000)],
+            currencies: [BudgetCurrencyTotal(currency: currency, expenses: spent + 100, refunds: 100, netSpending: spent, income: 2_000)],
             categories: [BudgetOverviewCategory(
                 categoryID: "groceries", name: "Weekly food", isOneOff: false, oneOffKey: nil,
-                currency: currency, expenses: 600, refunds: 100, netSpending: 500
+                currency: currency, expenses: spent + 100, refunds: 100, netSpending: spent
             )]
         )
     }
@@ -266,6 +266,114 @@ final class BudgetMappingTests: XCTestCase {
         XCTAssertNil(nullSeries.series)
     }
 
+    func testCategoryRequiredParentIDRejectsMissingAndAcceptsExplicitNull() throws {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Self.categoriesJSON.utf8)) as? [String: Any])
+        var category = try XCTUnwrap((object["categories"] as? [[String: Any]])?.first)
+        category.removeValue(forKey: "parent_id")
+        object["categories"] = [category]
+
+        XCTAssertThrowsError(try JSONDecoder().decode(
+            Components.Schemas.BudgetAnalyticsCategories.self,
+            from: try JSONSerialization.data(withJSONObject: object)
+        )) { error in
+            guard case DecodingError.keyNotFound(let key, _) = error else {
+                return XCTFail("Expected keyNotFound, got \(error)")
+            }
+            XCTAssertEqual(key.stringValue, "parent_id")
+        }
+
+        category["parent_id"] = NSNull()
+        object["categories"] = [category]
+        let decoded = try JSONDecoder().decode(
+            Components.Schemas.BudgetAnalyticsCategories.self,
+            from: try JSONSerialization.data(withJSONObject: object)
+        )
+        XCTAssertNil(decoded.categories[0].parentId)
+    }
+
+    func testOverviewRequiredNullableKeysRejectMissingAndAcceptExplicitNull() throws {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Self.overviewJSON.utf8)) as? [String: Any])
+        let category = try XCTUnwrap((object["categories"] as? [[String: Any]])?.first)
+        for requiredKey in ["category_id", "name"] {
+            var missing = category
+            missing.removeValue(forKey: requiredKey)
+            object["categories"] = [missing]
+            XCTAssertThrowsError(try JSONDecoder().decode(
+                Components.Schemas.BudgetAnalyticsOverview.self,
+                from: try JSONSerialization.data(withJSONObject: object)
+            )) { error in
+                guard case DecodingError.keyNotFound(let key, _) = error else {
+                    return XCTFail("Expected keyNotFound, got \(error)")
+                }
+                XCTAssertEqual(key.stringValue, requiredKey)
+            }
+        }
+
+        var explicitNulls = category
+        explicitNulls["category_id"] = NSNull()
+        explicitNulls["name"] = NSNull()
+        object["categories"] = [explicitNulls]
+        let decoded = try JSONDecoder().decode(
+            Components.Schemas.BudgetAnalyticsOverview.self,
+            from: try JSONSerialization.data(withJSONObject: object)
+        )
+        XCTAssertNil(decoded.categories[0].categoryId)
+        XCTAssertNil(decoded.categories[0].name)
+    }
+
+    func testOverviewRejectsExplicitNullForNonNullableOneOff() throws {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Self.overviewJSON.utf8)) as? [String: Any])
+        var category = try XCTUnwrap((object["categories"] as? [[String: Any]])?.first)
+        category["one_off"] = NSNull()
+        object["categories"] = [category]
+
+        XCTAssertThrowsError(try JSONDecoder().decode(
+            Components.Schemas.BudgetAnalyticsOverview.self,
+            from: try JSONSerialization.data(withJSONObject: object)
+        ))
+    }
+
+    func testChartsRequiredSeriesRejectsMissingAndAcceptsExplicitNull() throws {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Self.chartsJSON.utf8)) as? [String: Any])
+        object.removeValue(forKey: "series")
+        XCTAssertThrowsError(try JSONDecoder().decode(
+            Components.Schemas.BudgetAnalyticsMonthlyBudgetCharts.self,
+            from: try JSONSerialization.data(withJSONObject: object)
+        )) { error in
+            guard case DecodingError.keyNotFound(let key, _) = error else {
+                return XCTFail("Expected keyNotFound, got \(error)")
+            }
+            XCTAssertEqual(key.stringValue, "series")
+        }
+
+        object["series"] = NSNull()
+        let decoded = try JSONDecoder().decode(
+            Components.Schemas.BudgetAnalyticsMonthlyBudgetCharts.self,
+            from: try JSONSerialization.data(withJSONObject: object)
+        )
+        XCTAssertNil(decoded.series)
+    }
+
+    func testSeriesCategoryRequiredCategoryIDRejectsMissingAndAcceptsExplicitNull() throws {
+        let explicitNull = Data(#"{"category_id":null,"net_spending":"1.00"}"#.utf8)
+        let decoded = try JSONDecoder().decode(
+            Components.Schemas.BudgetAnalyticsMonthlyBudgetSeriesCategory.self,
+            from: explicitNull
+        )
+        XCTAssertNil(decoded.categoryId)
+
+        let missing = Data(#"{"net_spending":"1.00"}"#.utf8)
+        XCTAssertThrowsError(try JSONDecoder().decode(
+            Components.Schemas.BudgetAnalyticsMonthlyBudgetSeriesCategory.self,
+            from: missing
+        )) { error in
+            guard case DecodingError.keyNotFound(let key, _) = error else {
+                return XCTFail("Expected keyNotFound, got \(error)")
+            }
+            XCTAssertEqual(key.stringValue, "category_id")
+        }
+    }
+
     static let overviewJSON = #"""
     {
       "period":"2026-11","start":"2026-11-01","end":"2026-12-01","snapshot_digest":"digest",
@@ -280,7 +388,7 @@ final class BudgetMappingTests: XCTestCase {
       "months":[],
       "categories":[{
         "category_id":"groceries","name":"Groceries","archived":false,"currency":"PLN",
-        "display_label":"Weekly food","display_name":null,"one_off":null,"one_off_key":null,
+        "display_label":"Weekly food","display_name":null,"one_off":false,"one_off_key":null,
         "expenses":"600.123456789012345678","refunds":"100.00","net_spending":"500.123456789012345678"
       }],
       "transfer_summary":{"suggested":0,"accepted":0,"review":0,"rejected":0,"boundary":0,"scan_limited":false}
@@ -493,6 +601,23 @@ private actor BudgetResponseGate {
     }
 }
 
+private final class GatedBudgetTransport: ClientTransport, @unchecked Sendable {
+    private let gate: BudgetResponseGate
+    private let captured: CapturingTransport
+
+    init(gate: BudgetResponseGate, status: Int = 200, body: String) {
+        self.gate = gate
+        captured = CapturingTransport(status: status, body: body)
+    }
+
+    var last: (request: HTTPRequest, body: Data)? { captured.last }
+
+    func send(_ request: HTTPRequest, body: HTTPBody?, baseURL: URL, operationID: String) async throws -> (HTTPResponse, HTTPBody?) {
+        await gate.wait()
+        return try await captured.send(request, body: body, baseURL: baseURL, operationID: operationID)
+    }
+}
+
 @MainActor
 final class BudgetStoreTests: XCTestCase {
     private var now: Date { Date(timeIntervalSince1970: 1_795_557_600) }
@@ -587,6 +712,33 @@ final class BudgetStoreTests: XCTestCase {
         XCTAssertEqual(store.period, "2026-10")
         XCTAssertEqual(store.overview?.period, "2026-10")
         XCTAssertEqual(store.transactions.map(\.entryReference), ["2026-10"])
+    }
+
+    func testNonKeepContentReloadClearsNativeAnalyticsWhileHeld() async throws {
+        let gate = BudgetResponseGate()
+        let mock = MockBudgetAPI(monthly: { period, currency in
+            if period == "2026-10" { await gate.wait() }
+            return BudgetFixtures.monthly(period: period, currency: currency ?? "PLN")
+        })
+        let store = store(mock)
+        await store.load()
+        XCTAssertNotNil(store.analyticsOverview)
+        XCTAssertFalse(store.categoryCatalog.isEmpty)
+        XCTAssertNotNil(store.chartSeries)
+
+        let reload = Task { await store.previousMonth() }
+        try await waitUntil("the non-keepContent monthly reload") { await gate.isWaiting }
+        XCTAssertNil(store.overview)
+        XCTAssertNil(store.analyticsOverview)
+        XCTAssertTrue(store.categoryCatalog.isEmpty)
+        XCTAssertNil(store.chartSeries)
+
+        await gate.release()
+        await reload.value
+        XCTAssertEqual(store.period, "2026-10")
+        XCTAssertEqual(store.analyticsOverview?.period, "2026-10")
+        XCTAssertFalse(store.categoryCatalog.isEmpty)
+        XCTAssertNotNil(store.chartSeries)
     }
 
     func testPeriodNavigationDoesNotEnterFutureMonth() async {
@@ -753,11 +905,32 @@ final class BudgetStoreTests: XCTestCase {
                     XCTFail("Unexpected cursor \(String(describing: cursor))")
                     return BudgetFixtures.page()
                 }
+            },
+            overview: { period, currency in
+                BudgetFixtures.overview(
+                    period: period, currency: currency ?? "PLN", spent: await state.sawStale ? 750 : 500
+                )
+            },
+            categories: {
+                let title = await state.sawStale ? "Fresh categories" : "Stale categories"
+                return [BudgetCategoryDefinition(
+                    id: "groceries", name: title, displayName: title, parentID: nil,
+                    colorHue: nil, archived: false, translations: [:]
+                )]
+            },
+            charts: { period, _, _ in
+                let spent: Decimal = await state.sawStale ? 750 : 500
+                return BudgetChartSeries(
+                    daily: [], months: [BudgetChartMonth(period: period, startBudget: 2_000, spent: spent)]
+                )
             }
         )
         let restartStore = store(restartMock)
         await restartStore.load()
         XCTAssertEqual(restartStore.overview?.summary?.spent, 500)
+        XCTAssertEqual(restartStore.analyticsOverview?.currencies.first?.netSpending, 500)
+        XCTAssertEqual(restartStore.categoryCatalog.first?.displayName, "Stale categories")
+        XCTAssertEqual(restartStore.chartSeries?.months.first?.spent, 500)
         XCTAssertEqual(restartStore.dataAsOf, initialAsOf)
         XCTAssertEqual(restartStore.nextCursor, "stale-cursor-1")
 
@@ -766,6 +939,9 @@ final class BudgetStoreTests: XCTestCase {
         XCTAssertEqual(restartStore.state, .loaded)
         XCTAssertFalse(restartStore.isLoadingMore)
         XCTAssertEqual(restartStore.overview?.summary?.spent, 750)
+        XCTAssertEqual(restartStore.analyticsOverview?.currencies.first?.netSpending, 750)
+        XCTAssertEqual(restartStore.categoryCatalog.first?.displayName, "Fresh categories")
+        XCTAssertEqual(restartStore.chartSeries?.months.first?.spent, 750)
         XCTAssertEqual(restartStore.dataAsOf, refreshedAsOf)
         XCTAssertEqual(restartStore.transactions, [newOne, newTwo])
         XCTAssertEqual(restartStore.nextCursor, "fresh-cursor-2")
@@ -1264,6 +1440,71 @@ final class BudgetClientTests: XCTestCase {
         XCTAssertNil(request.headerFields[.cookie])
     }
 
+    func testBudgetClientRethrowsCancellationErrors() async throws {
+        for kind in ["CancellationError", "URLError.cancelled"] {
+            let api = try pairedClient(StubTransport { _ in
+                if kind == "CancellationError" { throw CancellationError() }
+                throw URLError(.cancelled)
+            })
+            do {
+                _ = try await api.overview(period: "2026-11", currency: "PLN")
+                XCTFail("Expected cancellation for \(kind)")
+            } catch {
+                XCTAssertTrue(error is CancellationError, "\(kind) became \(error)")
+                XCTAssertNil(error as? BudgetError)
+            }
+        }
+    }
+
+    func testBudgetClientDiscardsLateResponseWhenBoundSessionChanges() async throws {
+        let gate = BudgetResponseGate()
+        let transport = GatedBudgetTransport(gate: gate, body: BudgetMappingTests.overviewJSON)
+        let sessionStore = try testCredentialSessionStore(origin: BudgetFixtures.origin, token: "session-token")
+        let pairing = BudgetFixtures.paired(sessionStore)
+        let api = APIClient(
+            transport: transport, receiptPairing: pairing, sessionStore: sessionStore, budgetEnabled: { true }
+        )
+        let request = Task { try await api.overview(period: "2026-11", currency: "PLN") }
+        try await waitUntil("the scope-bound budget response") { await gate.isWaiting }
+
+        let replacement = try sessionStore.commitAuthoritative(
+            origin: BudgetFixtures.origin, actor: "other", token: "v2.other.session"
+        )
+        await gate.release()
+        do {
+            _ = try await request.value
+            XCTFail("Expected the late response to be discarded")
+        } catch is CancellationError {}
+
+        XCTAssertEqual(sessionStore.currentSnapshot(), replacement)
+        XCTAssertEqual(transport.last?.request.headerFields[.authorization], "Bearer \(fakeDeviceToken.token)")
+        XCTAssertNil(transport.last?.request.headerFields[.cookie])
+    }
+
+    func testBudgetClientDiscardsLateDenialWhenBoundSessionChanges() async throws {
+        let gate = BudgetResponseGate()
+        let transport = GatedBudgetTransport(
+            gate: gate, status: 403, body: #"{"ok":false,"error":"budget_forbidden"}"#
+        )
+        let sessionStore = try testCredentialSessionStore(origin: BudgetFixtures.origin, token: "session-token")
+        let api = APIClient(
+            transport: transport, receiptPairing: BudgetFixtures.paired(sessionStore),
+            sessionStore: sessionStore, budgetEnabled: { true }
+        )
+        let request = Task { try await api.overview(period: "2026-11", currency: "PLN") }
+        try await waitUntil("the scope-bound budget denial") { await gate.isWaiting }
+
+        let replacement = try sessionStore.commitAuthoritative(
+            origin: BudgetFixtures.origin, actor: "other", token: "v2.other.session"
+        )
+        await gate.release()
+        do {
+            _ = try await request.value
+            XCTFail("Expected the late denial to be discarded")
+        } catch is CancellationError {}
+        XCTAssertEqual(sessionStore.currentSnapshot(), replacement)
+    }
+
     func testForbiddenResponseWithEmptyBodyIsMapped() async throws {
         let api = try pairedClient(StubTransport { _ in (403, nil) })
         do {
@@ -1512,7 +1753,8 @@ private actor BudgetExchangeStub: DevicePairingAPI {
 
     func exchange(session: BoundSession, deviceName: String, priorToken: ReceiptDeviceToken?) async throws -> ExchangedDeviceToken {
         exchangeCount += 1
-        return ExchangedDeviceToken(credential: fakeDeviceToken, scope: .device, actor: "u", owner: "u",
+        let actor = session.actor ?? "u"
+        return ExchangedDeviceToken(credential: fakeDeviceToken, scope: .device, actor: actor, owner: actor,
                                     ownerKey: BudgetFixtures.ownerKey, issuedPermissions: [Permission.budgetView.rawValue])
     }
 
@@ -1686,6 +1928,98 @@ final class BudgetGateTests: XCTestCase {
         }
     }
 
+    func testStaleDenialAfterAccountSwitchDoesNotHandleOrClearNewSession() async throws {
+        let fixture = try Fixture()
+        fixture.app.nativeBudgetEnabled = true
+        try fixture.tokens.save(BudgetFixtures.device())
+        await fixture.mock.setFeatures(BudgetFixtures.features)
+        await fixture.mock.setCapabilities(BudgetFixtures.owner)
+        await fixture.app.connect()
+        let oldStore = try XCTUnwrap(fixture.app.makeBudgetStore())
+        await oldStore.load()
+
+        let held = BudgetResponseGate()
+        await fixture.mock.setBudgetStub(MockBudgetAPI(status: {
+            await held.wait()
+            throw BudgetError.unauthorized
+        }))
+        let guarded = try XCTUnwrap(fixture.app.budgetAPI)
+        let staleRequest = Task { try await guarded.status() }
+        try await waitUntil("the stale account denial") { await held.isWaiting }
+
+        await fixture.mock.setCapabilities(.init(user: "other", ownBudget: BudgetFixtures.owner.ownBudget))
+        await fixture.app.login(user: "other", password: "fake-password")
+        let newSession = try XCTUnwrap(fixture.session.currentSnapshot())
+        XCTAssertEqual(newSession.actor, "other")
+        let newStore = try XCTUnwrap(fixture.app.makeBudgetStore())
+        await newStore.load()
+        XCTAssertNotNil(newStore.overview)
+        let handlingCount = fixture.app.budgetDenialHandlingCount
+        let exchangeCount = await fixture.exchange.exchangeCount
+        let revokeCount = await fixture.exchange.revokeCount
+
+        await held.release()
+        do {
+            _ = try await staleRequest.value
+            XCTFail("Expected the stale denial to be discarded")
+        } catch is CancellationError {}
+
+        XCTAssertEqual(fixture.app.budgetDenialHandlingCount, handlingCount)
+        XCTAssertEqual(fixture.session.currentSnapshot(), newSession)
+        XCTAssertFalse(newStore.isCleared)
+        XCTAssertNotNil(newStore.overview)
+        XCTAssertNotNil(newStore.analyticsOverview)
+        let exchangesAfter = await fixture.exchange.exchangeCount
+        let revocationsAfter = await fixture.exchange.revokeCount
+        XCTAssertEqual(exchangesAfter, exchangeCount)
+        XCTAssertEqual(revocationsAfter, revokeCount)
+    }
+
+    func testConcurrentDenialsAreHandledOncePerGeneration() async throws {
+        let fixture = try Fixture()
+        fixture.app.nativeBudgetEnabled = true
+        try fixture.tokens.save(BudgetFixtures.device())
+        await fixture.mock.setFeatures(BudgetFixtures.features)
+        await fixture.mock.setCapabilities(BudgetFixtures.owner)
+        await fixture.app.connect()
+        let store = try XCTUnwrap(fixture.app.makeBudgetStore())
+        await store.load()
+        let session = try XCTUnwrap(fixture.session.currentSnapshot())
+        let firstGate = BudgetResponseGate()
+        let secondGate = BudgetResponseGate()
+        await fixture.mock.setBudgetStub(MockBudgetAPI(
+            overview: { _, _ in
+                await firstGate.wait()
+                throw BudgetError.forbidden
+            },
+            categories: {
+                await secondGate.wait()
+                throw BudgetError.forbidden
+            }
+        ))
+        let guarded = try XCTUnwrap(fixture.app.budgetAPI)
+        let first = Task { try await guarded.overview(period: "2026-11", currency: "PLN") }
+        let second = Task { try await guarded.categories() }
+        try await waitUntil("the first concurrent denial") { await firstGate.isWaiting }
+        try await waitUntil("the second concurrent denial") { await secondGate.isWaiting }
+
+        await firstGate.release()
+        await secondGate.release()
+        var errors: [any Error] = []
+        do {
+            _ = try await first.value
+        } catch { errors.append(error) }
+        do {
+            _ = try await second.value
+        } catch { errors.append(error) }
+
+        XCTAssertEqual(fixture.app.budgetDenialHandlingCount, 1)
+        XCTAssertEqual(errors.compactMap { $0 as? BudgetError }, [.forbidden])
+        XCTAssertEqual(errors.filter { $0 is CancellationError }.count, 1)
+        XCTAssertEqual(fixture.session.currentSnapshot(), session)
+        XCTAssertTrue(store.isCleared)
+    }
+
     func testBudgetViewOnlyOwnerExchangesAndDispatchesOnlyWhenAllFourGatesPass() async throws {
         let fixture = try Fixture()
         fixture.app.nativeBudgetEnabled = true
@@ -1792,6 +2126,30 @@ final class BudgetAuthTests: XCTestCase {
             } catch let error as BudgetError {
                 XCTAssertEqual(error, .forbidden)
             }
+            XCTAssertNil(transport.last, path)
+        }
+    }
+
+    func testBudgetReadsRejectMismatchedCapturedScopeBeforeSending() async throws {
+        let server = BudgetFixtures.origin
+        let sessionStore = try testCredentialSessionStore(origin: server, token: "fake-session-token")
+        let scope = ReceiptSessionScope(
+            origin: server, actor: "different-account",
+            ownerKey: BudgetFixtures.ownerKey, credential: fakeDeviceToken
+        )
+        let middleware = BearerAuthMiddleware(
+            session: sessionStore.currentSnapshot(), receiptPairing: BudgetFixtures.paired(sessionStore),
+            receiptScope: scope, budgetEnabled: { true }
+        )
+        for (operation, path) in operations {
+            let transport = CapturingTransport(status: 200, body: "{}")
+            let request = HTTPRequest(method: .get, scheme: server.scheme, authority: server.host, path: path)
+            do {
+                _ = try await middleware.intercept(request, body: nil, baseURL: server, operationID: operation) { request, body, url in
+                    try await transport.send(request, body: body, baseURL: url, operationID: operation)
+                }
+                XCTFail("Expected scope mismatch for \(path)")
+            } catch is CancellationError {}
             XCTAssertNil(transport.last, path)
         }
     }

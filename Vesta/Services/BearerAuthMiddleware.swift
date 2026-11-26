@@ -77,6 +77,12 @@ struct BearerAuthMiddleware: ClientMiddleware {
                 throw BudgetError.forbidden
             }
             try Task.checkCancellation()
+            if let receiptScope {
+                guard OriginMatcher.matches(baseURL, receiptScope.origin),
+                      receiptScope.matches(device, actor: session?.actor ?? device.actor) else {
+                    throw CancellationError()
+                }
+            }
             request.headerFields[.authorization] = "Bearer \(device.credential.token)"
             let (response, responseBody) = try await next(request, body, baseURL)
             guard response.status.code == 200 else {

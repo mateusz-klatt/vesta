@@ -20,7 +20,7 @@ enum NativeBudgetGate {
 struct SessionBoundBudgetAPI: BudgetAPI {
     let api: any BudgetAPI
     let isCurrent: @MainActor @Sendable () -> Bool
-    let onDenial: @MainActor @Sendable (BudgetError) -> Void
+    let onDenial: @MainActor @Sendable (BudgetError) -> Bool
 
     func monthlyBudget(period: String, currency: String?) async throws -> BudgetMonthly {
         try await read { try await api.monthlyBudget(period: period, currency: currency) }
@@ -55,11 +55,12 @@ struct SessionBoundBudgetAPI: BudgetAPI {
         do {
             value = try await operation()
         } catch {
-            guard await isCurrent() else { throw CancellationError() }
             try Task.checkCancellation()
             if let denial = error as? BudgetError, denial.isAccessDenial {
-                await onDenial(denial)
+                guard await onDenial(denial) else { throw CancellationError() }
+                throw error
             }
+            guard await isCurrent() else { throw CancellationError() }
             throw error
         }
         guard await isCurrent() else { throw CancellationError() }
