@@ -3,6 +3,7 @@ import CoreGraphics
 import Foundation
 import HTTPTypes
 import OpenAPIRuntime
+import UIKit
 @testable import Vesta
 
 // MARK: - PAN redaction
@@ -1061,6 +1062,35 @@ final class ReceiptTests: XCTestCase {
         var isGranted = true
     }
 
+    func testCameraAcceptsOnlyOnePhotoPerPresentation() {
+        let picker = UIImagePickerController()
+        let photo = UIImage()
+        var images: [UIImage?] = []
+        let coordinator = ReceiptCamera.Coordinator { images.append($0) }
+
+        coordinator.imagePickerController(picker, didFinishPickingMediaWithInfo: [.originalImage: photo])
+        coordinator.imagePickerController(picker, didFinishPickingMediaWithInfo: [.originalImage: UIImage()])
+        coordinator.imagePickerControllerDidCancel(picker)
+
+        XCTAssertEqual(images.count, 1)
+        XCTAssertTrue(images.first.flatMap { $0 } === photo)
+    }
+
+    func testRotatedPhotoIsUprightForReceiptOCR() throws {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let photo = UIGraphicsImageRenderer(size: CGSize(width: 20, height: 10), format: format).image {
+            UIColor.black.setFill()
+            $0.fill(CGRect(x: 0, y: 0, width: 20, height: 10))
+        }
+        let pixels = try XCTUnwrap(photo.cgImage)
+        let rotated = UIImage(cgImage: pixels, scale: 1, orientation: .right)
+        let upright = try XCTUnwrap(rotated.uprightReceiptImage)
+
+        XCTAssertEqual(upright.width, 10)
+        XCTAssertEqual(upright.height, 20)
+    }
+
     func test409AlreadySubmittedAndLegacyLinkNullConfirm() async throws {
         let origin = URL(string: "https://hestia.example")!
         let store = MemoryDeviceTokenStore(.init(server: origin, credential: fakeDeviceToken))
@@ -1302,7 +1332,7 @@ final class ReceiptFlowTests: XCTestCase {
         XCTAssertEqual(calls, [.delete("old", 1)])
     }
 
-    func testOverlappingSendsIssueOneRequest() async {
+    func testOverlappingAndLateSendsIssueOneRequest() async {
         let api = MockReceiptsAPI()
         await api.holdNextParse()
         let flow = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: []))
@@ -1312,8 +1342,10 @@ final class ReceiptFlowTests: XCTestCase {
         await flow.send()                          // double tap: ignored while busy
         await api.releaseParse()
         await first.value
+        await flow.send()                          // an already queued tap after advancing to review
         let parses = await api.calls.filter { if case .parse = $0 { true } else { false } }
         XCTAssertEqual(parses.count, 1)
+        XCTAssertEqual(flow.step, .review)
     }
 
     func testSendErrorStaysOnEdit() async {
