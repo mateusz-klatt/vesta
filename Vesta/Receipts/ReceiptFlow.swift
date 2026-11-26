@@ -330,8 +330,7 @@ final class ReceiptFlow {
         form.candidate = nil
     }
 
-    /// OCR every page (a long receipt can be several scans), in order, then
-    /// redact card data before the text is even shown.
+    /// OCR the images in order, then redact card data before showing the text.
     func recognize(_ pages: [CGImage]) async {
         await recognize(loading: { pages })
     }
@@ -390,7 +389,7 @@ final class ReceiptFlow {
     }
 
     func send() async {
-        guard !isBusy, !abandoned, isCurrent else { return }
+        guard step == .edit, !isBusy, !abandoned, isCurrent else { return }
         isBusy = true
         defer { isBusy = false }
         error = nil
@@ -418,7 +417,7 @@ final class ReceiptFlow {
     }
 
     func confirm() async {
-        guard !isBusy, !abandoned, isCurrent, let parsed,
+        guard step == .review, !isBusy, !abandoned, isCurrent, let parsed,
               let request = form.request(receiptID: parsed.receiptId, version: parsed.version, candidates: candidates)
         else { return }
         isBusy = true

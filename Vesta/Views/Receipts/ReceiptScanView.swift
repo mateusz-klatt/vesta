@@ -54,14 +54,15 @@ struct ReceiptScanView: View {
 
 private struct ReceiptCaptureStep: View {
     @Bindable var flow: ReceiptFlow
-    @State private var showScanner = false
+    @State private var showCamera = false
+    @State private var capturedPhoto: UIImage?
     @State private var photo: PhotosPickerItem?
 
     var body: some View {
         Form {
             Section {
-                if DocumentScanner.isSupported {
-                    Button { showScanner = true } label: {
+                if ReceiptCamera.isSupported {
+                    Button { showCamera = true } label: {
                         Label("Scan receipt", systemImage: "doc.viewfinder")
                     }
                 }
@@ -78,14 +79,12 @@ private struct ReceiptCaptureStep: View {
             }
             ReceiptErrorSection(error: flow.error)
         }
-        .fullScreenCover(isPresented: $showScanner) {
-            DocumentScanner(
-                onFinish: { pages in
-                    showScanner = false
-                    Task { await flow.recognize(pages) }
-                },
-                onCancel: { showScanner = false }
-            )
+        .fullScreenCover(isPresented: $showCamera, onDismiss: recognizeCapturedPhoto) {
+            ReceiptCamera { image in
+                guard showCamera else { return }
+                capturedPhoto = image
+                showCamera = false
+            }
             .ignoresSafeArea()
         }
         .onChange(of: photo) { _, item in
@@ -94,9 +93,19 @@ private struct ReceiptCaptureStep: View {
             Task {
                 await flow.recognize {
                     guard let data = try? await item.loadTransferable(type: Data.self),
-                          let image = UIImage(data: data)?.cgImage else { return [] }
+                          let image = UIImage(data: data)?.uprightReceiptImage else { return [] }
                     return [image]
                 }
+            }
+        }
+    }
+
+    private func recognizeCapturedPhoto() {
+        guard let photo = capturedPhoto else { return }
+        capturedPhoto = nil
+        Task {
+            await flow.recognize {
+                photo.uprightReceiptImage.map { [$0] } ?? []
             }
         }
     }
