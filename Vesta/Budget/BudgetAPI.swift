@@ -5,6 +5,9 @@ protocol BudgetAPI: Sendable {
     func monthlyBudget(period: String, currency: String?) async throws -> BudgetMonthly
     func transactions(period: String, currency: String?, categoryID: String?, cursor: String?, limit: Int) async throws -> BudgetTransactionPage
     func status() async throws -> BudgetStatus
+    func overview(period: String, currency: String?) async throws -> BudgetOverview
+    func categories() async throws -> [BudgetCategoryDefinition]
+    func charts(period: String, currency: String?, history: Int) async throws -> BudgetChartSeries?
 }
 
 enum BudgetError: LocalizedError, Equatable {

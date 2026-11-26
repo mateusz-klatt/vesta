@@ -15,10 +15,10 @@ private enum BudgetFixtures {
                                         qrOrigin: nil, isLegacy: false)
     static let ownerKey = String(repeating: "a", count: 43)
 
-    static func device(permissions: [Permission] = [.budgetView]) -> StoredReceiptDeviceToken {
+    static func device(permissions: [Permission] = [.budgetView], scope: DeviceTokenScope = .device) -> StoredReceiptDeviceToken {
         let issued = permissions.map(\.rawValue)
         return .init(server: origin, provenance: .exchanged, actor: "u", owner: "u", ownerKey: ownerKey,
-                     issuedPermissions: issued, lastUsableCeiling: issued, deviceScope: .device, credential: fakeDeviceToken)
+                     issuedPermissions: issued, lastUsableCeiling: issued, deviceScope: scope, credential: fakeDeviceToken)
     }
 
     @MainActor
@@ -68,6 +68,27 @@ private enum BudgetFixtures {
     }
 
     static let status = BudgetStatus(dataAsOf: Date(timeIntervalSince1970: 300))
+
+    static func overview(period: String = "2026-11", currency: String = "PLN") -> BudgetOverview {
+        BudgetOverview(
+            period: period,
+            currencies: [BudgetCurrencyTotal(currency: currency, expenses: 600, refunds: 100, netSpending: 500, income: 2_000)],
+            categories: [BudgetOverviewCategory(
+                categoryID: "groceries", name: "Weekly food", isOneOff: false, oneOffKey: nil,
+                currency: currency, expenses: 600, refunds: 100, netSpending: 500
+            )]
+        )
+    }
+
+    static let categoryCatalog = [BudgetCategoryDefinition(
+        id: "groceries", name: "Groceries", displayName: "Weekly food", parentID: nil,
+        colorHue: 120, archived: false, translations: ["en": "Groceries", "pl": "Spożywcze"]
+    )]
+
+    static let chartSeries = BudgetChartSeries(
+        daily: [BudgetChartPoint(date: "2026-11-24", cumulativeSpent: 500)],
+        months: [BudgetChartMonth(period: "2026-11", startBudget: 2_000, spent: 500)]
+    )
 }
 
 final class BudgetMappingTests: XCTestCase {
@@ -197,6 +218,96 @@ final class BudgetMappingTests: XCTestCase {
         XCTAssertNil(BudgetStatus(wire: empty).dataAsOf)
     }
 
+    func testOverviewMappingPreservesDecimalsAndCategoryNames() throws {
+        let wire = try JSONDecoder().decode(Components.Schemas.BudgetAnalyticsOverview.self, from: Data(Self.overviewJSON.utf8))
+        let overview = try BudgetOverview(wire: wire)
+
+        XCTAssertEqual(overview.period, "2026-11")
+        XCTAssertEqual(overview.currencies.count, 1)
+        XCTAssertEqual(overview.currencies[0].netSpending, Decimal(string: "500.123456789012345678"))
+        XCTAssertEqual(overview.currencies[0].income, Decimal(string: "2000.00"))
+        XCTAssertEqual(overview.categories.count, 1)
+        XCTAssertEqual(overview.categories[0].id, "groceries:PLN")
+        XCTAssertEqual(overview.categories[0].name, "Weekly food")
+        XCTAssertEqual(overview.categories[0].netSpending, Decimal(string: "500.123456789012345678"))
+    }
+
+    func testCategoryCatalogMappingPreservesNullableMetadataAndTranslations() throws {
+        let wire = try JSONDecoder().decode(Components.Schemas.BudgetAnalyticsCategories.self, from: Data(Self.categoriesJSON.utf8))
+        let categories = wire.categories.map(BudgetCategoryDefinition.init(wire:))
+
+        XCTAssertEqual(categories.count, 1)
+        XCTAssertEqual(categories[0].id, "groceries")
+        XCTAssertEqual(categories[0].title, "Weekly food")
+        XCTAssertNil(categories[0].parentID)
+        XCTAssertEqual(categories[0].colorHue, 120)
+        XCTAssertEqual(categories[0].translations["pl"], "Spożywcze")
+    }
+
+    func testChartsMappingPreservesNullableSeriesAndDecimalPoints() throws {
+        let wire = try JSONDecoder().decode(
+            Components.Schemas.BudgetAnalyticsMonthlyBudgetCharts.self,
+            from: Data(Self.chartsJSON.utf8)
+        )
+        XCTAssertEqual(wire.budget.period, "2026-11")
+        let charts = try BudgetChartSeries(wire: try XCTUnwrap(wire.series))
+
+        XCTAssertEqual(charts.daily.count, 1)
+        XCTAssertEqual(charts.daily[0].cumulativeSpent, Decimal(string: "500.123456789012345678"))
+        XCTAssertEqual(charts.months.map(\.period), ["2026-10", "2026-11"])
+        XCTAssertEqual(charts.months[1].startBudget, Decimal(string: "2000.00"))
+
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Self.chartsJSON.utf8)) as? [String: Any])
+        object["series"] = NSNull()
+        let nullSeries = try JSONDecoder().decode(
+            Components.Schemas.BudgetAnalyticsMonthlyBudgetCharts.self,
+            from: try JSONSerialization.data(withJSONObject: object)
+        )
+        XCTAssertNil(nullSeries.series)
+    }
+
+    static let overviewJSON = #"""
+    {
+      "period":"2026-11","start":"2026-11-01","end":"2026-12-01","snapshot_digest":"digest",
+      "scope":{"selected_accounts":1,"excluded_accounts":0,"uncertain_count":0,"unresolved_count":0,
+        "import_unresolved_count":0,"freshness":[]},
+      "currencies":[{
+        "currency":"PLN","gross_debits":"600.123456789012345678","gross_credits":"2100.00",
+        "expenses":"600.123456789012345678","income":"2000.00","refunds":"100.00",
+        "unclassified_credit":"0","excluded_debits":"0","excluded_credits":"0",
+        "transfer_debits":"0","transfer_credits":"0","net_spending":"500.123456789012345678"
+      }],
+      "months":[],
+      "categories":[{
+        "category_id":"groceries","name":"Groceries","archived":false,"currency":"PLN",
+        "display_label":"Weekly food","display_name":null,"one_off":null,"one_off_key":null,
+        "expenses":"600.123456789012345678","refunds":"100.00","net_spending":"500.123456789012345678"
+      }],
+      "transfer_summary":{"suggested":0,"accepted":0,"review":0,"rejected":0,"boundary":0,"scan_limited":false}
+    }
+    """#
+
+    static let categoriesJSON = #"""
+    {"categories":[{
+      "id":"groceries","name":"Groceries","archived":false,"version":1,
+      "created_at":100,"updated_at":200,"parent_id":null,"color_hue":120,
+      "display_name":"Weekly food","translations":{"en":"Groceries","pl":"Spożywcze"}
+    }]}
+    """#
+
+    static let chartsJSON = #"""
+    {"budget":\#(monthlyJSON),"series":{
+      "daily":[{"date":"2026-11-24","cumulative_spent":"500.123456789012345678"}],
+      "months":[
+        {"period":"2026-10","has_activity":true,"is_current_month":false,"income_estimate_partial":false,
+         "provisional":false,"start_budget":"1800.00","spent":"400.00","categories":[]},
+        {"period":"2026-11","has_activity":true,"is_current_month":true,"income_estimate_partial":false,
+         "provisional":false,"start_budget":"2000.00","spent":"500.123456789012345678","categories":[]}
+      ],
+      "category_labels":[]
+    }}
+    """#
+
     static let monthlyJSON = #"""
     {
       "period":"2026-11","start":"2026-11-01","end":"2026-12-01",
@@ -292,25 +403,40 @@ private actor MockBudgetAPI: BudgetAPI {
         case monthly(String, String?)
         case transactions(String, String?, String?, String?, Int)
         case status
+        case overview(String, String?)
+        case categories
+        case charts(String, String?, Int)
     }
 
     typealias MonthlyHandler = @Sendable (String, String?) async throws -> BudgetMonthly
     typealias TransactionsHandler = @Sendable (String, String?, String?, String?, Int) async throws -> BudgetTransactionPage
     typealias StatusHandler = @Sendable () async throws -> BudgetStatus
+    typealias OverviewHandler = @Sendable (String, String?) async throws -> BudgetOverview
+    typealias CategoriesHandler = @Sendable () async throws -> [BudgetCategoryDefinition]
+    typealias ChartsHandler = @Sendable (String, String?, Int) async throws -> BudgetChartSeries?
 
     private let monthlyHandler: MonthlyHandler
     private let transactionsHandler: TransactionsHandler
     private let statusHandler: StatusHandler
+    private let overviewHandler: OverviewHandler
+    private let categoriesHandler: CategoriesHandler
+    private let chartsHandler: ChartsHandler
     private(set) var calls: [Call] = []
 
     init(
         monthly: @escaping MonthlyHandler = { period, currency in BudgetFixtures.monthly(period: period, currency: currency ?? "PLN") },
         transactions: @escaping TransactionsHandler = { _, _, _, _, _ in BudgetFixtures.page() },
-        status: @escaping StatusHandler = { BudgetFixtures.status }
+        status: @escaping StatusHandler = { BudgetFixtures.status },
+        overview: @escaping OverviewHandler = { period, currency in BudgetFixtures.overview(period: period, currency: currency ?? "PLN") },
+        categories: @escaping CategoriesHandler = { BudgetFixtures.categoryCatalog },
+        charts: @escaping ChartsHandler = { _, _, _ in BudgetFixtures.chartSeries }
     ) {
         monthlyHandler = monthly
         transactionsHandler = transactions
         statusHandler = status
+        overviewHandler = overview
+        categoriesHandler = categories
+        chartsHandler = charts
     }
 
     func monthlyBudget(period: String, currency: String?) async throws -> BudgetMonthly {
@@ -326,6 +452,21 @@ private actor MockBudgetAPI: BudgetAPI {
     func status() async throws -> BudgetStatus {
         calls.append(.status)
         return try await statusHandler()
+    }
+
+    func overview(period: String, currency: String?) async throws -> BudgetOverview {
+        calls.append(.overview(period, currency))
+        return try await overviewHandler(period, currency)
+    }
+
+    func categories() async throws -> [BudgetCategoryDefinition] {
+        calls.append(.categories)
+        return try await categoriesHandler()
+    }
+
+    func charts(period: String, currency: String?, history: Int) async throws -> BudgetChartSeries? {
+        calls.append(.charts(period, currency, history))
+        return try await chartsHandler(period, currency, history)
     }
 }
 
@@ -370,6 +511,9 @@ final class BudgetStoreTests: XCTestCase {
 
         XCTAssertEqual(store.state, .loaded)
         XCTAssertEqual(store.overview, BudgetFixtures.monthly())
+        XCTAssertEqual(store.analyticsOverview, BudgetFixtures.overview())
+        XCTAssertEqual(store.categoryCatalog, BudgetFixtures.categoryCatalog)
+        XCTAssertEqual(store.chartSeries, BudgetFixtures.chartSeries)
         XCTAssertEqual(store.transactions, [transaction])
         XCTAssertEqual(store.currency, "PLN")
         XCTAssertEqual(store.availableCurrencies, ["PLN", "EUR"])
@@ -377,6 +521,9 @@ final class BudgetStoreTests: XCTestCase {
         let calls = await mock.calls
         XCTAssertTrue(calls.contains(.monthly("2026-11", nil)))
         XCTAssertTrue(calls.contains(.transactions("2026-11", "PLN", nil, nil, 50)))
+        XCTAssertTrue(calls.contains(.overview("2026-11", "PLN")))
+        XCTAssertTrue(calls.contains(.categories))
+        XCTAssertTrue(calls.contains(.charts("2026-11", "PLN", 6)))
         XCTAssertFalse(calls.contains(.status))
     }
 
@@ -523,6 +670,9 @@ final class BudgetStoreTests: XCTestCase {
         await load.value
 
         XCTAssertNil(store.overview)
+        XCTAssertNil(store.analyticsOverview)
+        XCTAssertTrue(store.categoryCatalog.isEmpty)
+        XCTAssertNil(store.chartSeries)
         XCTAssertTrue(store.transactions.isEmpty)
         XCTAssertNil(store.dataAsOf)
         XCTAssertTrue(store.availableCurrencies.isEmpty)
@@ -1069,6 +1219,51 @@ final class BudgetClientTests: XCTestCase {
         XCTAssertEqual(BudgetError.from(status: 500), .failed)
     }
 
+    func testOverviewWireRequestHasPeriodCurrencyAndDeviceBearer() async throws {
+        let transport = CapturingTransport(status: 200, body: BudgetMappingTests.overviewJSON)
+        let api = try pairedClient(transport)
+
+        let overview = try await api.overview(period: "2026-11", currency: "EUR")
+
+        XCTAssertEqual(overview.period, "2026-11")
+        let request = try XCTUnwrap(transport.last?.request)
+        let components = try XCTUnwrap(URLComponents(string: request.path ?? ""))
+        XCTAssertEqual(components.path, "/api/budget/analytics/overview")
+        XCTAssertEqual(query(components)["period"], "2026-11")
+        XCTAssertEqual(query(components)["currency"], "EUR")
+        XCTAssertEqual(request.headerFields[.authorization], "Bearer \(fakeDeviceToken.token)")
+        XCTAssertNil(request.headerFields[.cookie])
+    }
+
+    func testCategoriesWireRequestUsesOnlyDeviceBearer() async throws {
+        let transport = CapturingTransport(status: 200, body: BudgetMappingTests.categoriesJSON)
+        let api = try pairedClient(transport)
+
+        let categories = try await api.categories()
+
+        XCTAssertEqual(categories.map(\.id), ["groceries"])
+        XCTAssertEqual(transport.last?.request.path, "/api/budget/analytics/categories")
+        XCTAssertEqual(transport.last?.request.headerFields[.authorization], "Bearer \(fakeDeviceToken.token)")
+        XCTAssertNil(transport.last?.request.headerFields[.cookie])
+    }
+
+    func testChartsWireRequestHasHistoryAndDeviceBearer() async throws {
+        let transport = CapturingTransport(status: 200, body: BudgetMappingTests.chartsJSON)
+        let api = try pairedClient(transport)
+
+        let charts = try await api.charts(period: "2026-11", currency: "PLN", history: 12)
+
+        XCTAssertEqual(charts?.months.count, 2)
+        let request = try XCTUnwrap(transport.last?.request)
+        let components = try XCTUnwrap(URLComponents(string: request.path ?? ""))
+        XCTAssertEqual(components.path, "/api/budget/analytics/monthly-budget/charts")
+        XCTAssertEqual(query(components)["period"], "2026-11")
+        XCTAssertEqual(query(components)["currency"], "PLN")
+        XCTAssertEqual(query(components)["history"], "12")
+        XCTAssertEqual(request.headerFields[.authorization], "Bearer \(fakeDeviceToken.token)")
+        XCTAssertNil(request.headerFields[.cookie])
+    }
+
     func testForbiddenResponseWithEmptyBodyIsMapped() async throws {
         let api = try pairedClient(StubTransport { _ in (403, nil) })
         do {
@@ -1123,6 +1318,24 @@ final class BudgetClientTests: XCTestCase {
             } catch {
                 XCTAssertEqual(error as? BudgetError, .forbidden)
             }
+            do {
+                _ = try await api.overview(period: "2026-11", currency: "PLN")
+                XCTFail("Expected forbidden")
+            } catch {
+                XCTAssertEqual(error as? BudgetError, .forbidden)
+            }
+            do {
+                _ = try await api.categories()
+                XCTFail("Expected forbidden")
+            } catch {
+                XCTAssertEqual(error as? BudgetError, .forbidden)
+            }
+            do {
+                _ = try await api.charts(period: "2026-11", currency: "PLN", history: 6)
+                XCTFail("Expected forbidden")
+            } catch {
+                XCTAssertEqual(error as? BudgetError, .forbidden)
+            }
             XCTAssertNil(transport.last)
         }
 
@@ -1164,6 +1377,9 @@ final class BudgetClientTests: XCTestCase {
             { _ = try await defaultClient.requestClient().getBudgetAnalyticsMonthlyBudget(.init()) },
             { _ = try await defaultClient.requestClient().getBudgetAnalyticsTransactions(.init(query: .init(period: "2026-11"))) },
             { _ = try await defaultClient.requestClient().getBudgetStatus(.init()) },
+            { _ = try await defaultClient.requestClient().getBudgetAnalyticsOverview(.init(query: .init(period: "2026-11"))) },
+            { _ = try await defaultClient.requestClient().getBudgetAnalyticsCategories(.init()) },
+            { _ = try await defaultClient.requestClient().getBudgetAnalyticsMonthlyBudgetCharts(.init()) },
         ]
         for call in directCalls {
             do {
@@ -1227,6 +1443,9 @@ final class BudgetClientTests: XCTestCase {
                 { _ = try await api.monthlyBudget(period: "2026-11", currency: nil) },
                 { _ = try await api.transactions(period: "2026-11", currency: "PLN", categoryID: nil, cursor: nil, limit: 50) },
                 { _ = try await api.status() },
+                { _ = try await api.overview(period: "2026-11", currency: "PLN") },
+                { _ = try await api.categories() },
+                { _ = try await api.charts(period: "2026-11", currency: "PLN", history: 6) },
             ]
             for call in calls {
                 do {
@@ -1253,18 +1472,43 @@ final class BudgetClientTests: XCTestCase {
 
 extension MockHestiaAPI: BudgetAPI {
     func monthlyBudget(period: String, currency: String?) async throws -> BudgetMonthly {
-        BudgetFixtures.monthly(period: period, currency: currency ?? "PLN")
+        if let budgetStub { return try await budgetStub.monthlyBudget(period: period, currency: currency) }
+        return BudgetFixtures.monthly(period: period, currency: currency ?? "PLN")
     }
 
     func transactions(period: String, currency: String?, categoryID: String?, cursor: String?, limit: Int) async throws -> BudgetTransactionPage {
-        BudgetFixtures.page()
+        if let budgetStub {
+            return try await budgetStub.transactions(
+                period: period, currency: currency, categoryID: categoryID, cursor: cursor, limit: limit
+            )
+        }
+        return BudgetFixtures.page()
     }
 
-    func status() async throws -> BudgetStatus { BudgetFixtures.status }
+    func status() async throws -> BudgetStatus {
+        if let budgetStub { return try await budgetStub.status() }
+        return BudgetFixtures.status
+    }
+
+    func overview(period: String, currency: String?) async throws -> BudgetOverview {
+        if let budgetStub { return try await budgetStub.overview(period: period, currency: currency) }
+        return BudgetFixtures.overview(period: period, currency: currency ?? "PLN")
+    }
+
+    func categories() async throws -> [BudgetCategoryDefinition] {
+        if let budgetStub { return try await budgetStub.categories() }
+        return BudgetFixtures.categoryCatalog
+    }
+
+    func charts(period: String, currency: String?, history: Int) async throws -> BudgetChartSeries? {
+        if let budgetStub { return try await budgetStub.charts(period: period, currency: currency, history: history) }
+        return BudgetFixtures.chartSeries
+    }
 }
 
 private actor BudgetExchangeStub: DevicePairingAPI {
     private(set) var exchangeCount = 0
+    private(set) var revokeCount = 0
 
     func exchange(session: BoundSession, deviceName: String, priorToken: ReceiptDeviceToken?) async throws -> ExchangedDeviceToken {
         exchangeCount += 1
@@ -1280,7 +1524,7 @@ private actor BudgetExchangeStub: DevicePairingAPI {
         throw DevicePairingError.redeemFailed
     }
 
-    func revoke(_ token: ReceiptDeviceToken, server: URL) async throws {}
+    func revoke(_ token: ReceiptDeviceToken, server: URL) async throws { revokeCount += 1 }
 }
 
 @MainActor
@@ -1313,6 +1557,8 @@ final class BudgetGateTests: XCTestCase {
         try fixture.tokens.save(BudgetFixtures.device())
         await fixture.app.connect()
 
+        XCTAssertFalse(AppConfig.nativeBudgetEnabled)
+        XCTAssertFalse(AppConfig.nativeBudgetEnabledForBuild)
         XCTAssertFalse(fixture.app.nativeBudgetEnabled)
         XCTAssertEqual(fixture.app.serverFeatures?.supports(.budgetNativeRead), true)
         await assertNoBudgetRequests(fixture)
@@ -1368,7 +1614,7 @@ final class BudgetGateTests: XCTestCase {
     }
 
     func testRevocationOrSwitchTearsDownAndDiscardsLateResponse() async throws {
-        for switchOrigin in [false, true] {
+        for scenario in ["401", "403", "feature loss", "account switch", "origin switch"] {
             let fixture = try Fixture()
             fixture.app.nativeBudgetEnabled = true
             try fixture.tokens.save(BudgetFixtures.device())
@@ -1378,27 +1624,65 @@ final class BudgetGateTests: XCTestCase {
             let store = try XCTUnwrap(fixture.app.makeBudgetStore())
             await store.load()
             XCTAssertNotNil(store.overview)
+            XCTAssertNotNil(store.analyticsOverview, scenario)
 
             let held = BudgetResponseGate()
-            let underlying = MockBudgetAPI(status: { await held.wait(); return BudgetFixtures.status })
-            let guarded = SessionBoundBudgetAPI(api: underlying, isCurrent: { fixture.app.budgetAPI != nil }, onDenial: { _ in })
-            let request = Task { try await guarded.status() }
-            try await waitUntil("budget response held") { await held.isWaiting }
-            if switchOrigin {
-                XCTAssertTrue(fixture.app.saveAndConnect("https://hestia.example:8443"))
-            } else {
-                await fixture.mock.setCapabilities(.init(user: "u"))
-                await fixture.app.refresh()
+            let denial: BudgetError? = switch scenario {
+            case "401": .unauthorized
+            case "403": .forbidden
+            default: nil
             }
+            let underlying = MockBudgetAPI(
+                monthly: { period, currency in
+                    await held.wait()
+                    return BudgetFixtures.monthly(period: period, currency: currency ?? "PLN")
+                },
+                status: {
+                    if let denial { throw denial }
+                    return BudgetFixtures.status
+                }
+            )
+            await fixture.mock.setBudgetStub(underlying)
+            let guarded = try XCTUnwrap(fixture.app.budgetAPI)
+            let request = Task { try await guarded.monthlyBudget(period: "2026-11", currency: "PLN") }
+            try await waitUntil("budget response held") { await held.isWaiting }
+
+            switch scenario {
+            case "401", "403":
+                do {
+                    _ = try await guarded.status()
+                    XCTFail("Expected native Budget denial", file: #filePath, line: #line)
+                } catch {
+                    XCTAssertEqual(error as? BudgetError, denial, scenario)
+                }
+            case "feature loss":
+                await fixture.mock.setFeatures([.capabilities, .deviceExchange])
+                await fixture.app.refresh()
+            case "account switch":
+                await fixture.app.login(user: "other", password: "fake-password")
+            case "origin switch":
+                XCTAssertTrue(fixture.app.saveAndConnect("https://hestia.example:8443"))
+            default:
+                XCTFail("Unknown scenario")
+            }
+
+            XCTAssertTrue(store.isCleared, scenario)
+            XCTAssertNil(store.overview, scenario)
+            XCTAssertNil(store.analyticsOverview, scenario)
+            XCTAssertTrue(store.categoryCatalog.isEmpty, scenario)
+            XCTAssertNil(store.chartSeries, scenario)
+            XCTAssertTrue(store.transactions.isEmpty, scenario)
+            XCTAssertNil(store.nextCursor, scenario)
+
             await held.release()
             do {
                 _ = try await request.value
-                XCTFail("Expected the stale budget read to be discarded")
+                XCTFail("Expected the stale budget read to be discarded after \(scenario)")
             } catch is CancellationError {}
-            XCTAssertTrue(store.isCleared)
-            XCTAssertNil(store.overview)
-            XCTAssertTrue(store.transactions.isEmpty)
-            XCTAssertNil(store.nextCursor)
+            if denial != nil {
+                let revocations = await fixture.exchange.revokeCount
+                XCTAssertEqual(revocations, 0, "\(scenario) must not revoke the device token")
+            }
         }
     }
 
@@ -1426,7 +1710,12 @@ final class BudgetGateTests: XCTestCase {
         XCTAssertEqual(fixture.app.capabilities?.canUseReceipts, false)
 
         let issued = try XCTUnwrap(fixture.tokens.load())
+        XCTAssertEqual(issued.deviceScope, .device)
+        XCTAssertEqual(issued.issuedPermissions, [Permission.budgetView.rawValue])
+        XCTAssertEqual(issued.lastUsableCeiling, [Permission.budgetView.rawValue])
         try fixture.tokens.save(BudgetFixtures.device(permissions: [.budgetReceiptsAdd]))
+        await assertNoBudgetRequests(fixture, enabled: true)
+        try fixture.tokens.save(BudgetFixtures.device(scope: .receipts))
         await assertNoBudgetRequests(fixture, enabled: true)
         try fixture.tokens.save(issued)
         XCTAssertNotNil(fixture.app.budgetAPI)

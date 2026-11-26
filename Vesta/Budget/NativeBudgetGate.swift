@@ -36,6 +36,18 @@ struct SessionBoundBudgetAPI: BudgetAPI {
         try await read { try await api.status() }
     }
 
+    func overview(period: String, currency: String?) async throws -> BudgetOverview {
+        try await read { try await api.overview(period: period, currency: currency) }
+    }
+
+    func categories() async throws -> [BudgetCategoryDefinition] {
+        try await read { try await api.categories() }
+    }
+
+    func charts(period: String, currency: String?, history: Int) async throws -> BudgetChartSeries? {
+        try await read { try await api.charts(period: period, currency: currency, history: history) }
+    }
+
     private func read<Value: Sendable>(_ operation: () async throws -> Value) async throws -> Value {
         guard await isCurrent() else { throw CancellationError() }
         try Task.checkCancellation()

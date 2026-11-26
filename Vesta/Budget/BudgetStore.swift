@@ -42,6 +42,9 @@ final class BudgetStore {
     private(set) var availableCurrencies: [String] = []
     private(set) var categoryID: String?
     private(set) var overview: BudgetMonthly?
+    private(set) var analyticsOverview: BudgetOverview?
+    private(set) var categoryCatalog: [BudgetCategoryDefinition] = []
+    private(set) var chartSeries: BudgetChartSeries?
     private(set) var transactions: [BudgetTransaction] = []
     private(set) var filteredTotal = 0
     private(set) var nextCursor: String?
@@ -186,6 +189,9 @@ final class BudgetStore {
 
     private func wipeData() {
         overview = nil
+        analyticsOverview = nil
+        categoryCatalog = []
+        chartSeries = nil
         transactions = []
         filteredTotal = 0
         nextCursor = nil
@@ -215,7 +221,14 @@ final class BudgetStore {
                 period: query.period, currency: query.currency,
                 categoryID: query.categoryID, cursor: nil, limit: query.limit
             )
+            async let overviewResult = api.overview(period: query.period, currency: query.currency)
+            async let categoryResult = api.categories()
+            async let chartResult = api.charts(period: query.period, currency: query.currency, history: 6)
+            let (nativeOverview, nativeCategories, nativeCharts) = try await (overviewResult, categoryResult, chartResult)
             guard !isTerminal, requestGeneration == generation else { return }
+            analyticsOverview = nativeOverview
+            categoryCatalog = nativeCategories
+            chartSeries = nativeCharts
             applyLoaded(monthly: monthlyResult, page: pageResult, resolvedPeriod: resolvedPeriod, query: query)
             isLoading = false
             isRefreshing = false

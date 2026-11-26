@@ -95,7 +95,7 @@ actor APIClient: HestiaAPI {
     init(transport: (any ClientTransport)? = nil,
          receiptPairing: ReceiptPairing? = nil,
          sessionStore: CredentialSessionStore? = nil,
-         budgetEnabled: @escaping @Sendable () -> Bool = { AppConfig.nativeBudgetEnabled }) {
+         budgetEnabled: @escaping @Sendable () -> Bool = { AppConfig.nativeBudgetEnabledForBuild }) {
         self.transport = transport ?? URLSessionTransport(
             configuration: .init(session: HTTPSession.shared, httpBodyProcessingMode: .buffered))
         probeTransport = transport ?? URLSessionTransport(

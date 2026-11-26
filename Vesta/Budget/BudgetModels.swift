@@ -134,6 +134,68 @@ struct BudgetStatus: Equatable, Sendable {
     let dataAsOf: Date?
 }
 
+struct BudgetCurrencyTotal: Equatable, Sendable {
+    let currency: String
+    let expenses: Decimal
+    let refunds: Decimal
+    let netSpending: Decimal
+    let income: Decimal
+}
+
+struct BudgetOverviewCategory: Identifiable, Equatable, Sendable {
+    let categoryID: String?
+    let name: String?
+    let isOneOff: Bool
+    let oneOffKey: String?
+    let currency: String
+    let expenses: Decimal
+    let refunds: Decimal
+    let netSpending: Decimal
+
+    var id: String {
+        if let oneOffKey { return oneOffKey }
+        return "\(categoryID ?? "uncategorised"):\(currency)"
+    }
+}
+
+struct BudgetOverview: Equatable, Sendable {
+    let period: String
+    let currencies: [BudgetCurrencyTotal]
+    let categories: [BudgetOverviewCategory]
+}
+
+struct BudgetCategoryDefinition: Identifiable, Equatable, Sendable {
+    let id: String
+    let name: String
+    let displayName: String?
+    let parentID: String?
+    let colorHue: Int?
+    let archived: Bool
+    let translations: [String: String]
+
+    var title: String { displayName ?? name }
+}
+
+struct BudgetChartPoint: Identifiable, Equatable, Sendable {
+    let date: String
+    let cumulativeSpent: Decimal
+
+    var id: String { date }
+}
+
+struct BudgetChartMonth: Identifiable, Equatable, Sendable {
+    let period: String
+    let startBudget: Decimal
+    let spent: Decimal
+
+    var id: String { period }
+}
+
+struct BudgetChartSeries: Equatable, Sendable {
+    let daily: [BudgetChartPoint]
+    let months: [BudgetChartMonth]
+}
+
 private enum BudgetWire {
     static let posix = Locale(identifier: "en_US_POSIX")
 
@@ -248,4 +310,112 @@ extension BudgetStatus {
         }
         dataAsOf = timestamps.compactMap { $0 }.max().map(Date.init(timeIntervalSince1970:))
     }
+}
+
+extension BudgetCurrencyTotal {
+    init(wire: Components.Schemas.BudgetAnalyticsCurrency) throws {
+        currency = wire.currency
+        expenses = try BudgetWire.decimal(wire.expenses)
+        refunds = try BudgetWire.decimal(wire.refunds)
+        netSpending = try BudgetWire.decimal(wire.netSpending)
+        income = try BudgetWire.decimal(wire.income)
+    }
+}
+
+extension BudgetOverviewCategory {
+    init(wire: Components.Schemas.BudgetAnalyticsCategoryTotal) throws {
+        categoryID = wire.categoryId
+        name = wire.displayLabel ?? wire.displayName ?? wire.name
+        isOneOff = (wire.oneOff ?? false) || wire.oneOffKey != nil
+        oneOffKey = wire.oneOffKey
+        currency = wire.currency
+        expenses = try BudgetWire.decimal(wire.expenses)
+        refunds = try BudgetWire.decimal(wire.refunds)
+        netSpending = try BudgetWire.decimal(wire.netSpending)
+    }
+}
+
+extension BudgetOverview {
+    init(wire: Components.Schemas.BudgetAnalyticsOverview) throws {
+        period = wire.period
+        currencies = try wire.currencies.map(BudgetCurrencyTotal.init(wire:))
+        categories = try wire.categories.map(BudgetOverviewCategory.init(wire:))
+    }
+}
+
+extension BudgetCategoryDefinition {
+    init(wire: Components.Schemas.BudgetAnalyticsCategory) {
+        id = wire.id
+        name = wire.name
+        displayName = wire.displayName
+        parentID = wire.parentId
+        colorHue = wire.colorHue
+        archived = wire.archived
+        translations = wire.translations ?? [:]
+    }
+}
+
+extension BudgetChartPoint {
+    init(wire: Components.Schemas.BudgetAnalyticsMonthlyBudgetDailyPoint) throws {
+        date = wire.date
+        cumulativeSpent = try BudgetWire.decimal(wire.cumulativeSpent)
+    }
+}
+
+extension BudgetChartMonth {
+    init(wire: Components.Schemas.BudgetAnalyticsMonthlyBudgetSeriesMonth) throws {
+        period = wire.period
+        startBudget = try BudgetWire.decimal(wire.startBudget)
+        spent = try BudgetWire.decimal(wire.spent)
+    }
+}
+
+extension BudgetChartSeries {
+    init(wire: Components.Schemas.BudgetAnalyticsMonthlyBudgetSeries) throws {
+        daily = try wire.daily.map(BudgetChartPoint.init(wire:))
+        months = try wire.months.map(BudgetChartMonth.init(wire:))
+    }
+}
+
+struct BudgetAnalyticsCategoryWire: Codable, Hashable, Sendable {
+    let archived: Bool
+    let colorHue: Int?
+    let createdAt: Double
+    let displayName: String?
+    let id: String
+    let name: String
+    let parentId: String?
+    let translations: [String: String]?
+    let updatedAt: Double
+    let version: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case archived, colorHue = "color_hue", createdAt = "created_at", displayName = "display_name"
+        case id, name, parentId = "parent_id", translations, updatedAt = "updated_at", version
+    }
+}
+
+struct BudgetAnalyticsCategoryTotalWire: Codable, Hashable, Sendable {
+    let archived: Bool
+    let categoryId: String?
+    let currency: String
+    let displayLabel: String?
+    let displayName: String?
+    let expenses: String
+    let name: String?
+    let netSpending: String
+    let oneOff: Bool?
+    let oneOffKey: String?
+    let refunds: String
+
+    private enum CodingKeys: String, CodingKey {
+        case archived, categoryId = "category_id", currency, displayLabel = "display_label"
+        case displayName = "display_name", expenses, name, netSpending = "net_spending"
+        case oneOff = "one_off", oneOffKey = "one_off_key", refunds
+    }
+}
+
+struct BudgetAnalyticsMonthlyBudgetChartsWire: Codable, Hashable, Sendable {
+    let budget: Components.Schemas.BudgetAnalyticsMonthlyBudget
+    let series: Components.Schemas.BudgetAnalyticsMonthlyBudgetSeries?
 }

@@ -88,6 +88,7 @@ final class AppState {
     /// A new login waits for cleanup and the current backend switch's connection.
     private var resetTask: Task<Void, Never>?
     private weak var activeBudgetStore: BudgetStore?
+    private var budgetGeneration = 0
     private weak var activeAgendaStore: AgendaStore?
 
     private struct DiscoveryFence: Equatable {
@@ -212,14 +213,19 @@ final class AppState {
 
     /// Native budget reads stay hidden until hestia advertises
     /// `budget_native_read` and capabilities grant `budget.view` (V2 plan §10).
-    /// Nothing in production turns this on yet; tests do.
-    var nativeBudgetEnabled = AppConfig.nativeBudgetEnabled
+    /// Only tests and the DEBUG launch override turn this on.
+    var nativeBudgetEnabled = AppConfig.nativeBudgetEnabledForBuild {
+        didSet {
+            if nativeBudgetEnabled != oldValue { closeBudget() }
+        }
+    }
     var budgetAPI: (any BudgetAPI)? {
         guard let api = api as? any BudgetAPI, let session = sessionStore.currentSnapshot(),
               NativeBudgetGate.isEligible(enabled: nativeBudgetEnabled, features: serverFeatures, capabilities: capabilities),
               let token = receiptPairing.nativeBudgetCredential(for: session.origin, session: session) else { return nil }
+        let generation = budgetGeneration
         return SessionBoundBudgetAPI(api: api, isCurrent: { [weak self] in
-            guard let self, session == sessionStore.currentSnapshot(),
+            guard let self, generation == budgetGeneration, session == sessionStore.currentSnapshot(),
                   NativeBudgetGate.isEligible(enabled: nativeBudgetEnabled, features: serverFeatures,
                                               capabilities: capabilities) else { return false }
             return token == receiptPairing.nativeBudgetCredential(for: session.origin, session: session)
@@ -238,14 +244,15 @@ final class AppState {
     }
 
     func makeBudgetStore(now: Date = Date()) -> BudgetStore? {
-        guard let api = budgetAPI else { return nil }
         closeBudget()
+        guard let api = budgetAPI else { return nil }
         let store = BudgetStore(api: api, now: now)
         activeBudgetStore = store
         return store
     }
 
     func closeBudget() {
+        budgetGeneration += 1
         activeBudgetStore?.clear()
         activeBudgetStore = nil
     }

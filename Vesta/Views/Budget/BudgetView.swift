@@ -83,6 +83,10 @@ struct BudgetView: View {
                     BudgetPaceCard(pace: pace, currency: overview.currency)
                 }
                 categories(overview)
+                if let analytics = store.analyticsOverview {
+                    BudgetNativeOverviewCard(overview: analytics, charts: store.chartSeries, currency: overview.currency)
+                    BudgetNativeCategoriesCard(overview: analytics, definitions: store.categoryCatalog)
+                }
                 BudgetTransactionsCard(store: store)
                 if let dataAsOf = store.dataAsOf {
                     LabeledContent {
@@ -321,6 +325,140 @@ private struct BudgetCategoryRow: View {
 
     private func progress(_ limit: BudgetCategoryLimit) -> Double {
         min(100, max(0, NSDecimalNumber(decimal: limit.percentUsedFloor).doubleValue))
+    }
+}
+
+private struct BudgetNativeOverviewCard: View {
+    @Environment(\.locale) private var locale
+    let overview: BudgetOverview
+    let charts: BudgetChartSeries?
+    let currency: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Total").font(.headline)
+                Spacer()
+                Text(verbatim: overview.period)
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            ForEach(overview.currencies, id: \.currency) { total in
+                HStack {
+                    Text(verbatim: total.currency)
+                    Spacer()
+                    Text("Spent").foregroundStyle(Theme.textSecondary)
+                    Text(verbatim: total.netSpending.formatted(.currency(code: total.currency).locale(locale)))
+                }
+                .font(.subheadline)
+            }
+            if let charts, !charts.months.isEmpty {
+                Text("Spent").font(.caption).foregroundStyle(Theme.textSecondary)
+                BudgetMonthlyBars(months: charts.months, currency: currency)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .vestaCard()
+    }
+}
+
+private struct BudgetMonthlyBars: View {
+    @Environment(\.locale) private var locale
+    let months: [BudgetChartMonth]
+    let currency: String
+
+    private var maximum: Double {
+        max(1, months.map(value).max() ?? 1)
+    }
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 6) {
+            ForEach(months) { month in
+                VStack(spacing: 4) {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Theme.accent)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: max(3, 64 * value(month) / maximum))
+                    Text(verbatim: String(month.period.suffix(2)))
+                        .font(.caption2)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .frame(maxWidth: .infinity)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text(verbatim: "\(month.period) \(amount(month))"))
+            }
+        }
+        .frame(height: 84, alignment: .bottom)
+    }
+
+    private func value(_ month: BudgetChartMonth) -> Double {
+        let number = NSDecimalNumber(decimal: month.spent).doubleValue
+        return number.isFinite ? max(0, number) : 0
+    }
+
+    private func amount(_ month: BudgetChartMonth) -> String {
+        month.spent.formatted(.currency(code: currency).locale(locale))
+    }
+}
+
+private struct BudgetNativeCategoriesCard: View {
+    @Environment(\.locale) private var locale
+    let overview: BudgetOverview
+    let definitions: [BudgetCategoryDefinition]
+
+    private struct Row: Identifiable {
+        let id: String
+        let title: String?
+        let total: BudgetOverviewCategory?
+        let colorHue: Int?
+        let archived: Bool
+    }
+
+    private var rows: [Row] {
+        let byID = Dictionary(uniqueKeysWithValues: definitions.map { ($0.id, $0) })
+        var result = overview.categories.map { total in
+            let definition = total.categoryID.flatMap { byID[$0] }
+            return Row(
+                id: total.id, title: total.name ?? definition?.title, total: total,
+                colorHue: definition?.colorHue, archived: definition?.archived ?? false
+            )
+        }
+        let represented = Set(overview.categories.compactMap(\.categoryID))
+        result.append(contentsOf: definitions.filter { !represented.contains($0.id) }.map {
+            Row(id: $0.id, title: $0.title, total: nil, colorHue: $0.colorHue, archived: $0.archived)
+        })
+        return result
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Categories").font(.headline)
+            if rows.isEmpty {
+                Text("No categories").foregroundStyle(Theme.textSecondary)
+            }
+            ForEach(rows) { row in
+                HStack {
+                    if let hue = row.colorHue {
+                        Circle()
+                            .fill(Color(hue: Double(hue) / 360, saturation: 0.65, brightness: 0.85))
+                            .frame(width: 8, height: 8)
+                    }
+                    Group {
+                        if let title = row.title { Text(verbatim: title) }
+                        else { Text("Uncategorised") }
+                    }
+                    .strikethrough(row.archived)
+                    Spacer()
+                    if let total = row.total {
+                        Text(verbatim: total.netSpending.formatted(.currency(code: total.currency).locale(locale)))
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                }
+                .font(.subheadline)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .vestaCard()
     }
 }
 
