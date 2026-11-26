@@ -550,6 +550,22 @@ final class ReceiptLineOrderingTests: XCTestCase {
         XCTAssertEqual(lines, ["BATON", "OPUST BATON 1szt * 7,89 7,89 A", "-1,23 A", "-0,50 A"])
     }
 
+    func testDiscountIsNotAssignedWhenAnotherLabelFitsTheSignedAmount() {
+        let other = frag("OPUST CHLEB", x: 0.32, y: 0.6385, w: 0.12, h: 0.015, slope: 0.04)
+        XCTAssertEqual(ReceiptLineOrdering.lines(from: discountConflict + [other]), [
+            "BATON", "OPUST BATON 1szt * 7,89 7,89 A", "OPUST CHLEB", "-1,23 A",
+        ])
+    }
+
+    func testDiscountIsNotAssignedToAConflictWhenAnIsolatedLabelIsCloser() {
+        var fragments = discountConflict
+        fragments[3] = frag("-1,23 A", x: 0.75, y: 0.6410, w: 0.06, h: 0.015)
+        let other = frag("OPUST CHLEB", x: 0.44, y: 0.6385, w: 0.12, h: 0.015, slope: 0.04)
+        XCTAssertEqual(ReceiptLineOrdering.lines(from: fragments + [other]), [
+            "BATON", "OPUST BATON 1szt * 7,89 7,89 A", "OPUST CHLEB", "-1,23 A",
+        ])
+    }
+
     func testDiscountDoesNotTakeASignedAmountFromAnotherRow() {
         let other = frag("OPUST CHLEB", x: 0.19, y: 0.6279, w: 0.30, h: 0.015, slope: 0.04)
         XCTAssertEqual(ReceiptLineOrdering.lines(from: discountConflict + [other]), [

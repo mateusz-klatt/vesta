@@ -67,9 +67,10 @@ enum ReceiptLineOrdering {
         in fragments: [TextFragment], text: [String], centers: [CGFloat], tolerance: CGFloat
     ) -> [[Int]] {
         var positions = centers
-        var rows = bands(at: positions, tolerance: tolerance)
+        let originalRows = bands(at: positions, tolerance: tolerance)
+        var rows = originalRows
         let signedPrice = #/^[-−][0-9]{1,9}[.,][0-9]{2}(?:\s*PLN)?(?:\s*[A-G])?$/#.ignoresCase()
-        let orphanPrices = rows.compactMap { row -> Int? in
+        let orphanPrices = originalRows.compactMap { row -> Int? in
             guard row.count == 1, text[row[0]].wholeMatch(of: signedPrice) != nil else { return nil }
             return row[0]
         }
@@ -79,26 +80,26 @@ enum ReceiptLineOrdering {
         let amountTail = #/(?:^|\s)[+−-]?[0-9]{1,9}[.,][0-9]{2}(?:\s*PLN)?(?:\s*[A-G])?$/#.ignoresCase()
         let calculation = #/^(?:[0-9]{1,6}(?:[.,][0-9]{1,4})?|I(?=\s*SZT\b))\s*(?:L|SZT|KG|G|M)?\s*[*×X=]\s*[0-9]{1,9}[.,][0-9]{2}\s+[0-9]{1,9}[.,][0-9]{2}(?:\s*PLN)?(?:\s*[A-G])?$/#.ignoresCase()
         let boxes = fragments.map(\.box)
-        let conflicts = rows.compactMap { row -> (label: Int, item: Int, signed: [Int])? in
-            guard row.count == 2 else { return nil }
-            let ordered = row.sorted { boxes[$0].minX < boxes[$1].minX }
-            let label = ordered[0], item = ordered[1]
-            guard text[label].firstMatch(of: discountPrefix) != nil,
-                  text[label].firstMatch(of: amountTail) == nil,
-                  text[item].wholeMatch(of: calculation) != nil,
-                  boxes[label].maxX <= boxes[item].minX,
-                  abs(boxes[label].midY - boxes[item].midY) > tolerance else { return nil }
-            let signed = orphanPrices.filter { candidate in
-                boxes[label].maxX <= boxes[candidate].minX
-                    && abs(boxes[candidate].midY - boxes[label].midY) <= tolerance
-                    && abs(boxes[candidate].maxX - boxes[item].maxX) <= priceColumnTolerance
-            }
-            return (label, item, signed)
+        let discountLabels = text.indices.filter {
+            text[$0].firstMatch(of: discountPrefix) != nil && text[$0].firstMatch(of: amountTail) == nil
+        }
+        func rawAligned(_ label: Int, with amount: Int) -> Bool {
+            boxes[label].maxX <= boxes[amount].minX && abs(boxes[amount].midY - boxes[label].midY) <= tolerance
         }
 
-        for (label, item, signed) in conflicts where signed.count == 1 {
-            let discount = signed[0]
-            guard conflicts.filter({ $0.signed.contains(discount) }).count == 1,
+        for row in originalRows where row.count == 2 {
+            let ordered = row.sorted { boxes[$0].minX < boxes[$1].minX }
+            let label = ordered[0], item = ordered[1]
+            guard discountLabels.contains(label),
+                  text[item].wholeMatch(of: calculation) != nil,
+                  boxes[label].maxX <= boxes[item].minX,
+                  abs(boxes[label].midY - boxes[item].midY) > tolerance else { continue }
+            let signed = orphanPrices.filter { candidate in
+                rawAligned(label, with: candidate)
+                    && abs(boxes[candidate].maxX - boxes[item].maxX) <= priceColumnTolerance
+            }
+            guard signed.count == 1, let discount = signed.first,
+                  !discountLabels.contains(where: { $0 != label && rawAligned($0, with: discount) }),
                   rows.contains([discount]) else { continue }
 
             // The adjusted centers disagree with the raw boxes here. Use the
