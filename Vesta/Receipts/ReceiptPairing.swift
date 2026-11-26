@@ -177,7 +177,8 @@ final class ReceiptPairing {
         guard let session, supportsExchange(in: session),
               ReceiptReviewGate.isEligible(enabled: enabled, capabilities: publishedCapabilities),
               let token = activeCredential(for: origin, session: session),
-              ReceiptReviewGate.allowsDevice(token, origin: origin, actor: session.actor),
+              ReceiptReviewGate.allowsDevice(token, origin: origin, actor: session.actor,
+                                             capabilities: publishedCapabilities),
               !requiresMatch || ReceiptReviewGate.allowsMatching(token, capabilities: publishedCapabilities)
         else { return nil }
         return token

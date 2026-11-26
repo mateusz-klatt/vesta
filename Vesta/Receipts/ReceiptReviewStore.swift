@@ -123,9 +123,9 @@ final class ReceiptReviewStore {
             do {
                 let result = try await self.api.receiptDetail(id: receipt.receiptId, scope: self.scope)
                 guard self.isCurrent(request) else { return }
-                guard try self.canReview(result.receipt, for: receipt, clearDetail: true) else { return }
+                guard try self.canReview(result.receipt.summary, for: receipt, clearDetail: true) else { return }
                 self.detail = result.receipt
-                let payment = result.receipt.paymentMethod
+                let payment = result.receipt.summary.paymentMethod
                 let offered = self.canMatchReceipts && payment != "cash" && payment != "mixed" ? result.candidates ?? [] : []
                 self.candidates = offered
                 self.selectedCandidate = Self.preselectedCandidate(from: offered).map(ReceiptForm.CandidateID.init)
@@ -183,8 +183,8 @@ final class ReceiptReviewStore {
                 do {
                     let result = try await self.api.receiptDetail(id: summary.receiptId, scope: self.scope)
                     guard self.isCurrent(operation) else { return }
-                    guard try self.canReview(result.receipt, for: summary, clearDetail: false) else { continue }
-                    guard result.receipt.version == summary.version else { throw ReceiptError.versionConflict }
+                    guard try self.canReview(result.receipt.summary, for: summary, clearDetail: false) else { continue }
+                    guard result.receipt.summary.version == summary.version else { throw ReceiptError.versionConflict }
                     guard let request = Self.confirmation(for: result.receipt, candidate: nil) else {
                         self.record(.failure(summary, error: .rejected("incomplete_receipt")))
                         continue
@@ -217,38 +217,40 @@ final class ReceiptReviewStore {
     }
 
     private func canReview(
-        _ detail: ReceiptDetail, for summary: ImportedReceiptSummary, clearDetail: Bool
+        _ current: ImportedReceiptSummary, for summary: ImportedReceiptSummary, clearDetail: Bool
     ) throws -> Bool {
-        guard detail.receiptId == summary.receiptId else { throw ReceiptError.versionConflict }
-        if detail.status == .confirmed {
+        guard current.receiptId == summary.receiptId else { throw ReceiptError.versionConflict }
+        if current.status == .confirmed {
             finishConfirmation(summary, alreadySubmitted: true, clearDetail: clearDetail)
             return false
         }
-        guard detail.status == .imported, !detail.linked else { throw ReceiptError.versionConflict }
+        guard current.status == .imported, !current.linked else { throw ReceiptError.versionConflict }
         return true
     }
 
     private static func confirmation(for detail: ReceiptDetail, candidate: ReceiptCandidate?) -> ReceiptConfirmRequest? {
-        guard let day = detail.receiptDate.flatMap(ReceiptDay.init(iso:)),
-              let currency = detail.currency, currency.wholeMatch(of: /[A-Z]{3}/) != nil,
-              let total = detail.totalAmount.flatMap(ReceiptForm.money),
+        let summary = detail.summary
+        let time = summary.receiptTime == "" ? nil : summary.receiptTime
+        guard let day = summary.receiptDate.flatMap(ReceiptDay.init(iso:)),
+              let currency = summary.currency, currency.wholeMatch(of: /[A-Z]{3}/) != nil,
+              let total = summary.totalAmount.flatMap(ReceiptForm.money),
               let amount = Decimal(string: total, locale: Locale(identifier: "en_US_POSIX")), amount > 0,
-              detail.receiptTime.map(ReceiptForm.validTime) != false else { return nil }
-        let payment = detail.paymentMethod.flatMap(ReceiptConfirmRequest.PaymentMethodPayload.init(rawValue:)) ?? .unknown
+              time.map(ReceiptForm.validTime) != false else { return nil }
+        let payment = summary.paymentMethod.flatMap(ReceiptConfirmRequest.PaymentMethodPayload.init(rawValue:)) ?? .unknown
         guard candidate == nil || (payment != .cash && payment != .mixed) else { return nil }
 
         var lines: [Components.Schemas.BudgetReceiptLineInput]?
         if detail.lines.isEmpty {
-            guard detail.documentKind == .invoice else { return nil }
+            guard summary.documentKind == .invoice else { return nil }
             lines = [.init(discountAmount: "0", grossLineTotal: total, lineKind: .other, netLineTotal: total,
                            quantity: "1", rawName: String(localized: "Invoice"))]
         }
-        return .init(currency: currency, expectedVersion: detail.version, lines: lines,
+        return .init(currency: currency, expectedVersion: summary.version, lines: lines,
                      link: candidate.map { .init(accountId: $0.accountId, candidateToken: $0.candidateToken,
                                                  entryReference: $0.entryReference) },
-                     paymentMethod: payment, receiptDate: day.iso, receiptId: detail.receiptId,
-                     receiptKind: detail.receiptKind == .refund ? .refund : .purchase,
-                     receiptTime: detail.receiptTime, totalAmount: total)
+                     paymentMethod: payment, receiptDate: day.iso, receiptId: summary.receiptId,
+                     receiptKind: summary.receiptKind == .refund ? .refund : .purchase,
+                     receiptTime: time, totalAmount: total)
     }
 
     private func reserve() -> Int? {

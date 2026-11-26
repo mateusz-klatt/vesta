@@ -139,7 +139,7 @@ private struct ImportedReceiptDetailView: View {
 
     var body: some View {
         List {
-            if let detail = store.detail, detail.receiptId == summary.receiptId {
+            if let detail = store.detail?.summary, detail.receiptId == summary.receiptId {
                 Section("Receipt") {
                     if let shop = detail.rawShopName { LabeledContent("Shop", value: shop) }
                     if let date = detail.receiptDate ?? detail.dueDate { LabeledContent("Date", value: date) }

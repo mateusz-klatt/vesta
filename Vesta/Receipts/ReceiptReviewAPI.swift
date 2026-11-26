@@ -4,20 +4,35 @@ enum ReceiptReviewGate {
     static let requiredPermissions: Set<Permission> = [.budgetReceiptsAdd, .budgetReceiptsView, .budgetReceiptsEdit]
 
     static func isEligible(enabled: Bool, capabilities: Capabilities?) -> Bool {
-        enabled && capabilities?.effectiveDeviceReceiptPermissions.isSuperset(of: requiredPermissions) == true
+        guard enabled, let capabilities else { return false }
+        return requiredPermissions.isSubset(of: permissions(capabilities, delegated: false))
+            || requiredPermissions.isSubset(of: permissions(capabilities, delegated: true))
     }
 
-    static func allowsDevice(_ token: StoredReceiptDeviceToken?, origin: URL, actor: String?) -> Bool {
-        guard let actor, let token, token.provenance == .exchanged, token.actor == actor,
+    static func allowsDevice(
+        _ token: StoredReceiptDeviceToken?, origin: URL, actor: String?, capabilities: Capabilities?
+    ) -> Bool {
+        guard let actor, let token, let capabilities, token.provenance == .exchanged, token.actor == actor,
               token.owner?.isEmpty == false, token.ownerKey?.isEmpty == false, token.deviceScope != nil,
               OriginMatcher.matches(origin, token.server),
               let issued = token.issuedPermissions else { return false }
-        return requiredPermissions.isSubset(of: issued.compactMap(Permission.init(rawValue:)))
+        return requiredPermissions.isSubset(of: permissions(capabilities, delegated: token.owner != actor))
+            && requiredPermissions.isSubset(of: issued.compactMap(Permission.init(rawValue:)))
     }
 
     static func allowsMatching(_ token: StoredReceiptDeviceToken?, capabilities: Capabilities?) -> Bool {
-        capabilities?.effectiveDeviceReceiptPermissions.contains(.budgetReceiptsMatch) == true &&
-            token?.issuedPermissions?.contains(Permission.budgetReceiptsMatch.rawValue) == true
+        guard let token, let actor = token.actor, let capabilities else { return false }
+        return permissions(capabilities, delegated: token.owner != actor).contains(.budgetReceiptsMatch)
+            && token.issuedPermissions?.contains(Permission.budgetReceiptsMatch.rawValue) == true
+    }
+
+    private static func permissions(_ capabilities: Capabilities, delegated: Bool) -> Set<Permission> {
+        if delegated {
+            guard let receipts = capabilities.delegatedReceipts, receipts.canUse else { return [] }
+            return receipts.permissions
+        }
+        guard let budget = capabilities.ownBudget, budget.canUseReceipts else { return [] }
+        return budget.permissions
     }
 }
 

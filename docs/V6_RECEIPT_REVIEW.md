@@ -16,7 +16,7 @@ Presentation, exchange eligibility, and every review request require:
 2. Current capabilities containing `budget.receipts.add`, `budget.receipts.view` and `budget.receipts.edit` in an eligible own/delegated receipt scope. Hestia requires add on every confirmation and includes it as a dependency of edit.
 3. A current exchanged V4 device token bound to the session actor and origin, with a non-empty owner/owner key, a known device scope, and the same permissions in `issued_permissions`.
 
-Choosing a candidate additionally requires both current capabilities and issued token permissions to contain `budget.receipts.match`. Without match, candidates and selection are cleared and only `link: null` can be sent. A linked confirmation is refused locally if match is absent.
+The app checks current grants for the budget attached to the token. Grants from a different budget do not count. Choosing a candidate additionally requires `budget.receipts.match` both for that budget and on the issued token. Without match, candidates and selection are cleared and only `link: null` can be sent.
 
 List, detail, and review-confirm requests send only the exchanged device bearer for authentication. They include `X-Hestia-Contract-Version: 0.52.0` so Hestia returns the imported status and gateway fields. The existing add-receipt scan path keeps its previous request format.
 

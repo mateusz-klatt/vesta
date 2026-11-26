@@ -310,10 +310,20 @@ struct BudgetReceiptSummaryWire: Codable, Hashable, Sendable, Identifiable {
     }
 
     init(from decoder: any Decoder) throws {
-        var values = try decoder.container(keyedBy: CodingKeys.self)
-        chainKey = try values.decode(String?.self, forKey: .chainKey)
+        try self.init(from: decoder, allowsOmittedNullableKeys: false)
+    }
+
+    init(from decoder: any Decoder, allowsOmittedNullableKeys: Bool) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        func nullable<T: Decodable>(_ type: T.Type, _ key: CodingKeys) throws -> T? {
+            if allowsOmittedNullableKeys {
+                return try values.decodeIfPresent(type, forKey: key)
+            }
+            return try values.decode(T?.self, forKey: key)
+        }
+        chainKey = try nullable(String.self, .chainKey)
         createdAt = try values.decode(Double.self, forKey: .createdAt)
-        currency = try values.decode(String?.self, forKey: .currency)
+        currency = try nullable(String.self, .currency)
         documentKind = try values.decodeIfPresent(DocumentKindPayload.self, forKey: .documentKind)
         dueDate = try values.decodeIfPresent(String.self, forKey: .dueDate)
         evidenceForReceiptId = try values.decodeIfPresent(String.self, forKey: .evidenceForReceiptId)
@@ -324,187 +334,62 @@ struct BudgetReceiptSummaryWire: Codable, Hashable, Sendable, Identifiable {
         gatewayStatus = try values.decodeIfPresent(GatewayStatusPayload.self, forKey: .gatewayStatus)
         hasDocument = try values.decodeIfPresent(Bool.self, forKey: .hasDocument)
         imageAvailable = try values.decode(Bool.self, forKey: .imageAvailable)
-        imageExpiresAt = try values.decode(Double?.self, forKey: .imageExpiresAt)
+        imageExpiresAt = try nullable(Double.self, .imageExpiresAt)
         importExpiresAt = try values.decodeIfPresent(Double.self, forKey: .importExpiresAt)
         invoiceNumber = try values.decodeIfPresent(String.self, forKey: .invoiceNumber)
         linked = try values.decode(Bool.self, forKey: .linked)
-        linkedAccountId = try values.decode(String?.self, forKey: .linkedAccountId)
-        linkedEntryRef = try values.decode(String?.self, forKey: .linkedEntryRef)
-        mathDelta = try values.decode(String?.self, forKey: .mathDelta)
+        linkedAccountId = try nullable(String.self, .linkedAccountId)
+        linkedEntryRef = try nullable(String.self, .linkedEntryRef)
+        mathDelta = try nullable(String.self, .mathDelta)
         payeeHost = try values.decodeIfPresent(String.self, forKey: .payeeHost)
-        paymentMethod = try values.decode(String?.self, forKey: .paymentMethod)
-        rawNip = try values.decode(String?.self, forKey: .rawNip)
-        rawShopName = try values.decode(String?.self, forKey: .rawShopName)
-        rawTextExpiresAt = try values.decode(Double?.self, forKey: .rawTextExpiresAt)
-        receiptDate = try values.decode(String?.self, forKey: .receiptDate)
+        paymentMethod = try nullable(String.self, .paymentMethod)
+        rawNip = try nullable(String.self, .rawNip)
+        rawShopName = try nullable(String.self, .rawShopName)
+        rawTextExpiresAt = try nullable(Double.self, .rawTextExpiresAt)
+        receiptDate = try nullable(String.self, .receiptDate)
         receiptId = try values.decode(String.self, forKey: .receiptId)
         receiptKind = try values.decode(ReceiptKindPayload.self, forKey: .receiptKind)
-        receiptTime = try values.decode(String?.self, forKey: .receiptTime)
-        shopId = try values.decode(String?.self, forKey: .shopId)
+        receiptTime = try nullable(String.self, .receiptTime)
+        shopId = try nullable(String.self, .shopId)
         sourceKind = try values.decode(SourceKindPayload.self, forKey: .sourceKind)
         status = try values.decode(StatusPayload.self, forKey: .status)
-        totalAmount = try values.decode(String?.self, forKey: .totalAmount)
+        totalAmount = try nullable(String.self, .totalAmount)
         updatedAt = try values.decode(Double.self, forKey: .updatedAt)
         version = try values.decode(Int.self, forKey: .version)
     }
 }
 
 struct ReceiptDetailWire: Codable, Hashable, Sendable {
-    enum ReceiptKindPayload: String, Codable, Hashable, Sendable { case purchase, refund }
-    enum SourceKindPayload: String, Codable, Hashable, Sendable {
-        case liveText = "live_text", localOcr = "local_ocr", cloudAi = "cloud_ai"
-        case paste, photo, email, attachment
-    }
-    enum StatusPayload: String, Codable, Hashable, Sendable { case draft, confirmed, needsReview = "needs_review", imported }
-    enum DocumentKindPayload: String, Codable, Hashable, Sendable { case receipt, invoice, paymentConfirmation = "payment_confirmation" }
-    enum GatewayStatusPayload: String, Codable, Hashable, Sendable { case registered, paid }
-
-    var chainKey: String?
-    var createdAt: Double
-    var currency: String?
-    var documentKind: DocumentKindPayload?
-    var dueDate: String?
-    var evidenceForReceiptId: String?
-    var feeAmount: String?
-    var forwardedManually: Bool
-    var forwardedSenderDomain: String?
-    var gateway: String?
-    var gatewayStatus: GatewayStatusPayload?
-    var hasDocument: Bool?
-    var imageAvailable: Bool
-    var imageExpiresAt: Double?
-    var importExpiresAt: Double?
-    var invoiceNumber: String?
+    var summary: BudgetReceiptSummaryWire
     var lines: [Components.Schemas.BudgetReceiptLine]
-    var linked: Bool
-    var linkedAccountId: String?
-    var linkedEntryRef: String?
-    var mathDelta: String?
-    var payeeHost: String?
     var paymentEvidence: [Components.Schemas.BudgetReceiptPaymentEvidence]
-    var paymentMethod: String?
-    var rawNip: String?
-    var rawShopName: String?
-    var rawTextExpiresAt: Double?
-    var receiptDate: String?
-    var receiptId: String
-    var receiptKind: ReceiptKindPayload
-    var receiptTime: String?
-    var shopId: String?
-    var sourceKind: SourceKindPayload
-    var status: StatusPayload
-    var totalAmount: String?
-    var updatedAt: Double
-    var version: Int
 
-    init(receiptId: String, rawShopName: String? = nil, chainKey: String? = nil, version: Int = 1,
-         receiptDate: String? = "2026-11-22", totalAmount: String? = "12.34", currency: String? = "PLN",
-         receiptKind: ReceiptKindPayload = .purchase, status: StatusPayload = .imported,
-         sourceKind: SourceKindPayload = .email, createdAt: Double = 0, updatedAt: Double = 0,
-         rawNip: String? = nil, receiptTime: String? = nil, paymentMethod: String? = "card",
-         linked: Bool = false, linkedAccountId: String? = nil, linkedEntryRef: String? = nil,
-         imageAvailable: Bool = false, imageExpiresAt: Double? = nil, rawTextExpiresAt: Double? = nil,
-         mathDelta: String? = nil, shopId: String? = nil, documentKind: DocumentKindPayload? = nil,
-         dueDate: String? = nil, evidenceForReceiptId: String? = nil, feeAmount: String? = nil,
-         forwardedManually: Bool = false, forwardedSenderDomain: String? = nil, gateway: String? = nil,
-         gatewayStatus: GatewayStatusPayload? = nil, hasDocument: Bool? = nil, importExpiresAt: Double? = nil,
-         invoiceNumber: String? = nil, payeeHost: String? = nil,
-         paymentEvidence: [Components.Schemas.BudgetReceiptPaymentEvidence] = [],
-         lines: [Components.Schemas.BudgetReceiptLine] = [.init()]) {
-        self.chainKey = chainKey
-        self.createdAt = createdAt
-        self.currency = currency
-        self.documentKind = documentKind
-        self.dueDate = dueDate
-        self.evidenceForReceiptId = evidenceForReceiptId
-        self.feeAmount = feeAmount
-        self.forwardedManually = forwardedManually
-        self.forwardedSenderDomain = forwardedSenderDomain
-        self.gateway = gateway
-        self.gatewayStatus = gatewayStatus
-        self.hasDocument = hasDocument
-        self.imageAvailable = imageAvailable
-        self.imageExpiresAt = imageExpiresAt
-        self.importExpiresAt = importExpiresAt
-        self.invoiceNumber = invoiceNumber
+    init(summary: BudgetReceiptSummaryWire, lines: [Components.Schemas.BudgetReceiptLine],
+         paymentEvidence: [Components.Schemas.BudgetReceiptPaymentEvidence] = []) {
+        self.summary = summary
         self.lines = lines
-        self.linked = linked
-        self.linkedAccountId = linkedAccountId
-        self.linkedEntryRef = linkedEntryRef
-        self.mathDelta = mathDelta
-        self.payeeHost = payeeHost
         self.paymentEvidence = paymentEvidence
-        self.paymentMethod = paymentMethod
-        self.rawNip = rawNip
-        self.rawShopName = rawShopName
-        self.rawTextExpiresAt = rawTextExpiresAt
-        self.receiptDate = receiptDate
-        self.receiptId = receiptId
-        self.receiptKind = receiptKind
-        self.receiptTime = receiptTime
-        self.shopId = shopId
-        self.sourceKind = sourceKind
-        self.status = status
-        self.totalAmount = totalAmount
-        self.updatedAt = updatedAt
-        self.version = version
     }
 
     private enum CodingKeys: String, CodingKey {
-        case chainKey = "chain_key", createdAt = "created_at", currency, documentKind = "document_kind"
-        case dueDate = "due_date", evidenceForReceiptId = "evidence_for_receipt_id", feeAmount = "fee_amount"
-        case forwardedManually = "forwarded_manually", forwardedSenderDomain = "forwarded_sender_domain"
-        case gateway, gatewayStatus = "gateway_status", hasDocument = "has_document", imageAvailable = "image_available"
-        case imageExpiresAt = "image_expires_at", importExpiresAt = "import_expires_at", invoiceNumber = "invoice_number"
-        case lines, linked, linkedAccountId = "linked_account_id", linkedEntryRef = "linked_entry_ref", mathDelta = "math_delta"
-        case payeeHost = "payee_host", paymentEvidence = "payment_evidence", paymentMethod = "payment_method"
-        case rawNip = "raw_nip", rawShopName = "raw_shop_name", rawTextExpiresAt = "raw_text_expires_at"
-        case receiptDate = "receipt_date", receiptId = "receipt_id", receiptKind = "receipt_kind"
-        case receiptTime = "receipt_time", shopId = "shop_id", sourceKind = "source_kind", status
-        case totalAmount = "total_amount", updatedAt = "updated_at", version
+        case lines, paymentEvidence = "payment_evidence"
     }
 
     init(from decoder: any Decoder) throws {
-        var values = try decoder.container(keyedBy: CodingKeys.self)
-        chainKey = try values.decodeIfPresent(String.self, forKey: .chainKey)
-        createdAt = try values.decode(Double.self, forKey: .createdAt)
-        currency = try values.decodeIfPresent(String.self, forKey: .currency)
-        documentKind = try values.decodeIfPresent(DocumentKindPayload.self, forKey: .documentKind)
-        dueDate = try values.decodeIfPresent(String.self, forKey: .dueDate)
-        evidenceForReceiptId = try values.decodeIfPresent(String.self, forKey: .evidenceForReceiptId)
-        feeAmount = try values.decodeIfPresent(String.self, forKey: .feeAmount)
-        forwardedManually = try values.decodeIfPresent(Bool.self, forKey: .forwardedManually) ?? false
-        forwardedSenderDomain = try values.decodeIfPresent(String.self, forKey: .forwardedSenderDomain)
-        gateway = try values.decodeIfPresent(String.self, forKey: .gateway)
-        gatewayStatus = try values.decodeIfPresent(GatewayStatusPayload.self, forKey: .gatewayStatus)
-        hasDocument = try values.decodeIfPresent(Bool.self, forKey: .hasDocument)
-        imageAvailable = try values.decode(Bool.self, forKey: .imageAvailable)
-        imageExpiresAt = try values.decodeIfPresent(Double.self, forKey: .imageExpiresAt)
-        importExpiresAt = try values.decodeIfPresent(Double.self, forKey: .importExpiresAt)
-        invoiceNumber = try values.decodeIfPresent(String.self, forKey: .invoiceNumber)
+        // Older scan/confirm responses may omit nullable fields from the shared summary.
+        summary = try BudgetReceiptSummaryWire(from: decoder, allowsOmittedNullableKeys: true)
+        let values = try decoder.container(keyedBy: CodingKeys.self)
         lines = try values.decode([Components.Schemas.BudgetReceiptLine].self, forKey: .lines)
-        linked = try values.decode(Bool.self, forKey: .linked)
-        linkedAccountId = try values.decodeIfPresent(String.self, forKey: .linkedAccountId)
-        linkedEntryRef = try values.decodeIfPresent(String.self, forKey: .linkedEntryRef)
-        mathDelta = try values.decodeIfPresent(String.self, forKey: .mathDelta)
-        payeeHost = try values.decodeIfPresent(String.self, forKey: .payeeHost)
         paymentEvidence = try values.decodeIfPresent(
             [Components.Schemas.BudgetReceiptPaymentEvidence].self, forKey: .paymentEvidence
         ) ?? []
-        paymentMethod = try values.decodeIfPresent(String.self, forKey: .paymentMethod)
-        rawNip = try values.decodeIfPresent(String.self, forKey: .rawNip)
-        rawShopName = try values.decodeIfPresent(String.self, forKey: .rawShopName)
-        rawTextExpiresAt = try values.decodeIfPresent(Double.self, forKey: .rawTextExpiresAt)
-        receiptDate = try values.decodeIfPresent(String.self, forKey: .receiptDate)
-        receiptId = try values.decode(String.self, forKey: .receiptId)
-        receiptKind = try values.decode(ReceiptKindPayload.self, forKey: .receiptKind)
-        receiptTime = try values.decodeIfPresent(String.self, forKey: .receiptTime)
-        shopId = try values.decodeIfPresent(String.self, forKey: .shopId)
-        sourceKind = try values.decode(SourceKindPayload.self, forKey: .sourceKind)
-        status = try values.decode(StatusPayload.self, forKey: .status)
-        totalAmount = try values.decodeIfPresent(String.self, forKey: .totalAmount)
-        updatedAt = try values.decode(Double.self, forKey: .updatedAt)
-        version = try values.decode(Int.self, forKey: .version)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        try summary.encode(to: encoder)
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(lines, forKey: .lines)
+        try values.encode(paymentEvidence, forKey: .paymentEvidence)
     }
 }
 

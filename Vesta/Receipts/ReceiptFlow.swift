@@ -66,16 +66,17 @@ struct ReceiptForm: Equatable {
     init() {}
 
     init(draft: ReceiptDetail, candidates: [ReceiptCandidate]) {
-        shopName = draft.rawShopName ?? ""
-        nip = draft.rawNip ?? ""
+        let summary = draft.summary
+        shopName = summary.rawShopName ?? ""
+        nip = summary.rawNip ?? ""
         parsedShopName = shopName
         parsedNIP = nip
-        kind = draft.receiptKind == .refund ? .refund : .purchase
-        day = draft.receiptDate.flatMap(ReceiptDay.init(iso:))
-        time = draft.receiptTime ?? ""
-        total = draft.totalAmount ?? ""
-        currency = draft.currency ?? "PLN"
-        payment = draft.paymentMethod.flatMap(ReceiptConfirmRequest.PaymentMethodPayload.init(rawValue:)) ?? .unknown
+        kind = summary.receiptKind == .refund ? .refund : .purchase
+        day = summary.receiptDate.flatMap(ReceiptDay.init(iso:))
+        time = summary.receiptTime ?? ""
+        total = summary.totalAmount ?? ""
+        currency = summary.currency ?? "PLN"
+        payment = summary.paymentMethod.flatMap(ReceiptConfirmRequest.PaymentMethodPayload.init(rawValue:)) ?? .unknown
         lines = draft.lines
         // Pre-select only an unambiguous match: exactly one candidate on a
         // card/BLIK payment. Otherwise the owner picks (or saves unlinked).

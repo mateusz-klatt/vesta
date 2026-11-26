@@ -19,7 +19,7 @@ private enum ReviewFixtures {
     }
 
     static func detail(_ index: Int = 0, shop: String? = "Shop", version: Int = 1) -> ReceiptDetail {
-        .init(receiptId: ids[index], rawShopName: shop, version: version)
+        .init(summary: summary(index, shop: shop, version: version), lines: [.init()])
     }
 
     static func candidate(_ index: Int = 0, strength: ReceiptCandidate.MatchStrengthPayload = .nip) -> ReceiptCandidate {
@@ -35,10 +35,11 @@ private enum ReviewFixtures {
         ))
     }
 
-    static func device(matching: Bool = true, provenance: DeviceTokenProvenance = .exchanged) -> StoredReceiptDeviceToken {
+    static func device(matching: Bool = true, provenance: DeviceTokenProvenance = .exchanged,
+                       owner: String = "u") -> StoredReceiptDeviceToken {
         var permissions = ReceiptReviewGate.requiredPermissions
         if matching { permissions.insert(.budgetReceiptsMatch) }
-        return .init(server: origin, provenance: provenance, actor: "u", owner: "u", ownerKey: ownerKey,
+        return .init(server: origin, provenance: provenance, actor: "u", owner: owner, ownerKey: ownerKey,
                      issuedPermissions: permissions.map(\.rawValue), lastUsableCeiling: permissions.map(\.rawValue),
                      deviceScope: .device, credential: fakeDeviceToken)
     }
@@ -136,7 +137,7 @@ private actor MockReceiptReviewAPI: ReceiptReviewAPI {
     }
 
     func setDetail(_ receipt: ReceiptDetail, candidates: [ReceiptCandidate]? = nil) {
-        details[receipt.receiptId] = .success(.init(receipt: receipt, candidates: candidates))
+        details[receipt.summary.receiptId] = .success(.init(receipt: receipt, candidates: candidates))
     }
 
     func setDetailError(_ id: String, _ error: ReceiptError) { details[id] = .failure(error) }
@@ -166,7 +167,7 @@ private actor MockReceiptReviewAPI: ReceiptReviewAPI {
         if let error = confirmErrors[request.receiptId] { throw error }
         let index = ReviewFixtures.ids.firstIndex(of: request.receiptId) ?? 0
         var detail = ReviewFixtures.detail(index, version: request.expectedVersion + 1)
-        detail.status = .confirmed
+        detail.summary.status = .confirmed
         return detail
     }
 }
@@ -183,9 +184,11 @@ final class ReceiptReviewMappingTests: XCTestCase {
         let present = try JSONDecoder().decode(
             ReceiptDetail.self, from: ReviewFixtures.data(ReviewFixtures.detailObject(hints: true))
         )
-        XCTAssertEqual(present.gatewayStatus, .registered)
-        XCTAssertEqual(present.payeeHost, "hestia.example")
-        XCTAssertEqual(present.hasDocument, false)
+        XCTAssertEqual(present.summary.gatewayStatus, .registered)
+        XCTAssertEqual(present.summary.payeeHost, "hestia.example")
+        XCTAssertEqual(present.summary.hasDocument, false)
+        let encoded = try JSONEncoder().encode(present)
+        XCTAssertEqual(try JSONDecoder().decode(ReceiptDetail.self, from: encoded), present)
     }
 
     func testRequiredNullableKeysRejectMissingAndAcceptNull() throws {
@@ -217,7 +220,7 @@ final class ReceiptReviewMappingTests: XCTestCase {
             "receipt_id": ReviewFixtures.ids[0], "version": 1,
             "draft": detail, "candidates": [candidate], "warnings": [],
         ]))
-        XCTAssertNil(result.draft.linkedEntryRef)
+        XCTAssertNil(result.draft.summary.linkedEntryRef)
         XCTAssertNil(result.draft.lines.first?.rawUnit)
         XCTAssertEqual(result.candidates.first?.matchStrength, ReceiptCandidate.MatchStrengthPayload.none)
     }
@@ -354,11 +357,11 @@ final class ReceiptReviewStoreTests: XCTestCase {
         let receipts = (0...3).map { ReviewFixtures.summary($0, version: 3) }
         await api.setPage(cursor: nil, receipts: receipts, next: nil)
         var confirmed = ReviewFixtures.detail(0, version: 9)
-        confirmed.status = .confirmed
-        confirmed.linked = true
+        confirmed.summary.status = .confirmed
+        confirmed.summary.linked = true
         await api.setDetail(confirmed)
         var linked = ReviewFixtures.detail(1, version: 5)
-        linked.linked = true
+        linked.summary.linked = true
         await api.setDetail(linked)
         await api.setDetail(ReviewFixtures.detail(2, shop: "Different merchant", version: 4))
         await api.setDetail(ReviewFixtures.detail(3, version: 3))
@@ -380,8 +383,9 @@ final class ReceiptReviewStoreTests: XCTestCase {
         let api = MockReceiptReviewAPI()
         let summary = ReviewFixtures.summary()
         var invoice = ReviewFixtures.detail()
-        invoice.documentKind = .invoice
+        invoice.summary.documentKind = .invoice
         invoice.lines = []
+        invoice.summary.receiptTime = ""
         await api.setPage(cursor: nil, receipts: [summary], next: nil)
         await api.setDetail(invoice)
         let store = ReceiptReviewStore(api: api, scope: scope)
@@ -391,9 +395,10 @@ final class ReceiptReviewStoreTests: XCTestCase {
 
         let confirms = await api.confirms
         let lines = try XCTUnwrap(confirms.first?.lines)
+        XCTAssertNil(confirms.first?.receiptTime)
         XCTAssertEqual(lines.count, 1)
         XCTAssertEqual(lines.first?.lineKind, .other)
-        XCTAssertEqual(lines.first?.netLineTotal, invoice.totalAmount)
+        XCTAssertEqual(lines.first?.netLineTotal, invoice.summary.totalAmount)
     }
 
     func testClearDropsLateConfirmFailure() async throws {
@@ -506,7 +511,8 @@ final class ReceiptReviewGateTests: XCTestCase {
         XCTAssertEqual(disabledCalls, [])
 
         XCTAssertFalse(ReceiptReviewGate.allowsDevice(
-            ReviewFixtures.device(provenance: .legacyPasswordLogin), origin: ReviewFixtures.origin, actor: "u"
+            ReviewFixtures.device(provenance: .legacyPasswordLogin), origin: ReviewFixtures.origin, actor: "u",
+            capabilities: ReviewFixtures.capabilities()
         ))
 
         let noMatch = try ReviewAppFixture(matching: false)
@@ -514,6 +520,30 @@ final class ReceiptReviewGateTests: XCTestCase {
         let store = try XCTUnwrap(noMatch.app.makeReceiptReviewStore())
         XCTAssertNotNil(noMatch.app.receiptReviewAPI)
         XCTAssertFalse(store.canMatchReceipts)
+    }
+
+    func testCurrentGrantsMustBelongToTheTokenLedger() {
+        let ownToken = ReviewFixtures.device()
+        let delegatedToken = ReviewFixtures.device(owner: "other")
+        let reviewGrants: Set<Permission> = [.budgetReceiptsAdd, .budgetReceiptsView, .budgetReceiptsEdit]
+        let delegatedGrants: Set<Permission> = [.budgetReceiptsAdd, .budgetReceiptsView, .budgetReceiptsMatch]
+        let capabilities = Capabilities(
+            user: "u",
+            ownBudget: .init(permissions: reviewGrants, canView: true, canUseReceipts: true, canManageDevices: true),
+            delegatedReceipts: .init(permissions: delegatedGrants, canUse: true)
+        )
+        XCTAssertTrue(ReceiptReviewGate.allowsDevice(
+            ownToken, origin: ReviewFixtures.origin, actor: "u", capabilities: capabilities
+        ))
+        XCTAssertFalse(ReceiptReviewGate.allowsMatching(ownToken, capabilities: capabilities))
+        XCTAssertFalse(ReceiptReviewGate.allowsDevice(
+            delegatedToken, origin: ReviewFixtures.origin, actor: "u", capabilities: capabilities
+        ))
+
+        let delegatedOnly = Capabilities(user: "u", delegatedReceipts: .init(permissions: reviewGrants, canUse: true))
+        XCTAssertTrue(ReceiptReviewGate.allowsDevice(
+            delegatedToken, origin: ReviewFixtures.origin, actor: "u", capabilities: delegatedOnly
+        ))
     }
 
     func test401And403TearDownAndClearReceipts() async throws {
@@ -633,7 +663,7 @@ final class ReceiptReviewClientTests: XCTestCase {
             var form = ReceiptForm(draft: detail, candidates: [candidate])
             if !linked { form.candidate = nil }
             var request = try XCTUnwrap(form.request(
-                receiptID: detail.receiptId, version: detail.version, candidates: [candidate]
+                receiptID: detail.summary.receiptId, version: detail.summary.version, candidates: [candidate]
             ))
             request.lines = nil
             request.rawShopName = nil
@@ -664,7 +694,7 @@ final class ReceiptReviewClientTests: XCTestCase {
         let detail = ReviewFixtures.detail()
         let candidate = ReviewFixtures.candidate()
         let request = try XCTUnwrap(ReceiptForm(draft: detail, candidates: [candidate]).request(
-            receiptID: detail.receiptId, version: 1, candidates: [candidate]
+            receiptID: detail.summary.receiptId, version: 1, candidates: [candidate]
         ))
         do {
             _ = try await api.confirmImportedReceipt(request, scope: ReviewFixtures.scope)
@@ -676,14 +706,14 @@ final class ReceiptReviewClientTests: XCTestCase {
     func testFlagOffAndNonExchangedTokenSendZeroRequests() async throws {
         let detail = ReviewFixtures.detail()
         let form = ReceiptForm(draft: detail, candidates: [])
-        let request = try XCTUnwrap(form.request(receiptID: detail.receiptId, version: 1, candidates: []))
+        let request = try XCTUnwrap(form.request(receiptID: detail.summary.receiptId, version: 1, candidates: []))
         for provenance in [DeviceTokenProvenance.exchanged, .legacyPasswordLogin] {
             let transport = CapturingTransport(status: 200, body: "{}")
             let enabled = provenance == .exchanged ? false : true
             let api = try client(transport, enabled: { enabled }, provenance: provenance)
             for call in [
                 { _ = try await api.listImportedReceipts(cursor: nil, scope: ReviewFixtures.scope) },
-                { _ = try await api.receiptDetail(id: detail.receiptId, scope: ReviewFixtures.scope) },
+                { _ = try await api.receiptDetail(id: detail.summary.receiptId, scope: ReviewFixtures.scope) },
                 { _ = try await api.confirmImportedReceipt(request, scope: ReviewFixtures.scope) },
             ] {
                 do { try await call(); XCTFail("Expected the request to be blocked") } catch {}

@@ -635,7 +635,7 @@ final class ReceiptsClientTests: XCTestCase {
         let result = try await api.parseReceiptText("BIEDRONKA", source: .paste)
         XCTAssertEqual(result.receiptId, sampleReceiptID)
         XCTAssertEqual(result.draft.lines.count, 2)
-        XCTAssertEqual(result.draft.totalAmount, "7.98")
+        XCTAssertEqual(result.draft.summary.totalAmount, "7.98")
         XCTAssertEqual(result.candidates.first?.entryReference, "tx1")
     }
 
@@ -901,7 +901,7 @@ final class ReceiptFormTests: XCTestCase {
     func testWhitespaceEditOfAMaxLengthShopSendsTheSignedName() throws {
         var p = try parsed()
         let signed = String(repeating: "A", count: 64) + " " + String(repeating: "B", count: 63)
-        p.draft.rawShopName = signed
+        p.draft.summary.rawShopName = signed
         var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
         form.shopName = String(repeating: "A", count: 64) + "  " + String(repeating: "B", count: 63)
         XCTAssertFalse(form.matchFieldsEdited)

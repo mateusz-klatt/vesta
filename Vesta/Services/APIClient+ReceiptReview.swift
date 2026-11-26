@@ -35,7 +35,7 @@ extension APIClient: ReceiptReviewAPI {
             guard await currentReceiptReviewScope(requiresMatch: requiresMatch) == scope else { throw CancellationError() }
             let value = try await operation(client)
             try Task.checkCancellation()
-            guard await currentReceiptReviewScope(requiresMatch: requiresMatch) == scope else { throw CancellationError() }
+            guard await currentReceiptReviewScope() == scope else { throw CancellationError() }
             return value
         } catch {
             if APIError.isCancellation(error) { throw CancellationError() }
