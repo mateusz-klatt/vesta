@@ -184,6 +184,7 @@ final class ReceiptReviewStore {
                     let result = try await self.api.receiptDetail(id: summary.receiptId, scope: self.scope)
                     guard self.isCurrent(operation) else { return }
                     guard try self.canReview(result.receipt, for: summary, clearDetail: false) else { continue }
+                    guard result.receipt.version == summary.version else { throw ReceiptError.versionConflict }
                     guard let request = Self.confirmation(for: result.receipt, candidate: nil) else {
                         self.record(.failure(summary, error: .rejected("incomplete_receipt")))
                         continue

@@ -313,7 +313,7 @@ final class ReceiptReviewStoreTests: XCTestCase {
 
     func testBulkConfirmIsSequentialCASAndReportsMixedOutcomes() async throws {
         let api = MockReceiptReviewAPI()
-        let receipts = (0...2).map { ReviewFixtures.summary($0, shop: "Shop") }
+        let receipts = (0...2).map { ReviewFixtures.summary($0, shop: "Shop", version: 11 + $0) }
         await api.setPage(cursor: nil, receipts: receipts, next: nil)
         for index in 0...2 {
             await api.setDetail(ReviewFixtures.detail(index, version: 11 + index),
@@ -349,9 +349,9 @@ final class ReceiptReviewStoreTests: XCTestCase {
         XCTAssertTrue(confirms.allSatisfy { $0.link == nil })
     }
 
-    func testBulkSkipsReceiptsConfirmedOrLinkedSinceListingAndPreservesStoredFields() async throws {
+    func testBulkSkipsReceiptsConfirmedLinkedOrChangedSinceListing() async throws {
         let api = MockReceiptReviewAPI()
-        let receipts = (0...2).map { ReviewFixtures.summary($0) }
+        let receipts = (0...3).map { ReviewFixtures.summary($0, version: 3) }
         await api.setPage(cursor: nil, receipts: receipts, next: nil)
         var confirmed = ReviewFixtures.detail(0, version: 9)
         confirmed.status = .confirmed
@@ -360,18 +360,20 @@ final class ReceiptReviewStoreTests: XCTestCase {
         var linked = ReviewFixtures.detail(1, version: 5)
         linked.linked = true
         await api.setDetail(linked)
-        await api.setDetail(ReviewFixtures.detail(2, version: 3))
+        await api.setDetail(ReviewFixtures.detail(2, shop: "Different merchant", version: 4))
+        await api.setDetail(ReviewFixtures.detail(3, version: 3))
         let store = ReceiptReviewStore(api: api, scope: scope)
         await store.load()
         await store.confirmMerchant(try XCTUnwrap(store.groups.first))
 
         let confirms = await api.confirms
-        XCTAssertEqual(confirms.map(\.receiptId), [ReviewFixtures.ids[2]])
+        XCTAssertEqual(confirms.map(\.receiptId), [ReviewFixtures.ids[3]])
         let request = try XCTUnwrap(confirms.first)
         XCTAssertNil(request.lines)
         XCTAssertNil(request.rawShopName)
         XCTAssertNil(request.rawNip)
-        XCTAssertEqual(store.outcomes.map(\.status), [.alreadySubmitted, .failed, .confirmed])
+        XCTAssertEqual(store.outcomes.map(\.status), [.alreadySubmitted, .failed, .failed, .confirmed])
+        XCTAssertEqual(store.outcomes[2].code, "budget_receipt_conflict")
     }
 
     func testInvoiceWithNoLinesGetsOneSummaryLine() async throws {
