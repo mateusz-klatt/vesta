@@ -362,7 +362,8 @@ final class ReceiptFlow {
             }
             useText(recognizedText, source: .localOcr)
         } catch {
-            guard isCurrentCapture(generation), !APIError.isCancellation(error) else { return }
+            guard isCurrentCapture(generation), !APIError.isCancellation(error),
+                  (error as? CocoaError)?.code != .userCancelled else { return }
             self.error = .photoUnavailable
         }
     }

@@ -60,7 +60,7 @@ final class ReceiptFlowRaceTests: XCTestCase {
     }
 
     func testCancelledPhotoLoadingIsSilent() async {
-        for cancellation in [CancellationError() as any Error, URLError(.cancelled)] {
+        for cancellation in [CancellationError() as any Error, URLError(.cancelled), CocoaError(.userCancelled)] {
             let flow = ReceiptFlow(api: MockReceiptsAPI())
             await flow.recognize { throw cancellation }
             XCTAssertEqual(flow.step, .capture)
