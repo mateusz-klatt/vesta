@@ -30,6 +30,7 @@ typeOverrides:
     BudgetReceiptSummary: BudgetReceiptSummaryWire
     BudgetReceiptDetailResult: BudgetReceiptDetailResultWire
     BudgetReceiptDetail: ReceiptDetailWire
+    BudgetReceiptConfirmRequest: ReceiptConfirmRequestWire
     BudgetReceiptCandidate: ReceiptCandidateWire
     BudgetReceiptLine: ReceiptLineWire
     BudgetReceiptPaymentEvidence: ReceiptPaymentEvidenceWire

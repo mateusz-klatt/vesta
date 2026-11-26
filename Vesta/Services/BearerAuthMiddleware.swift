@@ -14,6 +14,7 @@ struct BearerAuthMiddleware: ClientMiddleware {
     private let budgetEnabled: @Sendable () -> Bool
     private let receiptReviewEnabled: @Sendable () -> Bool
     private let reviewScoped: Bool
+    private let reviewRequiresMatch: Bool
 
     init(session: BoundSession? = nil,
          receiptPairing: ReceiptPairing? = nil,
@@ -21,7 +22,8 @@ struct BearerAuthMiddleware: ClientMiddleware {
          revoking: (origin: URL, credential: ReceiptDeviceToken)? = nil,
          budgetEnabled: @escaping @Sendable () -> Bool = { AppConfig.nativeBudgetEnabledForBuild },
          receiptReviewEnabled: @escaping @Sendable () -> Bool = { AppConfig.receiptReviewEnabledForBuild },
-         reviewScoped: Bool = false) {
+         reviewScoped: Bool = false,
+         reviewRequiresMatch: Bool = false) {
         self.session = session
         self.receiptPairing = receiptPairing
         self.receiptScope = receiptScope
@@ -29,6 +31,7 @@ struct BearerAuthMiddleware: ClientMiddleware {
         self.budgetEnabled = budgetEnabled
         self.receiptReviewEnabled = receiptReviewEnabled
         self.reviewScoped = reviewScoped
+        self.reviewRequiresMatch = reviewRequiresMatch
     }
 
     private static let receiptOperations: Set<String> = [
@@ -41,6 +44,7 @@ struct BearerAuthMiddleware: ClientMiddleware {
     private static let receiptReviewOperations: Set<String> = [
         Operations.ListBudgetReceipts.id, Operations.GetBudgetReceiptDetail.id,
     ]
+    private static let receiptContractHeader = HTTPField.Name("X-Hestia-Contract-Version")!
     private static let budgetReadPaths = [
         Operations.GetBudgetAnalyticsMonthlyBudget.id: "/api/budget/analytics/monthly-budget",
         Operations.GetBudgetAnalyticsTransactions.id: "/api/budget/analytics/transactions",
@@ -61,7 +65,11 @@ struct BearerAuthMiddleware: ClientMiddleware {
         let requiresDevice = Self.receiptOperations.contains(operationID)
         let reviewOperation = Self.receiptReviewOperations.contains(operationID)
             || (reviewScoped && operationID == Operations.ConfirmBudgetReceipt.id)
-        if reviewOperation && !receiptReviewEnabled() { throw ReceiptError.forbidden }
+        if reviewOperation {
+            guard reviewScoped, receiptScope != nil, receiptReviewEnabled() else { throw ReceiptError.forbidden }
+            // Since 0.52.0 the server exposes imported status and gateway evidence.
+            request.headerFields[Self.receiptContractHeader] = "0.52.0"
+        }
         let issuesDeviceToken = operationID == Operations.RedeemBudgetReceiptDevice.id
             || operationID == Operations.LoginBudgetReceiptDevice.id
         if operationID == Operations.ExchangeNativeSession.id {
@@ -125,8 +133,9 @@ struct BearerAuthMiddleware: ClientMiddleware {
                 let device: StoredReceiptDeviceToken?
                 if reviewOperation {
                     device = await receiptPairing?.receiptReviewCredential(
-                        for: baseURL, session: session, enabled: receiptReviewEnabled()
+                        for: baseURL, session: session, enabled: receiptReviewEnabled(), requiresMatch: reviewRequiresMatch
                     )
+                    guard receiptReviewEnabled(), device != nil else { throw CancellationError() }
                 } else {
                     device = await receiptPairing?.credential(for: baseURL, session: session)
                 }

@@ -28,7 +28,7 @@ private enum ReviewFixtures {
     }
 
     static func capabilities(matching: Bool = true) -> Capabilities {
-        var permissions: Set<Permission> = [.budgetReceiptsView, .budgetReceiptsEdit]
+        var permissions = ReceiptReviewGate.requiredPermissions
         if matching { permissions.insert(.budgetReceiptsMatch) }
         return Capabilities(user: "u", ownBudget: .init(
             permissions: permissions, canView: false, canUseReceipts: true, canManageDevices: true
@@ -36,8 +36,8 @@ private enum ReviewFixtures {
     }
 
     static func device(matching: Bool = true, provenance: DeviceTokenProvenance = .exchanged) -> StoredReceiptDeviceToken {
-        var permissions: [Permission] = [.budgetReceiptsView, .budgetReceiptsEdit]
-        if matching { permissions.append(.budgetReceiptsMatch) }
+        var permissions = ReceiptReviewGate.requiredPermissions
+        if matching { permissions.insert(.budgetReceiptsMatch) }
         return .init(server: origin, provenance: provenance, actor: "u", owner: "u", ownerKey: ownerKey,
                      issuedPermissions: permissions.map(\.rawValue), lastUsableCeiling: permissions.map(\.rawValue),
                      deviceScope: .device, credential: fakeDeviceToken)
@@ -195,23 +195,31 @@ final class ReceiptReviewMappingTests: XCTestCase {
             ImportedReceiptSummary.self, from: ReviewFixtures.data(summary)
         ))
 
-        var detail = ReviewFixtures.detailObject()
-        detail.removeValue(forKey: "linked_entry_ref")
-        XCTAssertThrowsError(try JSONDecoder().decode(
-            ReceiptDetail.self, from: ReviewFixtures.data(detail)
-        ))
-
-        var candidate = ReviewFixtures.candidateObject()
-        candidate.removeValue(forKey: "transaction_date")
-        XCTAssertThrowsError(try JSONDecoder().decode(
-            ReceiptCandidate.self, from: ReviewFixtures.data(candidate)
-        ))
-
         var list = try XCTUnwrap(JSONSerialization.jsonObject(with: ReviewFixtures.data([
             "receipts": [ReviewFixtures.summaryObject()], "next_cursor": NSNull(),
         ])) as? [String: Any])
         list.removeValue(forKey: "next_cursor")
         XCTAssertThrowsError(try JSONDecoder().decode(ReceiptListPage.self, from: ReviewFixtures.data(list)))
+    }
+
+    func testLegacyScanMayOmitNullableFieldsAndCandidateStrength() throws {
+        var detail = ReviewFixtures.detailObject()
+        detail["status"] = "draft"
+        detail["source_kind"] = "live_text"
+        detail.removeValue(forKey: "linked_entry_ref")
+        var lines = try XCTUnwrap(detail["lines"] as? [[String: Any]])
+        lines[0].removeValue(forKey: "raw_unit")
+        detail["lines"] = lines
+        var candidate = ReviewFixtures.candidateObject()
+        candidate.removeValue(forKey: "transaction_date")
+        candidate.removeValue(forKey: "match_strength")
+        let result = try JSONDecoder().decode(ReceiptParseResult.self, from: ReviewFixtures.data([
+            "receipt_id": ReviewFixtures.ids[0], "version": 1,
+            "draft": detail, "candidates": [candidate], "warnings": [],
+        ]))
+        XCTAssertNil(result.draft.linkedEntryRef)
+        XCTAssertNil(result.draft.lines.first?.rawUnit)
+        XCTAssertEqual(result.candidates.first?.matchStrength, ReceiptCandidate.MatchStrengthPayload.none)
     }
 
     func testPreselectsOnlyExactlyOneStrongCandidate() {
@@ -341,6 +349,74 @@ final class ReceiptReviewStoreTests: XCTestCase {
         XCTAssertTrue(confirms.allSatisfy { $0.link == nil })
     }
 
+    func testBulkSkipsReceiptsConfirmedOrLinkedSinceListingAndPreservesStoredFields() async throws {
+        let api = MockReceiptReviewAPI()
+        let receipts = (0...2).map { ReviewFixtures.summary($0) }
+        await api.setPage(cursor: nil, receipts: receipts, next: nil)
+        var confirmed = ReviewFixtures.detail(0, version: 9)
+        confirmed.status = .confirmed
+        confirmed.linked = true
+        await api.setDetail(confirmed)
+        var linked = ReviewFixtures.detail(1, version: 5)
+        linked.linked = true
+        await api.setDetail(linked)
+        await api.setDetail(ReviewFixtures.detail(2, version: 3))
+        let store = ReceiptReviewStore(api: api, scope: scope)
+        await store.load()
+        await store.confirmMerchant(try XCTUnwrap(store.groups.first))
+
+        let confirms = await api.confirms
+        XCTAssertEqual(confirms.map(\.receiptId), [ReviewFixtures.ids[2]])
+        let request = try XCTUnwrap(confirms.first)
+        XCTAssertNil(request.lines)
+        XCTAssertNil(request.rawShopName)
+        XCTAssertNil(request.rawNip)
+        XCTAssertEqual(store.outcomes.map(\.status), [.alreadySubmitted, .failed, .confirmed])
+    }
+
+    func testInvoiceWithNoLinesGetsOneSummaryLine() async throws {
+        let api = MockReceiptReviewAPI()
+        let summary = ReviewFixtures.summary()
+        var invoice = ReviewFixtures.detail()
+        invoice.documentKind = .invoice
+        invoice.lines = []
+        await api.setPage(cursor: nil, receipts: [summary], next: nil)
+        await api.setDetail(invoice)
+        let store = ReceiptReviewStore(api: api, scope: scope)
+        await store.load()
+        await store.select(summary)
+        await store.confirmSelected()
+
+        let confirms = await api.confirms
+        let lines = try XCTUnwrap(confirms.first?.lines)
+        XCTAssertEqual(lines.count, 1)
+        XCTAssertEqual(lines.first?.lineKind, .other)
+        XCTAssertEqual(lines.first?.netLineTotal, invoice.totalAmount)
+    }
+
+    func testClearDropsLateConfirmFailure() async throws {
+        let api = MockReceiptReviewAPI()
+        let summary = ReviewFixtures.summary()
+        await api.setPage(cursor: nil, receipts: [summary], next: nil)
+        await api.setDetail(ReviewFixtures.detail())
+        await api.setConfirmError(summary.receiptId, .versionConflict)
+        let gate = ReviewResponseGate()
+        await api.holdConfirm(summary.receiptId, gate: gate)
+        let store = ReceiptReviewStore(api: api, scope: scope)
+        await store.load()
+        await store.select(summary)
+
+        let confirmation = Task { await store.confirmSelected() }
+        try await waitUntil("confirm response is held") { await gate.isWaiting }
+        store.clear()
+        await gate.release()
+        await confirmation.value
+
+        XCTAssertTrue(store.isCleared)
+        XCTAssertTrue(store.outcomes.isEmpty)
+        XCTAssertNil(store.failure)
+    }
+
     func testClearDropsLateDetailResponse() async throws {
         let api = MockReceiptReviewAPI()
         let summary = ReviewFixtures.summary()
@@ -398,7 +474,8 @@ private actor ReviewPairingStub: DevicePairingAPI {
         return .init(credential: fakeDeviceToken, scope: .device, actor: actor, owner: actor,
                      ownerKey: ReviewFixtures.ownerKey,
                      issuedPermissions: [
-                        Permission.budgetReceiptsView.rawValue, Permission.budgetReceiptsEdit.rawValue,
+                        Permission.budgetReceiptsAdd.rawValue, Permission.budgetReceiptsView.rawValue,
+                        Permission.budgetReceiptsEdit.rawValue,
                         Permission.budgetReceiptsMatch.rawValue,
                      ])
     }
@@ -521,6 +598,7 @@ final class ReceiptReviewClientTests: XCTestCase {
         XCTAssertEqual(sent.request.path, "/api/budget/receipts/list")
         XCTAssertEqual(sent.request.headerFields[.authorization], "Bearer \(fakeDeviceToken.token)")
         XCTAssertNil(sent.request.headerFields[.cookie])
+        XCTAssertEqual(sent.request.headerFields[HTTPField.Name("X-Hestia-Contract-Version")!], "0.52.0")
         let listBody = try XCTUnwrap(JSONSerialization.jsonObject(with: sent.body) as? [String: Any])
         XCTAssertEqual(listBody["status"] as? String, "imported")
         XCTAssertEqual(listBody["evidence"] as? String, "exclude")
@@ -537,6 +615,7 @@ final class ReceiptReviewClientTests: XCTestCase {
         XCTAssertEqual(sent.request.path, "/api/budget/receipts/detail?receipt_id=\(ReviewFixtures.ids[0])")
         XCTAssertEqual(sent.request.headerFields[.authorization], "Bearer \(fakeDeviceToken.token)")
         XCTAssertNil(sent.request.headerFields[.cookie])
+        XCTAssertEqual(sent.request.headerFields[HTTPField.Name("X-Hestia-Contract-Version")!], "0.52.0")
     }
 
     func testSingleConfirmWireHasLinkOrExplicitNull() async throws {
@@ -551,9 +630,11 @@ final class ReceiptReviewClientTests: XCTestCase {
             let candidate = ReviewFixtures.candidate()
             var form = ReceiptForm(draft: detail, candidates: [candidate])
             if !linked { form.candidate = nil }
-            let request = try XCTUnwrap(form.request(
+            var request = try XCTUnwrap(form.request(
                 receiptID: detail.receiptId, version: detail.version, candidates: [candidate]
             ))
+            request.lines = nil
+            request.rawShopName = nil
 
             _ = try await api.confirmImportedReceipt(request, scope: ReviewFixtures.scope)
 
@@ -561,8 +642,12 @@ final class ReceiptReviewClientTests: XCTestCase {
             XCTAssertEqual(sent.request.path, "/api/budget/receipts/confirm")
             XCTAssertEqual(sent.request.headerFields[.authorization], "Bearer \(fakeDeviceToken.token)")
             XCTAssertNil(sent.request.headerFields[.cookie])
+            XCTAssertEqual(sent.request.headerFields[HTTPField.Name("X-Hestia-Contract-Version")!], "0.52.0")
             let object = try XCTUnwrap(JSONSerialization.jsonObject(with: sent.body) as? [String: Any])
             XCTAssertEqual(object["expected_version"] as? Int, 4)
+            XCTAssertNil(object["raw_shop_name"])
+            XCTAssertNil(object["raw_nip"])
+            XCTAssertNil(object["lines"])
             if linked {
                 XCTAssertEqual((object["link"] as? [String: Any])?["entry_reference"] as? String, "entry-0")
             } else {

@@ -1,5 +1,30 @@
 import Foundation
 
+// Keep the nullable fields the generator drops from the verbatim confirm schema.
+struct ReceiptConfirmRequestWire: Codable, Hashable, Sendable {
+    enum PaymentMethodPayload: String, Codable, Hashable, Sendable { case card, blik, cash, mixed, unknown }
+    enum ReceiptKindPayload: String, Codable, Hashable, Sendable { case purchase, refund }
+
+    var currency: String
+    var expectedVersion: Int
+    var lines: [Components.Schemas.BudgetReceiptLineInput]? = nil
+    var link: Components.Schemas.BudgetReceiptLinkRequest? = nil
+    var paymentMethod: PaymentMethodPayload
+    var rawNip: String? = nil
+    var rawShopName: String? = nil
+    var receiptDate: String
+    var receiptId: String
+    var receiptKind: ReceiptKindPayload
+    var receiptTime: String? = nil
+    var totalAmount: String
+
+    private enum CodingKeys: String, CodingKey {
+        case currency, expectedVersion = "expected_version", lines, link, paymentMethod = "payment_method"
+        case rawNip = "raw_nip", rawShopName = "raw_shop_name", receiptDate = "receipt_date", receiptId = "receipt_id"
+        case receiptKind = "receipt_kind", receiptTime = "receipt_time", totalAmount = "total_amount"
+    }
+}
+
 struct BudgetReceiptListRequestWire: Codable, Hashable, Sendable {
     var cursor: String?
     var documentKind: String?
@@ -107,16 +132,16 @@ struct ReceiptCandidateWire: Codable, Hashable, Sendable {
         var values = try decoder.container(keyedBy: CodingKeys.self)
         accountId = try values.decode(String.self, forKey: .accountId)
         amount = try values.decode(String.self, forKey: .amount)
-        bookingDate = try values.decode(String?.self, forKey: .bookingDate)
+        bookingDate = try values.decodeIfPresent(String.self, forKey: .bookingDate)
         candidateToken = try values.decode(String.self, forKey: .candidateToken)
         creditDebitIndicator = try values.decode(CreditDebitIndicatorPayload.self, forKey: .creditDebitIndicator)
         currency = try values.decode(String.self, forKey: .currency)
         dateDistance = try values.decode(Int.self, forKey: .dateDistance)
         entryReference = try values.decode(String.self, forKey: .entryReference)
-        matchStrength = try values.decode(MatchStrengthPayload.self, forKey: .matchStrength)
+        matchStrength = try values.decodeIfPresent(MatchStrengthPayload.self, forKey: .matchStrength) ?? .none
         merchantTokenHit = try values.decode(Bool.self, forKey: .merchantTokenHit)
-        transactionDate = try values.decode(String?.self, forKey: .transactionDate)
-        valueDate = try values.decode(String?.self, forKey: .valueDate)
+        transactionDate = try values.decodeIfPresent(String.self, forKey: .transactionDate)
+        valueDate = try values.decodeIfPresent(String.self, forKey: .valueDate)
     }
 }
 
@@ -166,12 +191,12 @@ struct ReceiptLineWire: Codable, Hashable, Sendable {
         lineKind = try values.decode(LineKindPayload.self, forKey: .lineKind)
         lineNo = try values.decode(Int.self, forKey: .lineNo)
         netLineTotal = try values.decode(String.self, forKey: .netLineTotal)
-        ptuCode = try values.decode(PtuCodePayload?.self, forKey: .ptuCode)
+        ptuCode = try values.decodeIfPresent(PtuCodePayload.self, forKey: .ptuCode)
         quantity = try values.decode(String.self, forKey: .quantity)
         rawName = try values.decode(String.self, forKey: .rawName)
         rawNameKey = try values.decode(String.self, forKey: .rawNameKey)
-        rawUnit = try values.decode(String?.self, forKey: .rawUnit)
-        unitPriceRaw = try values.decode(String?.self, forKey: .unitPriceRaw)
+        rawUnit = try values.decodeIfPresent(String.self, forKey: .rawUnit)
+        unitPriceRaw = try values.decodeIfPresent(String.self, forKey: .unitPriceRaw)
     }
 }
 
@@ -441,9 +466,9 @@ struct ReceiptDetailWire: Codable, Hashable, Sendable {
 
     init(from decoder: any Decoder) throws {
         var values = try decoder.container(keyedBy: CodingKeys.self)
-        chainKey = try values.decode(String?.self, forKey: .chainKey)
+        chainKey = try values.decodeIfPresent(String.self, forKey: .chainKey)
         createdAt = try values.decode(Double.self, forKey: .createdAt)
-        currency = try values.decode(String?.self, forKey: .currency)
+        currency = try values.decodeIfPresent(String.self, forKey: .currency)
         documentKind = try values.decodeIfPresent(DocumentKindPayload.self, forKey: .documentKind)
         dueDate = try values.decodeIfPresent(String.self, forKey: .dueDate)
         evidenceForReceiptId = try values.decodeIfPresent(String.self, forKey: .evidenceForReceiptId)
@@ -454,30 +479,30 @@ struct ReceiptDetailWire: Codable, Hashable, Sendable {
         gatewayStatus = try values.decodeIfPresent(GatewayStatusPayload.self, forKey: .gatewayStatus)
         hasDocument = try values.decodeIfPresent(Bool.self, forKey: .hasDocument)
         imageAvailable = try values.decode(Bool.self, forKey: .imageAvailable)
-        imageExpiresAt = try values.decode(Double?.self, forKey: .imageExpiresAt)
+        imageExpiresAt = try values.decodeIfPresent(Double.self, forKey: .imageExpiresAt)
         importExpiresAt = try values.decodeIfPresent(Double.self, forKey: .importExpiresAt)
         invoiceNumber = try values.decodeIfPresent(String.self, forKey: .invoiceNumber)
         lines = try values.decode([Components.Schemas.BudgetReceiptLine].self, forKey: .lines)
         linked = try values.decode(Bool.self, forKey: .linked)
-        linkedAccountId = try values.decode(String?.self, forKey: .linkedAccountId)
-        linkedEntryRef = try values.decode(String?.self, forKey: .linkedEntryRef)
-        mathDelta = try values.decode(String?.self, forKey: .mathDelta)
+        linkedAccountId = try values.decodeIfPresent(String.self, forKey: .linkedAccountId)
+        linkedEntryRef = try values.decodeIfPresent(String.self, forKey: .linkedEntryRef)
+        mathDelta = try values.decodeIfPresent(String.self, forKey: .mathDelta)
         payeeHost = try values.decodeIfPresent(String.self, forKey: .payeeHost)
         paymentEvidence = try values.decodeIfPresent(
             [Components.Schemas.BudgetReceiptPaymentEvidence].self, forKey: .paymentEvidence
         ) ?? []
-        paymentMethod = try values.decode(String?.self, forKey: .paymentMethod)
-        rawNip = try values.decode(String?.self, forKey: .rawNip)
-        rawShopName = try values.decode(String?.self, forKey: .rawShopName)
-        rawTextExpiresAt = try values.decode(Double?.self, forKey: .rawTextExpiresAt)
-        receiptDate = try values.decode(String?.self, forKey: .receiptDate)
+        paymentMethod = try values.decodeIfPresent(String.self, forKey: .paymentMethod)
+        rawNip = try values.decodeIfPresent(String.self, forKey: .rawNip)
+        rawShopName = try values.decodeIfPresent(String.self, forKey: .rawShopName)
+        rawTextExpiresAt = try values.decodeIfPresent(Double.self, forKey: .rawTextExpiresAt)
+        receiptDate = try values.decodeIfPresent(String.self, forKey: .receiptDate)
         receiptId = try values.decode(String.self, forKey: .receiptId)
         receiptKind = try values.decode(ReceiptKindPayload.self, forKey: .receiptKind)
-        receiptTime = try values.decode(String?.self, forKey: .receiptTime)
-        shopId = try values.decode(String?.self, forKey: .shopId)
+        receiptTime = try values.decodeIfPresent(String.self, forKey: .receiptTime)
+        shopId = try values.decodeIfPresent(String.self, forKey: .shopId)
         sourceKind = try values.decode(SourceKindPayload.self, forKey: .sourceKind)
         status = try values.decode(StatusPayload.self, forKey: .status)
-        totalAmount = try values.decode(String?.self, forKey: .totalAmount)
+        totalAmount = try values.decodeIfPresent(String.self, forKey: .totalAmount)
         updatedAt = try values.decode(Double.self, forKey: .updatedAt)
         version = try values.decode(Int.self, forKey: .version)
     }

@@ -1,7 +1,7 @@
 import Foundation
 
 enum ReceiptReviewGate {
-    static let requiredPermissions: Set<Permission> = [.budgetReceiptsView, .budgetReceiptsEdit]
+    static let requiredPermissions: Set<Permission> = [.budgetReceiptsAdd, .budgetReceiptsView, .budgetReceiptsEdit]
 
     static func isEligible(enabled: Bool, capabilities: Capabilities?) -> Bool {
         enabled && capabilities?.effectiveDeviceReceiptPermissions.isSuperset(of: requiredPermissions) == true

@@ -13,22 +13,23 @@ V6 is **default-off**. `AppConfig.receiptReviewEnabled` remains `false`, and Rel
 Presentation, exchange eligibility, and every review request require:
 
 1. The DEBUG build flag.
-2. Current capabilities containing `budget.receipts.view` and `budget.receipts.edit` in an eligible own/delegated receipt scope.
-3. A current exchanged V4 device token bound to the session actor and origin, with a non-empty owner/owner key, a known device scope, and `issued_permissions` containing view/edit.
+2. Current capabilities containing `budget.receipts.add`, `budget.receipts.view` and `budget.receipts.edit` in an eligible own/delegated receipt scope. Hestia requires add on every confirmation and includes it as a dependency of edit.
+3. A current exchanged V4 device token bound to the session actor and origin, with a non-empty owner/owner key, a known device scope, and the same permissions in `issued_permissions`.
 
 Choosing a candidate additionally requires both current capabilities and issued token permissions to contain `budget.receipts.match`. Without match, candidates and selection are cleared and only `link: null` can be sent. A linked confirmation is refused locally if match is absent.
 
-List, detail, and review-confirm requests clear `Cookie` and the session bearer. They send only `Authorization: Bearer <device_token>`; there is no cookie or session fallback. The receipt allowlist now uses the generated list/detail operation IDs. Review confirmation uses a review-scoped client so its device-token permission check differs from the existing add-receipt scan path without changing that path.
+List, detail, and review-confirm requests send only the exchanged device bearer for authentication. They include `X-Hestia-Contract-Version: 0.52.0` so Hestia returns the imported status and gateway fields. The existing add-receipt scan path keeps its previous request format.
 
 A 401, 403, flag change, capability/token withdrawal, account switch, origin switch, or sign-out clears cached receipt/detail data and terminates the store. Session-bound APIs revalidate after every awaited operation, so late responses and late denials cannot republish into a newer session. V4 rotation and its journal remain unchanged.
 
 ## Review rules
 
 - The list request sends `status: imported`, `evidence: exclude`, and `limit: 200`, then follows distinct cursors.
-- Merchant groups use a non-empty `chain_key` when available, otherwise normalized case-insensitive shop names; missing names share an Unknown merchant group.
-- Exactly one candidate with `match_strength` `nip` or `distinctive` is preselected. Zero candidates, multiple candidates, or weaker strengths leave nothing selected.
-- A single confirm uses the chosen signed candidate link or explicit `link: null`.
+- Merchant groups use a non-empty `chain_key`, a valid NIP, or a normalized case-insensitive shop name, in that order. The Unknown merchant group offers individual review. Known groups can bulk confirm their unlinked rows.
+- Exactly one candidate with `match_strength` `nip` or `distinctive` is preselected. A weak candidate or multiple candidates require a choice before confirming.
+- A single confirm uses the chosen signed candidate link or explicit `link: null`. The review flow only submits unlinked imports. If a receipt was confirmed since listing, it is removed from the pending list without another write.
 - Bulk confirm fetches each receipt's current detail and then confirms it before moving to the next. Every confirm uses that detail's own `version` as `expected_version` and always sends `link: null`.
+- Confirmation preserves existing shop, NIP and lines by omitting those fields. An imported invoice with no stored lines gets one summary line for the invoice total.
 - Non-auth failures do not stop the rest of a merchant batch. Outcomes remain visible per receipt with codes such as `budget_receipt_conflict` and `already_submitted`. Confirmed and already-submitted rows leave the pending list; failed rows remain.
 - `gateway_status`, `payee_host`, and `has_document` remain optional. They are rendered only when supplied; a false `has_document` plus `payee_host` produces the download hint. No default `has_document: true` is inferred for display.
 
@@ -43,9 +44,9 @@ V6 appends these operations verbatim from hestia **0.55.0, commit `1b269c8`**:
 
 It also appends the verbatim `BudgetReceiptListRequest`, `BudgetReceiptListResult`, `BudgetReceiptSummary`, `BudgetReceiptDetailResult`, and `BudgetReceiptPaymentEvidence` schemas. The shared `BudgetReceiptCandidate`, `BudgetReceiptDetail`, and `BudgetReceiptLine` schemas are replaced with their deployed `1b269c8` versions. This adds required candidate strength/dates, imported status and email/attachment source values, optional imported-payment metadata, and strict required-null line fields. Existing draft/confirmed/needs-review and live_text/local_ocr/cloud_ai values remain valid.
 
-The pinned confirm operation, `BudgetReceiptConfirmRequest`, `BudgetReceiptConfirmResult`, `BudgetReceiptLinkRequest`, and `BudgetReceiptLineInput` are unchanged. The existing confirm pin already has `receipt_id`, `expected_version`, and nullable link behavior through `ExplicitNullsMiddleware`; no confirm diff is needed.
+The confirm operation keeps its path and operation ID. `BudgetReceiptConfirmRequest` now matches `1b269c8`, which supports omitting unchanged metadata and lines. `ExplicitNullsMiddleware` still fills the legacy scan flow's exact key set and adds explicit nulls for review's required `link` and `receipt_time` fields.
 
-The generator drops required nullable `anyOf` properties. Wire overrides therefore decode required nullable keys with `decode(Optional.self)`, which rejects an absent key but accepts explicit null, while optional Gmail hint keys use `decodeIfPresent` and may be absent. The parse fixture now carries the deployed required `match_strength`; both legacy contract targets retain their own unchanged specs.
+The generator drops nullable `anyOf` properties. Wire overrides preserve them. Shared scan/review response types accept omitted legacy keys and default a missing candidate strength to `none`. Both legacy contract targets retain their own unchanged specs.
 
 ## UAT checklist
 
@@ -63,6 +64,6 @@ The generator drops required nullable `anyOf` properties. Wire overrides therefo
 
 ## Open questions / hestia gaps
 
-- Imported receipts still need the fields required by the existing confirm contract (valid date, total, currency, and internally consistent lines). V6 reports `incomplete_receipt` instead of sending a request that hestia would reject; a dedicated imported-receipt edit flow is not included.
+- Imported receipts need a valid date, total and currency. V6 reports `incomplete_receipt` when these are missing or when an import other than an invoice has no lines. Hestia validates totals against stored lines at confirmation.
 - Hestia has no bulk endpoint, so the phone intentionally performs detail/confirm pairs sequentially. An access denial tears down the session and prevents further sends rather than continuing under invalid authorization.
 - Search and image operations are not needed for this fast review flow and remain unpinned.

@@ -2,12 +2,11 @@ import Foundation
 import HTTPTypes
 import OpenAPIRuntime
 
-/// hestia's receipt `confirm` validator requires the exact key set, nulls
-/// included (`set(values) != CONFIRM_FIELDS` → 400). The generated Codable
-/// types encode `nil` by omitting the key, so this middleware re-adds every
-/// missing key as an explicit JSON `null` for that one operation — top level and
-/// per line. Other operations pass through untouched.
+/// Older hestia versions require all confirm keys. Import review uses the
+/// newer contract, where omitting a shop name, NIP, or lines preserves them.
 struct ExplicitNullsMiddleware: ClientMiddleware {
+    var preserveStoredReceiptFields = false
+
     /// operationID → (top-level keys, keys of each element of `lines`).
     static let required: [String: (top: [String], lines: [String])] = [
         "confirmBudgetReceipt": (
@@ -31,7 +30,8 @@ struct ExplicitNullsMiddleware: ClientMiddleware {
             return try await next(request, body, baseURL)
         }
         let data = try await Data(collecting: body, upTo: Self.maxBody)
-        let patched = try Self.fill(data, top: keys.top, lines: keys.lines)
+        let top = preserveStoredReceiptFields ? ["receipt_time", "link"] : keys.top
+        let patched = try Self.fill(data, top: top, lines: keys.lines)
         var request = request
         request.headerFields[.contentLength] = String(patched.count)
         return try await next(request, HTTPBody(patched), baseURL)

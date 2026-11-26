@@ -164,15 +164,16 @@ actor APIClient: HestiaAPI {
         )
     }
 
-    func requestReceiptReviewClient(scope: ReceiptSessionScope) -> Client {
+    func requestReceiptReviewClient(scope: ReceiptSessionScope, requiresMatch: Bool) -> Client {
         Client(
             serverURL: scope.origin,
             transport: transport,
             middlewares: [
-                ExplicitNullsMiddleware(),
+                ExplicitNullsMiddleware(preserveStoredReceiptFields: true),
                 BearerAuthMiddleware(session: sessionStore?.currentSnapshot(), receiptPairing: receiptPairing,
                                      receiptScope: scope, budgetEnabled: budgetEnabled,
-                                     receiptReviewEnabled: receiptReviewEnabled, reviewScoped: true),
+                                     receiptReviewEnabled: receiptReviewEnabled, reviewScoped: true,
+                                     reviewRequiresMatch: requiresMatch),
             ]
         )
     }

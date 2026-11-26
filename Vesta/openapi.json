@@ -473,15 +473,30 @@
             "type": "integer"
           },
           "lines": {
-            "items": {
-              "$ref": "#/components/schemas/BudgetReceiptLineInput"
-            },
-            "maxItems": 300,
-            "title": "Lines",
-            "type": "array"
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/BudgetReceiptLineInput"
+                },
+                "maxItems": 300,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Omit or send null to keep stored lines unchanged and re-validate totals against them.",
+            "title": "Lines"
           },
           "link": {
-            "$ref": "#/components/schemas/BudgetReceiptLinkRequest"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BudgetReceiptLinkRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "payment_method": {
             "enum": [
@@ -495,19 +510,29 @@
             "type": "string"
           },
           "raw_nip": {
-            "pattern": "^(?:|[0-9]{10})$",
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "pattern": "^(?:|[0-9]{10})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
+            "description": "Omit to keep the stored NIP unchanged; send null to clear.",
             "title": "Raw Nip"
           },
           "raw_shop_name": {
-            "maxLength": 128,
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
+            "description": "Omit to keep the stored shop name unchanged; send null to clear.",
             "title": "Raw Shop Name"
           },
           "receipt_date": {
@@ -530,10 +555,14 @@
             "type": "string"
           },
           "receipt_time": {
-            "pattern": "^(?:|(?:[01][0-9]|2[0-3]):[0-5][0-9])$",
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "pattern": "^(?:|(?:[01][0-9]|2[0-3]):[0-5][0-9])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Receipt Time"
           },
@@ -550,10 +579,11 @@
           "expected_version",
           "receipt_kind",
           "receipt_date",
+          "receipt_time",
           "total_amount",
           "currency",
           "payment_method",
-          "lines"
+          "link"
         ],
         "title": "BudgetReceiptConfirmRequest",
         "type": "object"

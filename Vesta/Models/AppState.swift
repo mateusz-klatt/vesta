@@ -319,7 +319,7 @@ final class AppState {
         token: StoredReceiptDeviceToken,
         generation: Int
     ) -> Bool {
-        guard generation == receiptReviewGeneration, session == sessionStore.currentSnapshot(),
+        guard phase == .ready, generation == receiptReviewGeneration, session == sessionStore.currentSnapshot(),
               ReceiptReviewGate.isEligible(enabled: receiptReviewEnabled, capabilities: capabilities) else { return false }
         return token == receiptPairing.receiptReviewCredential(
             for: session.origin, session: session, enabled: receiptReviewEnabled
@@ -719,7 +719,6 @@ final class AppState {
         guard phase == .ready, receiptsUseExchange, let session = sessionStore.currentSnapshot(), let capabilities,
               capabilities.canUseReceipts || NativeBudgetGate.isEligible(enabled: nativeBudgetEnabled,
                                                                          features: serverFeatures, capabilities: capabilities)
-                || ReceiptReviewGate.isEligible(enabled: receiptReviewEnabled, capabilities: capabilities)
         else { return }
         let previous = currentReceiptScope
         let budgetToken = receiptPairing.nativeBudgetCredential(for: session.origin, session: session)

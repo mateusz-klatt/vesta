@@ -29,7 +29,7 @@ extension APIClient: ReceiptReviewAPI {
         _ operation: (Client) async throws -> Value
     ) async throws -> Value {
         guard receiptReviewEnabled() else { throw ReceiptError.forbidden }
-        let client = requestReceiptReviewClient(scope: scope)
+        let client = requestReceiptReviewClient(scope: scope, requiresMatch: requiresMatch)
         do {
             try Task.checkCancellation()
             guard await currentReceiptReviewScope(requiresMatch: requiresMatch) == scope else { throw CancellationError() }

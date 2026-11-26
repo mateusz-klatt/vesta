@@ -529,7 +529,7 @@ extension ReceiptPairing {
         let budgetEligible = NativeBudgetGate.isEligible(enabled: nativeBudgetEnabled, features: publishedFeatures,
                                                          capabilities: capabilities)
         let reviewEligible = ReceiptReviewGate.isEligible(enabled: receiptReviewEnabled, capabilities: capabilities)
-        guard capabilities.canUseReceipts || budgetEligible || reviewEligible else { return }
+        guard capabilities.canUseReceipts || budgetEligible else { return }
         let retryingRejectedRequest = rejectedRequestSession == session
         if retryingRejectedRequest, reason != .manual, reason != .refresh { return }
 
@@ -544,10 +544,8 @@ extension ReceiptPairing {
             $0.provenance == .legacyMigrated1x && $0.actor == nil && OriginMatcher.matches($0.server, session.origin)
         } ?? false
         let hasOwnReceipts = canUseOwnReceipts(capabilities)
-        let ownPermissions = capabilities.ownBudget?.canUseReceipts == true ? capabilities.ownBudget?.permissions : nil
-        let hasOwnReview = ownPermissions?.isSuperset(of: ReceiptReviewGate.requiredPermissions) == true
-        let selfSlotEligible = hasOwnReceipts || hasOwnReview || budgetEligible
-        let knownOwner = hasOwnReceipts || hasOwnReview || (budgetEligible && !capabilities.canUseReceipts)
+        let selfSlotEligible = hasOwnReceipts || budgetEligible
+        let knownOwner = hasOwnReceipts || (budgetEligible && !capabilities.canUseReceipts)
         let eligibleActive = active.flatMap { token in
             isBound(token, to: session) && (token.provenance == .exchanged || selfSlotEligible) ? token : nil
         }

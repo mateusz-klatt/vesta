@@ -77,11 +77,13 @@ struct ReceiptReviewView: View {
                         if let name = group.name { Text(verbatim: name) }
                         else { Text("Unknown merchant") }
                         Spacer()
-                        Button("Confirm all without linking") {
-                            Task { await store.confirmMerchant(group) }
+                        if group.canConfirmWithoutLinking {
+                            Button("Confirm all without linking") {
+                                Task { await store.confirmMerchant(group) }
+                            }
+                            .font(.caption)
+                            .disabled(store.isBusy)
                         }
-                        .font(.caption)
-                        .disabled(store.isBusy)
                     }
                 }
             }
@@ -175,7 +177,7 @@ private struct ImportedReceiptDetailView: View {
                         HStack {
                             Text("Don’t link")
                             Spacer()
-                            if store.selectedCandidate == nil {
+                            if store.selectedCandidate == nil && (store.hasLinkChoice || store.candidates.isEmpty) {
                                 Image(systemName: "checkmark").foregroundStyle(Theme.accent)
                             }
                         }
@@ -185,7 +187,7 @@ private struct ImportedReceiptDetailView: View {
                 Section {
                     Button("Save receipt") { Task { await store.confirmSelected() } }
                         .buttonStyle(.borderedProminent)
-                        .disabled(store.isBusy)
+                        .disabled(!store.canConfirmSelected)
                         .frame(maxWidth: .infinity)
                 }
             } else if store.isBusy {

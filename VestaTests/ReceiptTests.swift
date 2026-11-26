@@ -720,8 +720,7 @@ final class ReceiptsClientTests: XCTestCase {
     func testAllDeviceAuthorizedOperationIDsUseTheDeviceToken() async throws {
         let operations = [
             ("parseBudgetReceiptText", "parse-text"), ("confirmBudgetReceipt", "confirm"),
-            ("deleteBudgetReceipt", "delete"), ("listBudgetReceipts", "list"),
-            ("searchBudgetReceipts", "search"), ("getBudgetReceiptDetail", "detail"),
+            ("deleteBudgetReceipt", "delete"), ("searchBudgetReceipts", "search"),
             ("getBudgetReceiptImage", "image"), ("revokeBudgetReceiptDevice", "device-token/revoke"),
         ]
         let server = AppConfig.serverURL
@@ -860,7 +859,7 @@ final class ReceiptFormTests: XCTestCase {
         XCTAssertEqual(request.totalAmount, "7.98")
         XCTAssertEqual(request.link?.entryReference, "tx1")
         XCTAssertEqual(request.link?.candidateToken, p.candidates[0].candidateToken)
-        XCTAssertEqual(request.lines.map(\.netLineTotal), ["3.49", "4.49"])
+        XCTAssertEqual(request.lines?.map(\.netLineTotal), ["3.49", "4.49"])
     }
 
     func testCashNeverLinks() throws {
