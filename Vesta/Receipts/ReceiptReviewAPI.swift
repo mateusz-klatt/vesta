@@ -97,6 +97,8 @@ extension ReceiptError {
 
     var reviewCode: String {
         switch self {
+        case .photoUnavailable: "photo_unavailable"
+        case .noReadableText: "no_readable_text"
         case .disabled: "budget_receipts_disabled"
         case .notFound: "not_found"
         case .forbidden: "forbidden"
