@@ -29,35 +29,113 @@ enum ReceiptLineOrdering {
     /// height belong to the same line.
     static let bandTolerance: CGFloat = 0.5
     private static let slopeNeighborhood: CGFloat = 0.075
+    private static let priceColumnTolerance: CGFloat = 0.03
 
     static func lines(from fragments: [TextFragment]) -> [String] {
         let usable = fragments.filter { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty }
         guard !usable.isEmpty else { return [] }
         let heights = usable.map(\.box.height).sorted()
         let tolerance = max(heights[heights.count / 2] * bandTolerance, 0.002)
-
-        // Top of the page first: Vision's y grows upwards.
-        let sorted = alignRows(usable).sorted { $0.box.midY > $1.box.midY }
-        var bands: [[TextFragment]] = []
-        var bandMid: CGFloat = 0
-        for fragment in sorted {
-            if let last = bands.indices.last, abs(fragment.box.midY - bandMid) <= tolerance {
-                bands[last].append(fragment)
-                let mids = bands[last].map(\.box.midY)
-                bandMid = mids.reduce(0, +) / CGFloat(mids.count)
-            } else {
-                bands.append([fragment])
-                bandMid = fragment.box.midY
-            }
-        }
-        return bands.map { band in
-            band.sorted { $0.box.minX < $1.box.minX }
-                .map { $0.text.trimmingCharacters(in: .whitespaces) }
+        let text = usable.map { $0.text.trimmingCharacters(in: .whitespaces) }
+        let centers = alignRows(usable)
+        let rows = discountRows(in: usable, text: text, centers: centers, tolerance: tolerance)
+        return rows.map { row in
+            row.sorted { usable[$0].box.minX < usable[$1].box.minX }
+                .map { text[$0] }
                 .joined(separator: " ")
         }
     }
 
-    private static func alignRows(_ fragments: [TextFragment]) -> [TextFragment] {
+    private static func bands(at centers: [CGFloat], tolerance: CGFloat) -> [[Int]] {
+        // Top of the page first: Vision's y grows upwards.
+        let sorted = centers.indices.sorted { centers[$0] > centers[$1] }
+        var bands: [[Int]] = []
+        var bandMid: CGFloat = 0
+        for index in sorted {
+            if let last = bands.indices.last, abs(centers[index] - bandMid) <= tolerance {
+                bands[last].append(index)
+                bandMid = bands[last].reduce(0) { $0 + centers[$1] } / CGFloat(bands[last].count)
+            } else {
+                bands.append([index])
+                bandMid = centers[index]
+            }
+        }
+        return bands
+    }
+
+    private static func discountRows(
+        in fragments: [TextFragment], text: [String], centers: [CGFloat], tolerance: CGFloat
+    ) -> [[Int]] {
+        var positions = centers
+        var rows = bands(at: positions, tolerance: tolerance)
+        let signedPrice = #/^[-−][0-9]{1,9}[.,][0-9]{2}(?:\s*PLN)?(?:\s*[A-G])?$/#.ignoresCase()
+        let orphanPrices = rows.compactMap { row -> Int? in
+            guard row.count == 1, text[row[0]].wholeMatch(of: signedPrice) != nil else { return nil }
+            return row[0]
+        }
+        guard !orphanPrices.isEmpty else { return rows }
+
+        let discountPrefix = #/^(?:OPUST|RABAT)\b/#.ignoresCase()
+        let amountTail = #/(?:^|\s)[+−-]?[0-9]{1,9}[.,][0-9]{2}(?:\s*PLN)?(?:\s*[A-G])?$/#.ignoresCase()
+        let calculation = #/^(?:[0-9]{1,6}(?:[.,][0-9]{1,4})?|I(?=\s*SZT\b))\s*(?:L|SZT|KG|G|M)?\s*[*×X=]\s*[0-9]{1,9}[.,][0-9]{2}\s+[0-9]{1,9}[.,][0-9]{2}(?:\s*PLN)?(?:\s*[A-G])?$/#.ignoresCase()
+        let boxes = fragments.map(\.box)
+        let conflicts = rows.compactMap { row -> (label: Int, item: Int, signed: [Int])? in
+            guard row.count == 2 else { return nil }
+            let ordered = row.sorted { boxes[$0].minX < boxes[$1].minX }
+            let label = ordered[0], item = ordered[1]
+            guard text[label].firstMatch(of: discountPrefix) != nil,
+                  text[label].firstMatch(of: amountTail) == nil,
+                  text[item].wholeMatch(of: calculation) != nil,
+                  boxes[label].maxX <= boxes[item].minX,
+                  abs(boxes[label].midY - boxes[item].midY) > tolerance else { return nil }
+            let signed = orphanPrices.filter { candidate in
+                boxes[label].maxX <= boxes[candidate].minX
+                    && abs(boxes[candidate].midY - boxes[label].midY) <= tolerance
+                    && abs(boxes[candidate].maxX - boxes[item].maxX) <= priceColumnTolerance
+            }
+            return (label, item, signed)
+        }
+
+        for (label, item, signed) in conflicts where signed.count == 1 {
+            let discount = signed[0]
+            guard conflicts.filter({ $0.signed.contains(discount) }).count == 1,
+                  rows.contains([discount]) else { continue }
+
+            // The adjusted centers disagree with the raw boxes here. Use the
+            // measured offsets from the label for this pair only.
+            var proposed = positions
+            for index in [item, discount] {
+                proposed[index] = positions[label] + (boxes[index].midY - boxes[label].midY)
+            }
+            let columnAmounts = boxes.indices.filter {
+                abs(boxes[$0].maxX - boxes[item].maxX) <= priceColumnTolerance
+                    && text[$0].firstMatch(of: amountTail) != nil
+            }
+            guard columnAmounts.sorted(by: { positions[$0] > positions[$1] }) ==
+                    columnAmounts.sorted(by: { proposed[$0] > proposed[$1] }) else { continue }
+
+            let candidate = bands(at: proposed, tolerance: tolerance)
+            func otherRows(_ groups: [[Int]]) -> [[Int]] {
+                groups.map { row in row.filter { $0 != item && $0 != discount } }.filter { !$0.isEmpty }
+            }
+            guard candidate.contains(where: { $0.count == 2 && $0.contains(label) && $0.contains(discount) }),
+                  let itemRow = candidate.first(where: { $0.contains(item) }),
+                  itemRow.allSatisfy({
+                      $0 == item || (
+                          boxes[$0].maxX <= boxes[item].minX
+                              && abs(boxes[$0].midY - boxes[item].midY) <= tolerance
+                              && text[$0].firstMatch(of: amountTail) == nil
+                              && text[$0].firstMatch(of: discountPrefix) == nil
+                      )
+                  }),
+                  otherRows(rows) == otherRows(candidate) else { continue }
+            positions = proposed
+            rows = candidate
+        }
+        return rows
+    }
+
+    private static func alignRows(_ fragments: [TextFragment]) -> [CGFloat] {
         // Use long text edges rather than short price boxes, whose corners
         // provide a noisy slope. Give the longer edges more weight.
         let samples = fragments.compactMap { fragment -> (y: CGFloat, slope: CGFloat, weight: CGFloat)? in
@@ -67,15 +145,15 @@ enum ReceiptLineOrdering {
         return fragments.map { fragment in
             let nearby = samples.filter { abs($0.y - fragment.box.midY) < slopeNeighborhood }
             let weight = nearby.reduce(0) { $0 + $1.weight }
-            guard weight > 0 else { return fragment }
+            guard weight > 0 else { return fragment.box.midY }
             let slope = nearby.reduce(0) { $0 + $1.slope * $1.weight } / weight
             // A single tilted title should not shift otherwise level rows.
             let agreeingEdges = nearby.filter { abs($0.slope) >= 0.01 && $0.slope * slope > 0 }
-            guard agreeingEdges.count >= 2 else { return fragment }
+            guard agreeingEdges.count >= 2 else { return fragment.box.midY }
             // Project centres to a common x. Estimate the slope locally because
             // the text can curve across a crumpled or curled receipt.
             let rise = slope * (fragment.box.midX - 0.5)
-            return TextFragment(text: fragment.text, box: fragment.box.offsetBy(dx: 0, dy: -rise))
+            return fragment.box.midY - rise
         }
     }
 }
