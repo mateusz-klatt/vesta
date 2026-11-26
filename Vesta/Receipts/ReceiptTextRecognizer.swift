@@ -95,6 +95,7 @@ struct ReceiptOCRAssessment {
     private var ambiguousDiscountRows = 0
     private var balancedAmounts: [Decimal: Int] = [:]
     private var discountAmounts: [Decimal: Int] = [:]
+    private var unclassifiedAmounts: [Decimal: Int] = [:]
 
     init(lines: [String]) {
         let itemPattern = #/(?:^|[^0-9.,\p{L}])([0-9]{1,6}(?:[.,][0-9]{1,4})?)\s*(?:L|SZT|KG|G|M)?\s*[*×X=]\s*([0-9]{1,9}[.,][0-9]{2,4})\s+([0-9]{1,9}[.,][0-9]{2}0{0,2})(?![0-9.,])/#.ignoresCase()
@@ -103,7 +104,7 @@ struct ReceiptOCRAssessment {
             ^(?:OPUST|RABAT)\b.*?[^0-9.,\p{L}]
             ([0-9]{1,6}(?:[.,][0-9]{1,4})?|I(?=\s*SZT\b))\s*(?:L|SZT|KG|G|M)?\s*[*×X=]\s*
             ([0-9]{1,9}[.,][0-9]{2,4})\s+([0-9]{1,9}[.,][0-9]{2}0{0,2})(?:\s*PLN)?(?:\s*[A-G])?
-            (?:\s+[-−][0-9]{1,9}[.,][0-9]{2}(?:\s*PLN)?(?:\s*[A-G])?)?$
+            (?:\s+[-−]([0-9]{1,9}[.,][0-9]{2})(?:\s*PLN)?(?:\s*[A-G])?)?$
             /#
         let totalPattern = #/^(SUMA PLN|DO ZAPLATY)\s+([0-9]{1,9}[.,][0-9]{2})\s*(?:PLN)?$/#
         for line in lines {
@@ -113,24 +114,22 @@ struct ReceiptOCRAssessment {
             if let total = label.wholeMatch(of: totalPattern), let amount = Self.amount(total.2) {
                 if total.1 == "DO ZAPLATY" { payableTotal = amount } else { fiscalTotal = amount }
             } else if let item = label.wholeMatch(of: discountItemPattern),
-                      item.1 == "I" || Self.positiveAmount(item.1),
-                      Self.positiveAmount(item.2), Self.positiveAmount(item.3) {
-                // Vision can join a discount label to the item's price column.
-                // Neither role is verified by this line alone.
+                      let quantity = item.1 == "I" ? 1 : Self.amount(item.1),
+                      let unitPrice = Self.amount(item.2), let lineTotal = Self.amount(item.3),
+                      quantity > 0, unitPrice > 0, lineTotal > 0 {
                 ambiguousDiscountRows += 1
+                // A joined discount label obscures the positive amount's role.
+                if Self.matchesProduct(quantity, unitPrice, lineTotal) {
+                    unclassifiedAmounts[lineTotal, default: 0] += 1
+                }
+                if let discount = item.4.flatMap(Self.amount) { recordDiscount(discount) }
             } else if let discount = label.wholeMatch(of: discountPattern), let amount = Self.amount(discount.1) {
-                let magnitude = abs(amount)
-                discountAmounts[magnitude, default: 0] += 1
-                discountTotal += magnitude
+                recordDiscount(amount)
             } else if let item = line.firstMatch(of: itemPattern),
                       let quantity = Self.amount(item.1),
                       let unitPrice = Self.amount(item.2),
                       let lineTotal = Self.amount(item.3) {
-                // Fuel and other fractional quantities are rounded to cents.
-                var product = quantity * unitPrice
-                var rounded = Decimal()
-                NSDecimalRound(&rounded, &product, 2, .plain)
-                if rounded == lineTotal {
+                if Self.matchesProduct(quantity, unitPrice, lineTotal) {
                     balancedRows += 1
                     balancedAmounts[lineTotal, default: 0] += 1
                     itemTotal += lineTotal
@@ -165,7 +164,11 @@ struct ReceiptOCRAssessment {
               balancedRows + inconsistentRows >= original.balancedRows + original.inconsistentRows,
               namedBalancedRows >= original.namedBalancedRows,
               original.balancedAmounts.allSatisfy({ balancedAmounts[$0.key, default: 0] >= $0.value }),
-              original.discountAmounts.allSatisfy({ discountAmounts[$0.key, default: 0] >= $0.value }) else { return false }
+              original.discountAmounts.allSatisfy({ discountAmounts[$0.key, default: 0] >= $0.value }),
+              original.unclassifiedAmounts.allSatisfy({ amount, count in
+                  let classified = original.balancedAmounts[amount, default: 0] + original.discountAmounts[amount, default: 0]
+                  return balancedAmounts[amount, default: 0] + discountAmounts[amount, default: 0] >= classified + count
+              }) else { return false }
         return (reconciles && !original.reconciles) || namedBalancedRows > original.namedBalancedRows
             || (balancedRows > original.balancedRows && inconsistentRows < original.inconsistentRows)
     }
@@ -174,7 +177,19 @@ struct ReceiptOCRAssessment {
         Decimal(string: value.replacingOccurrences(of: ",", with: "."), locale: locale)
     }
 
-    private static func positiveAmount(_ value: Substring) -> Bool { (amount(value) ?? 0) > 0 }
+    private mutating func recordDiscount(_ amount: Decimal) {
+        let magnitude = abs(amount)
+        discountAmounts[magnitude, default: 0] += 1
+        discountTotal += magnitude
+    }
+
+    private static func matchesProduct(_ quantity: Decimal, _ unitPrice: Decimal, _ lineTotal: Decimal) -> Bool {
+        // Fuel and other fractional quantities are rounded to cents.
+        var product = quantity * unitPrice
+        var rounded = Decimal()
+        NSDecimalRound(&rounded, &product, 2, .plain)
+        return rounded == lineTotal
+    }
 }
 
 /// On-device OCR. Abstracted so the capture flow can be tested without Vision.
