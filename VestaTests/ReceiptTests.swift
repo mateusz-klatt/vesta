@@ -519,6 +519,67 @@ final class ReceiptLineOrderingTests: XCTestCase {
         XCTAssertEqual(ReceiptLineOrdering.lines(from: fragments), ["SKLEP", "MLEKO 4,00 A", "CHLEB 5,00 A"])
     }
 
+    private var discountConflict: [TextFragment] {
+        [
+            frag("BATON", x: 0.19, y: 0.6625, w: 0.30, h: 0.015, slope: 0.04),
+            frag("1szt * 7,89 7,89 A", x: 0.71, y: 0.6625, w: 0.10, h: 0.015),
+            frag("OPUST BATON", x: 0.18, y: 0.6455, w: 0.32, h: 0.015, slope: 0.04),
+            frag("-1,23 A", x: 0.75, y: 0.6455, w: 0.06, h: 0.015),
+        ]
+    }
+
+    func testCurledReceiptKeepsItemCalculationAndSignedDiscountOnTheirOwnRows() {
+        let fragments = discountConflict.reversed()
+        XCTAssertEqual(ReceiptLineOrdering.lines(from: Array(fragments)), [
+            "BATON 1szt * 7,89 7,89 A", "OPUST BATON -1,23 A",
+        ])
+    }
+
+    func testTiltedDiscountAlreadyAlignedWithItsPriceIsPreserved() {
+        var fragments = discountConflict
+        fragments[1] = frag("1szt * 7,89 7,89 A", x: 0.71, y: 0.6793, w: 0.10, h: 0.015)
+        fragments[3] = frag("-1,23 A", x: 0.75, y: 0.6631, w: 0.06, h: 0.015)
+        XCTAssertEqual(ReceiptLineOrdering.lines(from: fragments), [
+            "BATON 1szt * 7,89 7,89 A", "OPUST BATON -1,23 A",
+        ])
+    }
+
+    func testDiscountIsNotAssignedWhenTwoSignedAmountsFitTheSameRow() {
+        let other = frag("-0,50 A", x: 0.767, y: 0.6385, w: 0.06, h: 0.015)
+        let lines = ReceiptLineOrdering.lines(from: discountConflict + [other])
+        XCTAssertEqual(lines, ["BATON", "OPUST BATON 1szt * 7,89 7,89 A", "-1,23 A", "-0,50 A"])
+    }
+
+    func testDiscountIsNotAssignedWhenAnotherLabelFitsTheSignedAmount() {
+        let other = frag("OPUST CHLEB", x: 0.32, y: 0.6385, w: 0.12, h: 0.015, slope: 0.04)
+        XCTAssertEqual(ReceiptLineOrdering.lines(from: discountConflict + [other]), [
+            "BATON", "OPUST BATON 1szt * 7,89 7,89 A", "OPUST CHLEB", "-1,23 A",
+        ])
+    }
+
+    func testDiscountIsNotAssignedToAConflictWhenAnIsolatedLabelIsCloser() {
+        var fragments = discountConflict
+        fragments[3] = frag("-1,23 A", x: 0.75, y: 0.6410, w: 0.06, h: 0.015)
+        let other = frag("OPUST CHLEB", x: 0.44, y: 0.6385, w: 0.12, h: 0.015, slope: 0.04)
+        XCTAssertEqual(ReceiptLineOrdering.lines(from: fragments + [other]), [
+            "BATON", "OPUST BATON 1szt * 7,89 7,89 A", "OPUST CHLEB", "-1,23 A",
+        ])
+    }
+
+    func testDiscountDoesNotTakeASignedAmountFromAnotherRow() {
+        let other = frag("OPUST CHLEB", x: 0.19, y: 0.6279, w: 0.30, h: 0.015, slope: 0.04)
+        XCTAssertEqual(ReceiptLineOrdering.lines(from: discountConflict + [other]), [
+            "BATON", "OPUST BATON 1szt * 7,89 7,89 A", "OPUST CHLEB -1,23 A",
+        ])
+    }
+
+    func testDiscountRepairDoesNotCrossAnExistingPriceInTheSameColumn() {
+        let other = frag("9,50 B", x: 0.75, y: 0.6737, w: 0.06, h: 0.015)
+        XCTAssertEqual(ReceiptLineOrdering.lines(from: discountConflict + [other]), [
+            "BATON 9,50 B", "OPUST BATON 1szt * 7,89 7,89 A", "-1,23 A",
+        ])
+    }
+
     func testDropsBlankFragments() {
         XCTAssertEqual(ReceiptLineOrdering.lines(from: [frag("  ", x: 0, y: 0.5)]), [])
         XCTAssertEqual(ReceiptLineOrdering.lines(from: []), [])
