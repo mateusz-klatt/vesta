@@ -92,12 +92,14 @@ struct ReceiptOCRAssessment {
     private var balancedRows = 0
     private var namedBalancedRows = 0
     private var inconsistentRows = 0
+    private var ambiguousDiscountRows = 0
     private var balancedAmounts: [Decimal: Int] = [:]
     private var discountAmounts: [Decimal: Int] = [:]
 
     init(lines: [String]) {
         let itemPattern = #/(?:^|[^0-9.,\p{L}])([0-9]{1,6}(?:[.,][0-9]{1,4})?)\s*(?:L|SZT|KG|G|M)?\s*[*×X=]\s*([0-9]{1,9}[.,][0-9]{2,4})\s+([0-9]{1,9}[.,][0-9]{2}0{0,2})(?![0-9.,])/#.ignoresCase()
         let discountPattern = #/^(?:OPUST|RABAT)\b.*?([+-]?[0-9]{1,9}[.,][0-9]{2})(?:\s+PLN)?(?:\s+[A-G])?$/#
+        let discountItemPattern = #/^(?:OPUST|RABAT)\b.*?[^0-9.,\p{L}]([0-9]{1,6}(?:[.,][0-9]{1,4})?|I(?=\s*SZT\b))\s*(?:L|SZT|KG|G|M)?\s*[*×X=]\s*([0-9]{1,9}[.,][0-9]{2,4})\s+([0-9]{1,9}[.,][0-9]{2}0{0,2})(?:\s*PLN)?(?:\s*[A-G])?$/#
         let totalPattern = #/^(SUMA PLN|DO ZAPLATY)\s+([0-9]{1,9}[.,][0-9]{2})\s*(?:PLN)?$/#
         for line in lines {
             let label = line.uppercased().folding(options: .diacriticInsensitive, locale: Self.locale)
@@ -105,6 +107,12 @@ struct ReceiptOCRAssessment {
                 .trimmingCharacters(in: .whitespaces)
             if let total = label.wholeMatch(of: totalPattern), let amount = Self.amount(total.2) {
                 if total.1 == "DO ZAPLATY" { payableTotal = amount } else { fiscalTotal = amount }
+            } else if let item = label.wholeMatch(of: discountItemPattern),
+                      item.1 == "I" || Self.positiveAmount(item.1),
+                      Self.positiveAmount(item.2), Self.positiveAmount(item.3) {
+                // Vision can join a discount label to the item's price column.
+                // Neither role is verified by this line alone.
+                ambiguousDiscountRows += 1
             } else if let discount = label.wholeMatch(of: discountPattern), let amount = Self.amount(discount.1) {
                 let magnitude = abs(amount)
                 discountAmounts[magnitude, default: 0] += 1
@@ -132,11 +140,13 @@ struct ReceiptOCRAssessment {
     private var printedTotal: Decimal? { payableTotal ?? fiscalTotal }
 
     private var reconciles: Bool {
-        guard let printedTotal, balancedRows > 0, inconsistentRows == 0 else { return false }
+        guard let printedTotal, balancedRows > 0, inconsistentRows == 0, ambiguousDiscountRows == 0 else { return false }
         return itemTotal - discountTotal == printedTotal
     }
 
-    var needsRetry: Bool { printedTotal != nil && (balancedRows + inconsistentRows) > 0 && !reconciles }
+    var needsRetry: Bool {
+        printedTotal != nil && (balancedRows + inconsistentRows + ambiguousDiscountRows) > 0 && !reconciles
+    }
 
     func improves(on original: Self) -> Bool {
         guard original.printedTotal != nil,
@@ -144,6 +154,7 @@ struct ReceiptOCRAssessment {
               original.payableTotal.map({ $0 == payableTotal }) ?? true,
               original.fiscalTotal.map({ $0 == fiscalTotal }) ?? true,
               inconsistentRows <= original.inconsistentRows,
+              ambiguousDiscountRows <= original.ambiguousDiscountRows,
               balancedRows + inconsistentRows >= original.balancedRows + original.inconsistentRows,
               namedBalancedRows >= original.namedBalancedRows,
               original.balancedAmounts.allSatisfy({ balancedAmounts[$0.key, default: 0] >= $0.value }),
@@ -155,6 +166,8 @@ struct ReceiptOCRAssessment {
     private static func amount(_ value: Substring) -> Decimal? {
         Decimal(string: value.replacingOccurrences(of: ",", with: "."), locale: locale)
     }
+
+    private static func positiveAmount(_ value: Substring) -> Bool { (amount(value) ?? 0) > 0 }
 }
 
 /// On-device OCR. Abstracted so the capture flow can be tested without Vision.

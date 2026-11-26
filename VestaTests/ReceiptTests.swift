@@ -566,6 +566,30 @@ final class ReceiptOCRAssessmentTests: XCTestCase {
         XCTAssertFalse(ReceiptOCRAssessment(lines: lostDiscount).improves(on: primary))
     }
 
+    func testRetrySeparatesAnItemCalculationJoinedToADiscountLabel() {
+        let retained = ["SOK 1szt * 4,00 4,00 A", "OPUST SOK 0,35 A"]
+        let total = "SUMA PLN 10,75"
+        let recovered = ["BATON 1szt * 7,50 7,50 A", "OPUST BATON -0,40 A", total]
+        let alternate = ReceiptOCRAssessment(lines: retained + recovered)
+        XCTAssertFalse(alternate.needsRetry)
+
+        for count in ["1szt", "Iszt"] {
+            let joined = "OPUST BATON \(count) * 7,50 7,50 A"
+            let primary = ReceiptOCRAssessment(lines: retained + [joined, "-0,40 A", total])
+            XCTAssertTrue(primary.needsRetry)
+            XCTAssertTrue(alternate.improves(on: primary))
+
+            let missingDiscount = ReceiptOCRAssessment(lines: [retained[0]] + recovered)
+            XCTAssertFalse(missingDiscount.improves(on: primary))
+        }
+    }
+
+    func testJoinedDiscountLabelTriggersRetryWithNoOtherItemCalculation() {
+        let joined = "RABAT BATON Iszt = 7,50 7,50 A"
+        XCTAssertTrue(ReceiptOCRAssessment(lines: [joined, "SUMA PLN 7,10"]).needsRetry)
+        XCTAssertFalse(ReceiptOCRAssessment(lines: [joined]).needsRetry)
+    }
+
     func testRetryCannotImproveByDroppingAnItemOrIntroducingADifferentPayableTotal() {
         let primary = ReceiptOCRAssessment(lines: [
             "PALIWO 2L * 5,00 4,00 B",
