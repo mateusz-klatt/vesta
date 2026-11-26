@@ -91,6 +91,9 @@ final class AppState {
     private var budgetGeneration = 0
     private var handledBudgetDenialGeneration: Int?
     private(set) var budgetDenialHandlingCount = 0
+    private weak var activeReceiptReviewStore: ReceiptReviewStore?
+    private var receiptReviewGeneration = 0
+    private var handledReceiptReviewDenialGeneration: Int?
     private weak var activeAgendaStore: AgendaStore?
 
     private struct DiscoveryFence: Equatable {
@@ -273,6 +276,81 @@ final class AppState {
         budgetGeneration += 1
         activeBudgetStore?.clear()
         activeBudgetStore = nil
+    }
+
+    var receiptReviewEnabled = AppConfig.receiptReviewEnabledForBuild {
+        didSet {
+            if receiptReviewEnabled != oldValue { closeReceiptReview() }
+        }
+    }
+
+    var receiptReviewAPI: (any ReceiptReviewAPI)? {
+        guard phase == .ready, let api = api as? any ReceiptReviewAPI,
+              let session = sessionStore.currentSnapshot(),
+              ReceiptReviewGate.isEligible(enabled: receiptReviewEnabled, capabilities: capabilities),
+              let token = receiptPairing.receiptReviewCredential(
+                for: session.origin, session: session, enabled: receiptReviewEnabled
+              ) else { return nil }
+        let generation = receiptReviewGeneration
+        let scope = ReceiptSessionScope(
+            origin: session.origin, actor: session.actor, ownerKey: token.ownerKey, credential: token.credential
+        )
+        return SessionBoundReceiptReviewAPI(api: api, scope: scope, isCurrent: { [weak self] in
+            self?.isCurrentReceiptReviewAPI(session: session, token: token, generation: generation) == true
+        }, onDenial: { [weak self] error in
+            guard let self, handledReceiptReviewDenialGeneration != generation,
+                  isCurrentReceiptReviewAPI(session: session, token: token, generation: generation) else { return false }
+            handledReceiptReviewDenialGeneration = generation
+            closeReceiptReview()
+            switch error {
+            case .forbidden, .expiredDeviceToken, .revokedDeviceToken, .invalidDeviceToken:
+                handleDeviceFailure(error, used: token)
+            case .api(.unauthorized):
+                _ = beginCapabilityRefresh(source: .denial)
+            default:
+                break
+            }
+            return true
+        })
+    }
+
+    private func isCurrentReceiptReviewAPI(
+        session: BoundSession,
+        token: StoredReceiptDeviceToken,
+        generation: Int
+    ) -> Bool {
+        guard phase == .ready, generation == receiptReviewGeneration, session == sessionStore.currentSnapshot(),
+              ReceiptReviewGate.isEligible(enabled: receiptReviewEnabled, capabilities: capabilities) else { return false }
+        return token == receiptPairing.receiptReviewCredential(
+            for: session.origin, session: session, enabled: receiptReviewEnabled
+        )
+    }
+
+    func makeReceiptReviewStore() -> ReceiptReviewStore? {
+        closeReceiptReview()
+        guard let api = receiptReviewAPI, let session = sessionStore.currentSnapshot(),
+              let token = receiptPairing.receiptReviewCredential(
+                for: session.origin, session: session, enabled: receiptReviewEnabled
+              ) else { return nil }
+        let generation = receiptReviewGeneration
+        let scope = ReceiptSessionScope(
+            origin: session.origin, actor: session.actor, ownerKey: token.ownerKey, credential: token.credential
+        )
+        let store = ReceiptReviewStore(api: api, scope: scope, allowsMatching: { [weak self] in
+            guard let self, isCurrentReceiptReviewAPI(session: session, token: token, generation: generation),
+                  let capabilities else { return false }
+            return ReceiptReviewGate.allowsMatching(token, capabilities: capabilities)
+        }, isCurrent: { [weak self] in
+            self?.isCurrentReceiptReviewAPI(session: session, token: token, generation: generation) == true
+        })
+        activeReceiptReviewStore = store
+        return store
+    }
+
+    func closeReceiptReview() {
+        receiptReviewGeneration += 1
+        activeReceiptReviewStore?.clear()
+        activeReceiptReviewStore = nil
     }
 
     var calendarAPI: (any CalendarAPI)? {
@@ -644,17 +722,26 @@ final class AppState {
         else { return }
         let previous = currentReceiptScope
         let budgetToken = receiptPairing.nativeBudgetCredential(for: session.origin, session: session)
+        let reviewToken = receiptPairing.receiptReviewCredential(
+            for: session.origin, session: session, enabled: receiptReviewEnabled
+        )
         defer {
             if session == sessionStore.currentSnapshot() {
                 if previous != currentReceiptScope { receiptAccessGeneration += 1 }
                 if let budgetToken, budgetToken != receiptPairing.nativeBudgetCredential(for: session.origin, session: session) {
                     closeBudget()
                 }
+                if reviewToken != receiptPairing.receiptReviewCredential(
+                    for: session.origin, session: session, enabled: receiptReviewEnabled
+                ) {
+                    closeReceiptReview()
+                }
             }
         }
         do {
             try await receiptPairing.exchange(session: session, capabilities: capabilities, deviceName: ReceiptPairing.deviceName,
-                                              nativeBudgetEnabled: nativeBudgetEnabled, reason: reason)
+                                              nativeBudgetEnabled: nativeBudgetEnabled,
+                                              receiptReviewEnabled: receiptReviewEnabled, reason: reason)
         } catch DeviceExchangeError.http(403, "budget_forbidden") {
             guard session == sessionStore.currentSnapshot(), !Task.isCancelled else { throw CancellationError() }
             if refreshOnDenial { reportDenial() }
@@ -873,6 +960,8 @@ final class AppState {
         if published != nil { receiptPairing.refreshStatus() }
         if calendarAPI == nil { closeAgenda() }
         if budgetAPI == nil { closeBudget() }
+        if receiptReviewAPI == nil { closeReceiptReview() }
+        else { activeReceiptReviewStore?.updateMatchAccess() }
         applyIOCGrant(published?.canViewIOC == true)
         openReceiptFlow?.updateMatchAccess()
     }
@@ -882,6 +971,8 @@ final class AppState {
         receiptPairing.setServerFeatures(features, capabilities: capabilities)
         if previous != currentReceiptScope { receiptAccessGeneration += 1 }
         if budgetAPI == nil { closeBudget() }
+        if receiptReviewAPI == nil { closeReceiptReview() }
+        else { activeReceiptReviewStore?.updateMatchAccess() }
     }
 
     private func handleReceiptFailure(_ error: ReceiptError, scope: ReceiptSessionScope) {
@@ -890,6 +981,7 @@ final class AppState {
     }
 
     private func handleDeviceFailure(_ error: ReceiptError, used: StoredReceiptDeviceToken?) {
+        if error.isAccessDenial { closeReceiptReview() }
         let reason: ReceiptPairing.ExchangeReason
         switch error {
         case .forbidden:
@@ -1044,6 +1136,7 @@ final class AppState {
         discoveryGeneration += 1
         stopEvents()
         closeBudget()
+        closeReceiptReview()
         closeAgenda()
         phase = .failed(error)
     }

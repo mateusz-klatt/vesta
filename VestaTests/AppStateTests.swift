@@ -3,7 +3,7 @@ import Synchronization
 @testable import Vesta
 
 /// Records every call and can hold a response across a session change.
-actor MockHestiaAPI: HestiaAPI, ReceiptsAPI {
+actor MockHestiaAPI: HestiaAPI, ReceiptsAPI, ReceiptReviewAPI {
     enum Call: Equatable {
         case whoami, capabilities, discovery, logout
         case login(String, String)
@@ -24,6 +24,7 @@ actor MockHestiaAPI: HestiaAPI, ReceiptsAPI {
     private(set) var calls: [Call] = []
     private(set) var calendarStub: (any CalendarAPI)?
     private(set) var budgetStub: (any BudgetAPI)?
+    private(set) var receiptReviewStub: (any ReceiptReviewAPI)?
     private(set) var probeOrigins: [URL] = []
     private(set) var logoutsFinishedAtProbe: [Int] = []
     private(set) var capabilityRequests: [CapabilityRequest] = []
@@ -77,6 +78,7 @@ actor MockHestiaAPI: HestiaAPI, ReceiptsAPI {
     func setCapabilitiesError(_ error: APIError) { capabilitiesResult = .failure(error) }
     func setCalendarStub(_ calendar: any CalendarAPI) { calendarStub = calendar }
     func setBudgetStub(_ budget: (any BudgetAPI)?) { budgetStub = budget }
+    func setReceiptReviewStub(_ review: (any ReceiptReviewAPI)?) { receiptReviewStub = review }
     func setHoldCapabilities() { holdCapabilities = true }
     var isCapabilitiesHeld: Bool { capabilitiesGate != nil }
     func releaseCapabilities() {
@@ -209,6 +211,21 @@ actor MockHestiaAPI: HestiaAPI, ReceiptsAPI {
 
     func deleteReceipt(id: String, expectedVersion: Int, scope: ReceiptSessionScope?) async throws {
         throw ReceiptError.forbidden
+    }
+
+    func listImportedReceipts(cursor: String?, scope: ReceiptSessionScope) async throws -> ReceiptListPage {
+        guard let receiptReviewStub else { throw ReceiptError.forbidden }
+        return try await receiptReviewStub.listImportedReceipts(cursor: cursor, scope: scope)
+    }
+
+    func receiptDetail(id: String, scope: ReceiptSessionScope) async throws -> ReceiptDetailResult {
+        guard let receiptReviewStub else { throw ReceiptError.forbidden }
+        return try await receiptReviewStub.receiptDetail(id: id, scope: scope)
+    }
+
+    func confirmImportedReceipt(_ request: ReceiptConfirmRequest, scope: ReceiptSessionScope) async throws -> ReceiptDetail {
+        guard let receiptReviewStub else { throw ReceiptError.forbidden }
+        return try await receiptReviewStub.confirmImportedReceipt(request, scope: scope)
     }
 }
 

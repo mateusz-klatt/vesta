@@ -9,6 +9,7 @@ struct HomeView: View {
     @State private var pairingPresentation = ReceiptPairingPresentation()
     @State private var receiptFlow: (flow: ReceiptFlow, accessGeneration: Int)?
     @State private var budgetStore: BudgetStore?
+    @State private var reviewStore: ReceiptReviewStore?
     @State private var agendaStore: AgendaStore?
 
     var body: some View {
@@ -43,6 +44,14 @@ struct HomeView: View {
             .background(Theme.background)
             .navigationTitle("Rooms")
             .toolbar {
+                if app.receiptReviewAPI != nil {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { reviewStore = app.makeReceiptReviewStore() } label: {
+                            Image(systemName: "doc.text.magnifyingglass")
+                        }
+                        .accessibilityLabel("Review imported receipts")
+                    }
+                }
                 if app.budgetAPI != nil {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button { budgetStore = app.makeBudgetStore() } label: {
@@ -83,7 +92,7 @@ struct HomeView: View {
             }
             .sheet(isPresented: $showSettings) { SettingsView().appLanguage(app.appLanguage) }
             .receiptPairingSheet($pairingPresentation, app: app)
-            .receiptNewDeviceAlert(app: app, enabled: !showSettings && receiptFlow == nil &&
+            .receiptNewDeviceAlert(app: app, enabled: !showSettings && receiptFlow == nil && reviewStore == nil &&
                                    !pairingPresentation.isPresented(accessGeneration: app.receiptAccessGeneration))
             .sheet(isPresented: Binding(get: { agendaStore != nil }, set: { if !$0 { closeAgenda() } })) {
                 if let agendaStore {
@@ -97,6 +106,17 @@ struct HomeView: View {
                 if let budgetStore {
                     BudgetView(store: budgetStore, onClose: closeBudget).appLanguage(app.appLanguage)
                 }
+            }
+            .sheet(isPresented: Binding(get: { reviewStore != nil }, set: { if !$0 { closeReceiptReview() } })) {
+                if let reviewStore {
+                    ReceiptReviewView(store: reviewStore, onClose: closeReceiptReview).appLanguage(app.appLanguage)
+                }
+            }
+            .onChange(of: app.receiptReviewAPI == nil) { _, unavailable in
+                if unavailable { closeReceiptReview() }
+            }
+            .onChange(of: reviewStore?.isCleared) { _, cleared in
+                if cleared == true { closeReceiptReview() }
             }
             .onChange(of: app.budgetAPI == nil) { _, signedOut in
                 if signedOut { closeBudget() }
@@ -113,11 +133,13 @@ struct HomeView: View {
             .onChange(of: app.phase) { _, phase in
                 if phase != .ready {
                     closeBudget()
+                    closeReceiptReview()
                     closeAgenda()
                 }
             }
             .onDisappear {
                 closeBudget()
+                closeReceiptReview()
                 closeAgenda()
             }
             .onChange(of: app.receiptAccessGeneration) { _, generation in
@@ -144,6 +166,11 @@ struct HomeView: View {
         app.closeBudget()
         budgetStore?.clear()
         budgetStore = nil
+    }
+
+    private func closeReceiptReview() {
+        app.closeReceiptReview()
+        reviewStore = nil
     }
 
     private func closeAgenda() {

@@ -19,8 +19,8 @@ final class ReceiptFlowRaceTests: XCTestCase {
 
         let calls = await api.mock.calls
         XCTAssertEqual(calls, [.parse("BIEDRONKA"), .confirm("tx1")])
-        XCTAssertEqual(flow.confirmed?.status, .confirmed)
-        XCTAssertEqual(flow.confirmed?.version, 2)
+        XCTAssertEqual(flow.confirmed?.summary.status, .confirmed)
+        XCTAssertEqual(flow.confirmed?.summary.version, 2)
         XCTAssertNil(flow.parsed)
         XCTAssertNotEqual(flow.step, .done)
     }
@@ -179,8 +179,8 @@ private struct PausedConfirmAPI: ReceiptsAPI {
     func confirmReceipt(_ request: ReceiptConfirmRequest, scope: ReceiptSessionScope?) async throws -> ReceiptDetail {
         var receipt = try await mock.confirmReceipt(request, scope: scope)
         await gate.pause()
-        receipt.status = .confirmed
-        receipt.version += 1
+        receipt.summary.status = .confirmed
+        receipt.summary.version += 1
         return receipt
     }
 

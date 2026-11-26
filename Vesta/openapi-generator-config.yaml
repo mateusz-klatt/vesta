@@ -24,3 +24,13 @@ typeOverrides:
     BudgetAnalyticsMonthlyBudgetCategorySpend: BudgetAnalyticsMonthlyBudgetCategorySpendWire
     BudgetAnalyticsMonthlyBudgetCharts: BudgetAnalyticsMonthlyBudgetChartsWire
     BudgetAnalyticsMonthlyBudgetSeriesCategory: BudgetAnalyticsMonthlyBudgetSeriesCategoryWire
+    # Preserve receipt review's required nullable fields and optional Gmail hints.
+    BudgetReceiptListRequest: BudgetReceiptListRequestWire
+    BudgetReceiptListResult: BudgetReceiptListResultWire
+    BudgetReceiptSummary: BudgetReceiptSummaryWire
+    BudgetReceiptDetailResult: BudgetReceiptDetailResultWire
+    BudgetReceiptDetail: ReceiptDetailWire
+    BudgetReceiptConfirmRequest: ReceiptConfirmRequestWire
+    BudgetReceiptCandidate: ReceiptCandidateWire
+    BudgetReceiptLine: ReceiptLineWire
+    BudgetReceiptPaymentEvidence: ReceiptPaymentEvidenceWire

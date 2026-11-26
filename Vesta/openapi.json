@@ -369,9 +369,13 @@
             "type": "string"
           },
           "booking_date": {
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Booking Date"
           },
@@ -401,21 +405,39 @@
             "title": "Entry Reference",
             "type": "string"
           },
+          "match_strength": {
+            "enum": [
+              "nip",
+              "distinctive",
+              "generic",
+              "none"
+            ],
+            "title": "Match Strength",
+            "type": "string"
+          },
           "merchant_token_hit": {
             "title": "Merchant Token Hit",
             "type": "boolean"
           },
           "transaction_date": {
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Transaction Date"
           },
           "value_date": {
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Value Date"
           }
@@ -426,7 +448,11 @@
           "amount",
           "currency",
           "credit_debit_indicator",
+          "transaction_date",
+          "booking_date",
+          "value_date",
           "merchant_token_hit",
+          "match_strength",
           "date_distance",
           "candidate_token"
         ],
@@ -447,15 +473,30 @@
             "type": "integer"
           },
           "lines": {
-            "items": {
-              "$ref": "#/components/schemas/BudgetReceiptLineInput"
-            },
-            "maxItems": 300,
-            "title": "Lines",
-            "type": "array"
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/BudgetReceiptLineInput"
+                },
+                "maxItems": 300,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Omit or send null to keep stored lines unchanged and re-validate totals against them.",
+            "title": "Lines"
           },
           "link": {
-            "$ref": "#/components/schemas/BudgetReceiptLinkRequest"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BudgetReceiptLinkRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "payment_method": {
             "enum": [
@@ -469,19 +510,29 @@
             "type": "string"
           },
           "raw_nip": {
-            "pattern": "^(?:|[0-9]{10})$",
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "pattern": "^(?:|[0-9]{10})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
+            "description": "Omit to keep the stored NIP unchanged; send null to clear.",
             "title": "Raw Nip"
           },
           "raw_shop_name": {
-            "maxLength": 128,
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
+            "description": "Omit to keep the stored shop name unchanged; send null to clear.",
             "title": "Raw Shop Name"
           },
           "receipt_date": {
@@ -504,10 +555,14 @@
             "type": "string"
           },
           "receipt_time": {
-            "pattern": "^(?:|(?:[01][0-9]|2[0-3]):[0-5][0-9])$",
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "pattern": "^(?:|(?:[01][0-9]|2[0-3]):[0-5][0-9])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Receipt Time"
           },
@@ -524,10 +579,11 @@
           "expected_version",
           "receipt_kind",
           "receipt_date",
+          "receipt_time",
           "total_amount",
           "currency",
           "payment_method",
-          "lines"
+          "link"
         ],
         "title": "BudgetReceiptConfirmRequest",
         "type": "object"
@@ -594,9 +650,13 @@
       "BudgetReceiptDetail": {
         "properties": {
           "chain_key": {
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Chain Key"
           },
@@ -605,22 +665,166 @@
             "type": "number"
           },
           "currency": {
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Currency"
+          },
+          "document_kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "receipt",
+                  "invoice",
+                  "payment_confirmation"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Document Kind"
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Due Date"
+          },
+          "evidence_for_receipt_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Evidence For Receipt Id"
+          },
+          "fee_amount": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fee Amount"
+          },
+          "forwarded_manually": {
+            "default": false,
+            "title": "Forwarded Manually",
+            "type": "boolean"
+          },
+          "forwarded_sender_domain": {
+            "anyOf": [
+              {
+                "maxLength": 253,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Forwarded Sender Domain"
+          },
+          "gateway": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Gateway"
+          },
+          "gateway_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "registered",
+                  "paid"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Gateway Status"
+          },
+          "has_document": {
+            "default": true,
+            "title": "Has Document",
+            "type": "boolean"
           },
           "image_available": {
             "title": "Image Available",
             "type": "boolean"
           },
           "image_expires_at": {
-            "type": [
-              "number",
-              "null"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Image Expires At"
+          },
+          "import_expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Import Expires At"
+          },
+          "invoice_number": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Invoice Number"
           },
           "lines": {
             "items": {
@@ -634,58 +838,112 @@
             "type": "boolean"
           },
           "linked_account_id": {
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Linked Account Id"
           },
           "linked_entry_ref": {
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Linked Entry Ref"
           },
           "math_delta": {
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Math Delta"
           },
+          "payee_host": {
+            "anyOf": [
+              {
+                "maxLength": 253,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Payee Host"
+          },
+          "payment_evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/BudgetReceiptPaymentEvidence"
+            },
+            "title": "Payment Evidence",
+            "type": "array"
+          },
           "payment_method": {
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Payment Method"
           },
           "raw_nip": {
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Raw Nip"
           },
           "raw_shop_name": {
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Raw Shop Name"
           },
           "raw_text_expires_at": {
-            "type": [
-              "number",
-              "null"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Raw Text Expires At"
           },
           "receipt_date": {
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Receipt Date"
           },
@@ -703,16 +961,24 @@
             "type": "string"
           },
           "receipt_time": {
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Receipt Time"
           },
           "shop_id": {
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Shop Id"
           },
@@ -720,7 +986,11 @@
             "enum": [
               "live_text",
               "local_ocr",
-              "cloud_ai"
+              "cloud_ai",
+              "paste",
+              "photo",
+              "email",
+              "attachment"
             ],
             "title": "Source Kind",
             "type": "string"
@@ -729,15 +999,20 @@
             "enum": [
               "draft",
               "confirmed",
-              "needs_review"
+              "needs_review",
+              "imported"
             ],
             "title": "Status",
             "type": "string"
           },
           "total_amount": {
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Total Amount"
           },
@@ -752,14 +1027,28 @@
         },
         "required": [
           "receipt_id",
+          "shop_id",
+          "chain_key",
+          "raw_shop_name",
+          "raw_nip",
           "receipt_kind",
+          "receipt_date",
+          "receipt_time",
+          "total_amount",
+          "currency",
+          "payment_method",
           "status",
           "source_kind",
           "linked",
+          "linked_account_id",
+          "linked_entry_ref",
           "version",
           "created_at",
           "updated_at",
           "image_available",
+          "image_expires_at",
+          "raw_text_expires_at",
+          "math_delta",
           "lines"
         ],
         "title": "BudgetReceiptDetail",
@@ -918,18 +1207,22 @@
             "type": "string"
           },
           "ptu_code": {
-            "enum": [
-              "A",
-              "B",
-              "C",
-              "D",
-              "E",
-              "F",
-              "G"
-            ],
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "enum": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Ptu Code"
           },
@@ -951,20 +1244,28 @@
             "type": "string"
           },
           "raw_unit": {
-            "maxLength": 16,
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Raw Unit"
           },
           "unit_price_raw": {
-            "maxLength": 80,
-            "minLength": 1,
-            "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$",
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "minLength": 1,
+                "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Unit Price Raw"
           }
@@ -972,7 +1273,10 @@
         "required": [
           "line_kind",
           "raw_name",
+          "ptu_code",
           "quantity",
+          "raw_unit",
+          "unit_price_raw",
           "gross_line_total",
           "discount_amount",
           "net_line_total",
@@ -5562,6 +5866,627 @@
         ],
         "title": "BudgetAnalyticsTransferSummary",
         "type": "object"
+      },
+      "BudgetReceiptListRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "maxLength": 8192,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cursor"
+          },
+          "document_kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "receipt",
+                  "invoice",
+                  "payment_confirmation"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Document Kind"
+          },
+          "evidence": {
+            "default": "exclude",
+            "enum": [
+              "exclude",
+              "only",
+              "include"
+            ],
+            "title": "Evidence",
+            "type": "string"
+          },
+          "limit": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "linked": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Linked"
+          },
+          "month": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-[0-9]{2}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Month"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "draft",
+                  "confirmed",
+                  "needs_review",
+                  "imported"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status"
+          }
+        },
+        "title": "BudgetReceiptListRequest",
+        "type": "object"
+      },
+      "BudgetReceiptListResult": {
+        "properties": {
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "receipts": {
+            "items": {
+              "$ref": "#/components/schemas/BudgetReceiptSummary"
+            },
+            "title": "Receipts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "receipts",
+          "next_cursor"
+        ],
+        "title": "BudgetReceiptListResult",
+        "type": "object"
+      },
+      "BudgetReceiptSummary": {
+        "properties": {
+          "chain_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chain Key"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "number"
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
+          "document_kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "receipt",
+                  "invoice",
+                  "payment_confirmation"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Document Kind"
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Due Date"
+          },
+          "evidence_for_receipt_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Evidence For Receipt Id"
+          },
+          "fee_amount": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fee Amount"
+          },
+          "forwarded_manually": {
+            "default": false,
+            "title": "Forwarded Manually",
+            "type": "boolean"
+          },
+          "forwarded_sender_domain": {
+            "anyOf": [
+              {
+                "maxLength": 253,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Forwarded Sender Domain"
+          },
+          "gateway": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Gateway"
+          },
+          "gateway_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "registered",
+                  "paid"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Gateway Status"
+          },
+          "has_document": {
+            "default": true,
+            "title": "Has Document",
+            "type": "boolean"
+          },
+          "image_available": {
+            "title": "Image Available",
+            "type": "boolean"
+          },
+          "image_expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Expires At"
+          },
+          "import_expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Import Expires At"
+          },
+          "invoice_number": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Invoice Number"
+          },
+          "linked": {
+            "title": "Linked",
+            "type": "boolean"
+          },
+          "linked_account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linked Account Id"
+          },
+          "linked_entry_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linked Entry Ref"
+          },
+          "math_delta": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Math Delta"
+          },
+          "payee_host": {
+            "anyOf": [
+              {
+                "maxLength": 253,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Payee Host"
+          },
+          "payment_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Method"
+          },
+          "raw_nip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Nip"
+          },
+          "raw_shop_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Shop Name"
+          },
+          "raw_text_expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Text Expires At"
+          },
+          "receipt_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Date"
+          },
+          "receipt_id": {
+            "pattern": "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+            "title": "Receipt Id",
+            "type": "string"
+          },
+          "receipt_kind": {
+            "enum": [
+              "purchase",
+              "refund"
+            ],
+            "title": "Receipt Kind",
+            "type": "string"
+          },
+          "receipt_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Time"
+          },
+          "shop_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shop Id"
+          },
+          "source_kind": {
+            "enum": [
+              "live_text",
+              "local_ocr",
+              "cloud_ai",
+              "paste",
+              "photo",
+              "email",
+              "attachment"
+            ],
+            "title": "Source Kind",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "draft",
+              "confirmed",
+              "needs_review",
+              "imported"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "total_amount": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Amount"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "number"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "receipt_id",
+          "shop_id",
+          "chain_key",
+          "raw_shop_name",
+          "raw_nip",
+          "receipt_kind",
+          "receipt_date",
+          "receipt_time",
+          "total_amount",
+          "currency",
+          "payment_method",
+          "status",
+          "source_kind",
+          "linked",
+          "linked_account_id",
+          "linked_entry_ref",
+          "version",
+          "created_at",
+          "updated_at",
+          "image_available",
+          "image_expires_at",
+          "raw_text_expires_at",
+          "math_delta"
+        ],
+        "title": "BudgetReceiptSummary",
+        "type": "object"
+      },
+      "BudgetReceiptDetailResult": {
+        "properties": {
+          "candidates": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/BudgetReceiptCandidate"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidates"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/BudgetReceiptDetail"
+          }
+        },
+        "required": [
+          "receipt"
+        ],
+        "title": "BudgetReceiptDetailResult",
+        "type": "object"
+      },
+      "BudgetReceiptPaymentEvidence": {
+        "properties": {
+          "fee_amount": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fee Amount"
+          },
+          "gateway": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gateway"
+          },
+          "gateway_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "registered",
+                  "paid"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gateway Status"
+          },
+          "receipt_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Date"
+          },
+          "receipt_id": {
+            "pattern": "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+            "title": "Receipt Id",
+            "type": "string"
+          },
+          "total_amount": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Amount"
+          }
+        },
+        "required": [
+          "receipt_id",
+          "gateway",
+          "gateway_status",
+          "total_amount",
+          "fee_amount",
+          "receipt_date"
+        ],
+        "title": "BudgetReceiptPaymentEvidence",
+        "type": "object"
       }
     }
   },
@@ -8512,6 +9437,262 @@
         },
         "summary": "Read owner-private local budget analytics",
         "x-required-permission": "budget.view",
+        "x-required-role": "admin"
+      }
+    },
+    "/api/budget/receipts/list": {
+      "post": {
+        "description": "Default-off with HESTIA_BUDGET_RECEIPTS_ENABLED. Requires a SQLite users backend and a browser cookie with exact Origin or a receipts-capable device token. Permissions apply to the target ledger and may be delegated. Requires budget.receipts.view. Cookie plus Authorization returns 400 budget_auth_ambiguous. 411 means Content-Length is required and 415 means Content-Type must be application/json.",
+        "operationId": "listBudgetReceipts",
+        "parameters": [
+          {
+            "description": "Request native Gmail receipt values starting at 0.40.0. Earlier versions or an omitted header receive legacy receipt statuses and source kinds.",
+            "in": "header",
+            "name": "X-Hestia-Contract-Version",
+            "required": false,
+            "schema": {
+              "pattern": "^0\\.(0|[1-9][0-9]{0,2})\\.(0|[1-9][0-9]{0,2})$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BudgetReceiptListRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetReceiptListResult"
+                }
+              }
+            },
+            "description": "owner-scoped stored state; no bank request"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "A missing or invalid credential, device_token_expired, or device_token_revoked."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "admin owner or browser-origin requirement failed; middleware may return an empty body"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "unknown, disabled or foreign resource"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "SQLite users backend is required (budget_requires_sqlite_users)."
+          },
+          "411": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Content-Length is required."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "JSON body exceeds 16384 bytes."
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Content-Type must be application/json."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "internal error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "budget configuration unavailable"
+          }
+        },
+        "summary": "Keyset-page receipts on the target ledger using filters in the JSON body.",
+        "x-required-permission": "legacy_receipts",
+        "x-required-role": "admin"
+      }
+    },
+    "/api/budget/receipts/detail": {
+      "get": {
+        "description": "Default-off owner-private read using a browser cookie or receipts device token. Unknown and foreign receipt IDs both return 404. Cookie plus Authorization returns 400 budget_auth_ambiguous.",
+        "operationId": "getBudgetReceiptDetail",
+        "parameters": [
+          {
+            "description": "Opaque owned receipt UUID.",
+            "in": "query",
+            "name": "receipt_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Request native Gmail receipt values starting at 0.40.0. Earlier versions or an omitted header receive legacy receipt statuses and source kinds.",
+            "in": "header",
+            "name": "X-Hestia-Contract-Version",
+            "required": false,
+            "schema": {
+              "pattern": "^0\\.(0|[1-9][0-9]{0,2})\\.(0|[1-9][0-9]{0,2})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetReceiptDetailResult"
+                }
+              }
+            },
+            "description": "owner-scoped stored state; no bank request"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "A missing or invalid credential, device_token_expired, or device_token_revoked."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "admin owner or browser-origin requirement failed; middleware may return an empty body"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "unknown, disabled or foreign resource"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "SQLite users backend is required (budget_requires_sqlite_users). This read does not accept a JSON body."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "internal error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "budget configuration unavailable"
+          }
+        },
+        "summary": "Read one owned receipt and its structured lines.",
+        "x-required-permission": "legacy_receipts",
         "x-required-role": "admin"
       }
     }

@@ -595,7 +595,7 @@ let sampleParseJSON = #"""
     "raw_unit":null,"unit_price_raw":"4.49","gross_line_total":"4.49","discount_amount":"0","net_line_total":"4.49"}]},
  "candidates":[{"account_id":"acc1","entry_reference":"tx1","amount":"7.98","currency":"PLN",
   "credit_debit_indicator":"DBIT","transaction_date":"2026-11-22","booking_date":"2026-11-23","value_date":null,
-  "merchant_token_hit":true,"date_distance":0,"candidate_token":"tok-1234567890123456789012345678901234567"}]}
+  "merchant_token_hit":true,"match_strength":"nip","date_distance":0,"candidate_token":"tok-1234567890123456789012345678901234567"}]}
 """#
 
 private func body(_ s: String) -> Data { Data(s.utf8) }
@@ -635,7 +635,7 @@ final class ReceiptsClientTests: XCTestCase {
         let result = try await api.parseReceiptText("BIEDRONKA", source: .paste)
         XCTAssertEqual(result.receiptId, sampleReceiptID)
         XCTAssertEqual(result.draft.lines.count, 2)
-        XCTAssertEqual(result.draft.totalAmount, "7.98")
+        XCTAssertEqual(result.draft.summary.totalAmount, "7.98")
         XCTAssertEqual(result.candidates.first?.entryReference, "tx1")
     }
 
@@ -720,8 +720,7 @@ final class ReceiptsClientTests: XCTestCase {
     func testAllDeviceAuthorizedOperationIDsUseTheDeviceToken() async throws {
         let operations = [
             ("parseBudgetReceiptText", "parse-text"), ("confirmBudgetReceipt", "confirm"),
-            ("deleteBudgetReceipt", "delete"), ("listBudgetReceipts", "list"),
-            ("searchBudgetReceipts", "search"), ("getBudgetReceiptDetail", "detail"),
+            ("deleteBudgetReceipt", "delete"), ("searchBudgetReceipts", "search"),
             ("getBudgetReceiptImage", "image"), ("revokeBudgetReceiptDevice", "device-token/revoke"),
         ]
         let server = AppConfig.serverURL
@@ -860,7 +859,7 @@ final class ReceiptFormTests: XCTestCase {
         XCTAssertEqual(request.totalAmount, "7.98")
         XCTAssertEqual(request.link?.entryReference, "tx1")
         XCTAssertEqual(request.link?.candidateToken, p.candidates[0].candidateToken)
-        XCTAssertEqual(request.lines.map(\.netLineTotal), ["3.49", "4.49"])
+        XCTAssertEqual(request.lines?.map(\.netLineTotal), ["3.49", "4.49"])
     }
 
     func testCashNeverLinks() throws {
@@ -902,7 +901,7 @@ final class ReceiptFormTests: XCTestCase {
     func testWhitespaceEditOfAMaxLengthShopSendsTheSignedName() throws {
         var p = try parsed()
         let signed = String(repeating: "A", count: 64) + " " + String(repeating: "B", count: 63)
-        p.draft.rawShopName = signed
+        p.draft.summary.rawShopName = signed
         var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
         form.shopName = String(repeating: "A", count: 64) + "  " + String(repeating: "B", count: 63)
         XCTAssertFalse(form.matchFieldsEdited)

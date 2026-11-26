@@ -12,25 +12,39 @@ struct BearerAuthMiddleware: ClientMiddleware {
     // Unpair can revoke after the active pairing/backend has changed.
     private let revoking: (origin: URL, credential: ReceiptDeviceToken)?
     private let budgetEnabled: @Sendable () -> Bool
+    private let receiptReviewEnabled: @Sendable () -> Bool
+    private let reviewScoped: Bool
+    private let reviewRequiresMatch: Bool
 
     init(session: BoundSession? = nil,
          receiptPairing: ReceiptPairing? = nil,
          receiptScope: ReceiptSessionScope? = nil,
          revoking: (origin: URL, credential: ReceiptDeviceToken)? = nil,
-         budgetEnabled: @escaping @Sendable () -> Bool = { AppConfig.nativeBudgetEnabledForBuild }) {
+         budgetEnabled: @escaping @Sendable () -> Bool = { AppConfig.nativeBudgetEnabledForBuild },
+         receiptReviewEnabled: @escaping @Sendable () -> Bool = { AppConfig.receiptReviewEnabledForBuild },
+         reviewScoped: Bool = false,
+         reviewRequiresMatch: Bool = false) {
         self.session = session
         self.receiptPairing = receiptPairing
         self.receiptScope = receiptScope
         self.revoking = revoking
         self.budgetEnabled = budgetEnabled
+        self.receiptReviewEnabled = receiptReviewEnabled
+        self.reviewScoped = reviewScoped
+        self.reviewRequiresMatch = reviewRequiresMatch
     }
 
     private static let receiptOperations: Set<String> = [
         Operations.ParseBudgetReceiptText.id, Operations.ConfirmBudgetReceipt.id,
         Operations.DeleteBudgetReceipt.id, Operations.RevokeBudgetReceiptDevice.id,
+        Operations.ListBudgetReceipts.id, Operations.GetBudgetReceiptDetail.id,
         // The phone does not pin the OpenAPI paths for these read operations.
-        "listBudgetReceipts", "searchBudgetReceipts", "getBudgetReceiptDetail", "getBudgetReceiptImage",
+        "searchBudgetReceipts", "getBudgetReceiptImage",
     ]
+    private static let receiptReviewOperations: Set<String> = [
+        Operations.ListBudgetReceipts.id, Operations.GetBudgetReceiptDetail.id,
+    ]
+    private static let receiptContractHeader = HTTPField.Name("X-Hestia-Contract-Version")!
     private static let budgetReadPaths = [
         Operations.GetBudgetAnalyticsMonthlyBudget.id: "/api/budget/analytics/monthly-budget",
         Operations.GetBudgetAnalyticsTransactions.id: "/api/budget/analytics/transactions",
@@ -49,6 +63,13 @@ struct BearerAuthMiddleware: ClientMiddleware {
     ) async throws -> (HTTPResponse, HTTPBody?) {
         var request = request
         let requiresDevice = Self.receiptOperations.contains(operationID)
+        let reviewOperation = Self.receiptReviewOperations.contains(operationID)
+            || (reviewScoped && operationID == Operations.ConfirmBudgetReceipt.id)
+        if reviewOperation {
+            guard reviewScoped, receiptScope != nil, receiptReviewEnabled() else { throw ReceiptError.forbidden }
+            // Since 0.52.0 the server exposes imported status and gateway evidence.
+            request.headerFields[Self.receiptContractHeader] = "0.52.0"
+        }
         let issuesDeviceToken = operationID == Operations.RedeemBudgetReceiptDevice.id
             || operationID == Operations.LoginBudgetReceiptDevice.id
         if operationID == Operations.ExchangeNativeSession.id {
@@ -109,9 +130,16 @@ struct BearerAuthMiddleware: ClientMiddleware {
                 guard OriginMatcher.matches(baseURL, revoking.origin) else { throw ReceiptError.pairAgain }
                 request.headerFields[.authorization] = "Bearer \(revoking.credential.token)"
             } else {
-                guard let device = await receiptPairing?.credential(for: baseURL, session: session) else {
-                    throw ReceiptError.pairAgain
+                let device: StoredReceiptDeviceToken?
+                if reviewOperation {
+                    device = await receiptPairing?.receiptReviewCredential(
+                        for: baseURL, session: session, enabled: receiptReviewEnabled(), requiresMatch: reviewRequiresMatch
+                    )
+                    guard receiptReviewEnabled(), device != nil else { throw CancellationError() }
+                } else {
+                    device = await receiptPairing?.credential(for: baseURL, session: session)
                 }
+                guard let device else { throw ReceiptError.pairAgain }
                 if let receiptScope {
                     try Task.checkCancellation()
                     guard OriginMatcher.matches(baseURL, receiptScope.origin),
