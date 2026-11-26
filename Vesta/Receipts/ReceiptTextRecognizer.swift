@@ -1,4 +1,6 @@
 import CoreGraphics
+import CoreImage
+import CoreImage.CIFilterBuiltins
 import Foundation
 import Vision
 
@@ -78,6 +80,83 @@ enum ReceiptLineOrdering {
     }
 }
 
+/// Compares what Vision actually read. It never reconstructs an amount from
+/// arithmetic: the multiplication and printed total only help rank readings.
+struct ReceiptOCRAssessment {
+    private static let locale = Locale(identifier: "en_US_POSIX")
+
+    private var fiscalTotal: Decimal?
+    private var payableTotal: Decimal?
+    private var itemTotal: Decimal = 0
+    private var discountTotal: Decimal = 0
+    private var balancedRows = 0
+    private var namedBalancedRows = 0
+    private var inconsistentRows = 0
+    private var balancedAmounts: [Decimal: Int] = [:]
+    private var discountAmounts: [Decimal: Int] = [:]
+
+    init(lines: [String]) {
+        let itemPattern = #/(?:^|[^0-9.,\p{L}])([0-9]{1,6}(?:[.,][0-9]{1,4})?)\s*(?:L|SZT|KG|G|M)?\s*[*×X=]\s*([0-9]{1,9}[.,][0-9]{2,4})\s+([0-9]{1,9}[.,][0-9]{2}0{0,2})(?![0-9.,])/#.ignoresCase()
+        let discountPattern = #/^(?:OPUST|RABAT)\b.*?([+-]?[0-9]{1,9}[.,][0-9]{2})(?:\s+PLN)?(?:\s+[A-G])?$/#
+        let totalPattern = #/^(SUMA PLN|DO ZAPLATY)\s+([0-9]{1,9}[.,][0-9]{2})\s*(?:PLN)?$/#
+        for line in lines {
+            let label = line.uppercased().folding(options: .diacriticInsensitive, locale: Self.locale)
+                .replacingOccurrences(of: "Ł", with: "L")
+                .trimmingCharacters(in: .whitespaces)
+            if let total = label.wholeMatch(of: totalPattern), let amount = Self.amount(total.2) {
+                if total.1 == "DO ZAPLATY" { payableTotal = amount } else { fiscalTotal = amount }
+            } else if let discount = label.wholeMatch(of: discountPattern), let amount = Self.amount(discount.1) {
+                let magnitude = abs(amount)
+                discountAmounts[magnitude, default: 0] += 1
+                discountTotal += magnitude
+            } else if let item = line.firstMatch(of: itemPattern),
+                      let quantity = Self.amount(item.1),
+                      let unitPrice = Self.amount(item.2),
+                      let lineTotal = Self.amount(item.3) {
+                // Fuel and other fractional quantities are rounded to cents.
+                var product = quantity * unitPrice
+                var rounded = Decimal()
+                NSDecimalRound(&rounded, &product, 2, .plain)
+                if rounded == lineTotal {
+                    balancedRows += 1
+                    balancedAmounts[lineTotal, default: 0] += 1
+                    itemTotal += lineTotal
+                    if line[..<item.range.lowerBound].contains(where: \.isLetter) { namedBalancedRows += 1 }
+                } else {
+                    inconsistentRows += 1
+                }
+            }
+        }
+    }
+
+    private var printedTotal: Decimal? { payableTotal ?? fiscalTotal }
+
+    private var reconciles: Bool {
+        guard let printedTotal, balancedRows > 0, inconsistentRows == 0 else { return false }
+        return itemTotal - discountTotal == printedTotal
+    }
+
+    var needsRetry: Bool { printedTotal != nil && (balancedRows + inconsistentRows) > 0 && !reconciles }
+
+    func improves(on original: Self) -> Bool {
+        guard original.printedTotal != nil,
+              printedTotal == original.printedTotal,
+              original.payableTotal.map({ $0 == payableTotal }) ?? true,
+              original.fiscalTotal.map({ $0 == fiscalTotal }) ?? true,
+              inconsistentRows <= original.inconsistentRows,
+              balancedRows + inconsistentRows >= original.balancedRows + original.inconsistentRows,
+              namedBalancedRows >= original.namedBalancedRows,
+              original.balancedAmounts.allSatisfy({ balancedAmounts[$0.key, default: 0] >= $0.value }),
+              original.discountAmounts.allSatisfy({ discountAmounts[$0.key, default: 0] >= $0.value }) else { return false }
+        return (reconciles && !original.reconciles) || namedBalancedRows > original.namedBalancedRows
+            || (balancedRows > original.balancedRows && inconsistentRows < original.inconsistentRows)
+    }
+
+    private static func amount(_ value: Substring) -> Decimal? {
+        Decimal(string: value.replacingOccurrences(of: ",", with: "."), locale: locale)
+    }
+}
+
 /// On-device OCR. Abstracted so the capture flow can be tested without Vision.
 protocol ReceiptTextRecognizing: Sendable {
     func recognize(_ image: CGImage) async throws -> [TextFragment]
@@ -87,8 +166,37 @@ protocol ReceiptTextRecognizing: Sendable {
 /// the device here; the image is dropped by the caller as soon as this returns.
 struct VisionReceiptRecognizer: ReceiptTextRecognizing {
     static let preferredLanguages = ["pl-PL", "en-US"]
+    private static let renderContext = CIContext()
 
     func recognize(_ image: CGImage) async throws -> [TextFragment] {
+        let primary = try await Self.read(image)
+        let assessment = ReceiptOCRAssessment(lines: ReceiptLineOrdering.lines(from: primary))
+        guard assessment.needsRetry else { return primary }
+        try Task.checkCancellation()
+        guard let alternateImage = Self.resampled(image) else { return primary }
+        let alternate = try? await Self.read(alternateImage)
+        try Task.checkCancellation()
+        guard let alternate else { return primary }
+        let alternateAssessment = ReceiptOCRAssessment(lines: ReceiptLineOrdering.lines(from: alternate))
+        return alternateAssessment.improves(on: assessment) ? alternate : primary
+    }
+
+    private static func resampled(_ image: CGImage) -> CGImage? {
+        // Different sampling can recover a digit or fragment from the same
+        // photograph. Keep the whole image and cap the working resolution.
+        let longEdge = max(image.width, image.height)
+        let filter = CIFilter.lanczosScaleTransform()
+        filter.inputImage = CIImage(cgImage: image)
+        switch longEdge {
+        case ..<850: filter.scale = 1.5
+        case ..<2_000: filter.scale = 1.35
+        default: filter.scale = Float(1_600) / Float(longEdge)
+        }
+        guard let output = filter.outputImage else { return nil }
+        return renderContext.createCGImage(output, from: output.extent)
+    }
+
+    private static func read(_ image: CGImage) async throws -> [TextFragment] {
         var request = RecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true

@@ -525,6 +525,91 @@ final class ReceiptLineOrderingTests: XCTestCase {
     }
 }
 
+// MARK: - OCR retry
+
+final class ReceiptOCRAssessmentTests: XCTestCase {
+    private let clean = [
+        "PALIWO 10L * 2,00 20,00 B",
+        "ZAPAS 250ml 1szt × 8,99 8,99 A",
+        "OPUST ZAPAS 250ml -0,01 A",
+        "SUMA PLN 28,98",
+        "KAUCJA 2 * 0,50 1,00",
+        "DO ZAPŁATY 29,98",
+    ]
+
+    func testBalancedItemsDiscountAndDepositDoNotTriggerRetry() {
+        XCTAssertFalse(ReceiptOCRAssessment(lines: clean).needsRetry)
+    }
+
+    func testRetryCanRecoverMisreadNumbersWhenPrintedTotalsAgree() {
+        var illegible = clean
+        illegible[0] = "10L * 9,02 04,43 B"
+        illegible[4] = "KAUCJA 2 * 0.50 11,00"
+        let primary = ReceiptOCRAssessment(lines: illegible)
+        let alternate = ReceiptOCRAssessment(lines: clean)
+        XCTAssertTrue(primary.needsRetry)
+        XCTAssertTrue(alternate.improves(on: primary))
+        XCTAssertFalse(primary.improves(on: alternate))
+    }
+
+    func testBetterItemsCannotOverrideADifferentPrintedTotalOrDropADiscount() {
+        var illegible = clean
+        illegible[0] = "10L * 9,02 04,43 B"
+        let primary = ReceiptOCRAssessment(lines: illegible)
+
+        var changedTotal = clean
+        changedTotal[5] = "DO ZAPŁATY 20,98"
+        XCTAssertFalse(ReceiptOCRAssessment(lines: changedTotal).improves(on: primary))
+
+        var lostDiscount = clean
+        lostDiscount.remove(at: 2)
+        XCTAssertFalse(ReceiptOCRAssessment(lines: lostDiscount).improves(on: primary))
+    }
+
+    func testRetryCannotImproveByDroppingAnItemOrIntroducingADifferentPayableTotal() {
+        let primary = ReceiptOCRAssessment(lines: [
+            "PALIWO 2L * 5,00 4,00 B",
+            "MLEKO 1 * 2,00 2,00 A",
+            "SUMA PLN 12,00",
+        ])
+        let dropped = ReceiptOCRAssessment(lines: ["MLEKO 1 * 2,00 2,00 A", "SUMA PLN 12,00"])
+        let changed = ReceiptOCRAssessment(lines: [
+            "PALIWO 2L * 5,00 10,00 B",
+            "MLEKO 1 * 2,00 2,00 A",
+            "SUMA PLN 12,00",
+            "DO ZAPŁATY 10,00",
+        ])
+        XCTAssertTrue(primary.needsRetry)
+        XCTAssertFalse(dropped.improves(on: primary))
+        XCTAssertFalse(changed.improves(on: primary))
+    }
+
+    @MainActor
+    func testVisionKeepsPrintedAmountWhenRetryCannotReconcileIt() async throws {
+        let rows = ["SKLEP TESTOWY", "PALIWO 2L * 5,00 4,00 B", "DO ZAPLATY 4,00"]
+        let size = CGSize(width: 1_000, height: 390)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: size, format: format).image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            let style: [NSAttributedString.Key: Any] = [
+                .font: UIFont.monospacedSystemFont(ofSize: 46, weight: .semibold),
+                .foregroundColor: UIColor.black,
+            ]
+            for (index, row) in rows.enumerated() {
+                (row as NSString).draw(at: CGPoint(x: 36, y: 38 + 100 * index), withAttributes: style)
+            }
+        }
+
+        let fragments = try await VisionReceiptRecognizer().recognize(XCTUnwrap(image.cgImage))
+        let lines = ReceiptLineOrdering.lines(from: fragments)
+        XCTAssertTrue(ReceiptOCRAssessment(lines: lines).needsRetry)
+        XCTAssertTrue(lines.contains { $0.hasPrefix("DO ZAPLATY") && $0.contains("4,00") })
+        XCTAssertFalse(lines.contains { $0.contains("10,00") })
+    }
+}
+
 // MARK: - Limits + errors
 
 final class ReceiptTextTests: XCTestCase {
