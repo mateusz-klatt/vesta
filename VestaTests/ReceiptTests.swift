@@ -595,7 +595,7 @@ let sampleParseJSON = #"""
     "raw_unit":null,"unit_price_raw":"4.49","gross_line_total":"4.49","discount_amount":"0","net_line_total":"4.49"}]},
  "candidates":[{"account_id":"acc1","entry_reference":"tx1","amount":"7.98","currency":"PLN",
   "credit_debit_indicator":"DBIT","transaction_date":"2026-11-22","booking_date":"2026-11-23","value_date":null,
-  "merchant_token_hit":true,"date_distance":0,"candidate_token":"tok-1234567890123456789012345678901234567"}]}
+  "merchant_token_hit":true,"match_strength":"nip","date_distance":0,"candidate_token":"tok-1234567890123456789012345678901234567"}]}
 """#
 
 private func body(_ s: String) -> Data { Data(s.utf8) }

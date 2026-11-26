@@ -172,6 +172,17 @@ final class ReceiptPairing {
         return token
     }
 
+    func receiptReviewCredential(for origin: URL, session: BoundSession?, enabled: Bool,
+                                 requiresMatch: Bool = false) -> StoredReceiptDeviceToken? {
+        guard let session, supportsExchange(in: session),
+              ReceiptReviewGate.isEligible(enabled: enabled, capabilities: publishedCapabilities),
+              let token = activeCredential(for: origin, session: session),
+              ReceiptReviewGate.allowsDevice(token, origin: origin, actor: session.actor),
+              !requiresMatch || ReceiptReviewGate.allowsMatching(token, capabilities: publishedCapabilities)
+        else { return nil }
+        return token
+    }
+
     private func isBound(_ token: StoredReceiptDeviceToken, to session: BoundSession?) -> Bool {
         if let session {
             guard OriginMatcher.matches(token.server, session.origin) else { return false }
@@ -509,14 +520,16 @@ final class ReceiptPairing {
 
 extension ReceiptPairing {
     func exchange(session: BoundSession, capabilities: Capabilities, deviceName: String,
-                  nativeBudgetEnabled: Bool = false, reason: ExchangeReason = .automatic) async throws {
+                  nativeBudgetEnabled: Bool = false, receiptReviewEnabled: Bool = false,
+                  reason: ExchangeReason = .automatic) async throws {
         guard !isBusy, let actor = session.actor, !actor.isEmpty,
               sessionStore?.currentSnapshot() == session, supportsExchange(in: session),
               capabilities.user == nil || capabilities.user == actor,
               publishedCapabilities.map({ $0 == capabilities }) ?? true else { return }
         let budgetEligible = NativeBudgetGate.isEligible(enabled: nativeBudgetEnabled, features: publishedFeatures,
                                                          capabilities: capabilities)
-        guard capabilities.canUseReceipts || budgetEligible else { return }
+        let reviewEligible = ReceiptReviewGate.isEligible(enabled: receiptReviewEnabled, capabilities: capabilities)
+        guard capabilities.canUseReceipts || budgetEligible || reviewEligible else { return }
         let retryingRejectedRequest = rejectedRequestSession == session
         if retryingRejectedRequest, reason != .manual, reason != .refresh { return }
 
@@ -531,8 +544,10 @@ extension ReceiptPairing {
             $0.provenance == .legacyMigrated1x && $0.actor == nil && OriginMatcher.matches($0.server, session.origin)
         } ?? false
         let hasOwnReceipts = canUseOwnReceipts(capabilities)
-        let selfSlotEligible = hasOwnReceipts || budgetEligible
-        let knownOwner = hasOwnReceipts || (budgetEligible && !capabilities.canUseReceipts)
+        let ownPermissions = capabilities.ownBudget?.canUseReceipts == true ? capabilities.ownBudget?.permissions : nil
+        let hasOwnReview = ownPermissions?.isSuperset(of: ReceiptReviewGate.requiredPermissions) == true
+        let selfSlotEligible = hasOwnReceipts || hasOwnReview || budgetEligible
+        let knownOwner = hasOwnReceipts || hasOwnReview || (budgetEligible && !capabilities.canUseReceipts)
         let eligibleActive = active.flatMap { token in
             isBound(token, to: session) && (token.provenance == .exchanged || selfSlotEligible) ? token : nil
         }
@@ -553,7 +568,9 @@ extension ReceiptPairing {
            !retryingRejectedRequest, reason == .automatic || reason == .refresh,
            try !store.loadRollbackQuarantine().contains(where: eligibleActive.matchesBearer),
            !capabilities.canUseReceipts || eligibleActive.issuedPermissions?.contains(Permission.budgetReceiptsAdd.rawValue) == true,
-           !budgetEligible || eligibleActive.issuedPermissions?.contains(Permission.budgetView.rawValue) == true { return }
+           !budgetEligible || eligibleActive.issuedPermissions?.contains(Permission.budgetView.rawValue) == true,
+           !reviewEligible || ReceiptReviewGate.requiredPermissions.isSubset(of:
+                (eligibleActive.issuedPermissions ?? []).compactMap(Permission.init(rawValue:))) { return }
         if journal == nil, reason == .ceilingExpansion {
             guard let prior else { return }
             if prior.provenance == .exchanged {

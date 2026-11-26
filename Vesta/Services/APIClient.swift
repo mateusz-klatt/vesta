@@ -90,6 +90,7 @@ actor APIClient: HestiaAPI {
     private let probeTransport: any ClientTransport
     private let budgetScopeOverride: ReceiptSessionScope?
     let budgetEnabled: @Sendable () -> Bool
+    let receiptReviewEnabled: @Sendable () -> Bool
 
     // The streaming transport installs its own task delegate. Use the session's
     // redirect delegate for generated REST requests.
@@ -97,6 +98,7 @@ actor APIClient: HestiaAPI {
          receiptPairing: ReceiptPairing? = nil,
          sessionStore: CredentialSessionStore? = nil,
          budgetEnabled: @escaping @Sendable () -> Bool = { AppConfig.nativeBudgetEnabledForBuild },
+         receiptReviewEnabled: @escaping @Sendable () -> Bool = { AppConfig.receiptReviewEnabledForBuild },
          budgetScopeOverride: ReceiptSessionScope? = nil) {
         self.transport = transport ?? URLSessionTransport(
             configuration: .init(session: HTTPSession.shared, httpBodyProcessingMode: .buffered))
@@ -106,6 +108,7 @@ actor APIClient: HestiaAPI {
         self.sessionStore = sessionStore
         self.receiptPairing = receiptPairing
         self.budgetEnabled = budgetEnabled
+        self.receiptReviewEnabled = receiptReviewEnabled
         self.budgetScopeOverride = budgetScopeOverride
     }
 
@@ -114,7 +117,8 @@ actor APIClient: HestiaAPI {
             serverURL: origin,
             transport: transport,
             middlewares: [
-                BearerAuthMiddleware(session: session, receiptPairing: receiptPairing, budgetEnabled: budgetEnabled),
+                BearerAuthMiddleware(session: session, receiptPairing: receiptPairing, budgetEnabled: budgetEnabled,
+                                    receiptReviewEnabled: receiptReviewEnabled),
                 ExplicitNullsMiddleware(),
             ]
         )
@@ -138,7 +142,7 @@ actor APIClient: HestiaAPI {
     func bindBudgetScope(_ scope: ReceiptSessionScope) -> any BudgetAPI {
         APIClient(
             transport: transport, receiptPairing: receiptPairing, sessionStore: sessionStore,
-            budgetEnabled: budgetEnabled, budgetScopeOverride: scope
+            budgetEnabled: budgetEnabled, receiptReviewEnabled: receiptReviewEnabled, budgetScopeOverride: scope
         )
     }
 
@@ -154,8 +158,32 @@ actor APIClient: HestiaAPI {
             middlewares: [
                 ExplicitNullsMiddleware(),
                 BearerAuthMiddleware(session: sessionStore?.currentSnapshot(), receiptPairing: receiptPairing,
-                                     receiptScope: scope, budgetEnabled: budgetEnabled),
+                                     receiptScope: scope, budgetEnabled: budgetEnabled,
+                                     receiptReviewEnabled: receiptReviewEnabled),
             ]
+        )
+    }
+
+    func requestReceiptReviewClient(scope: ReceiptSessionScope) -> Client {
+        Client(
+            serverURL: scope.origin,
+            transport: transport,
+            middlewares: [
+                ExplicitNullsMiddleware(),
+                BearerAuthMiddleware(session: sessionStore?.currentSnapshot(), receiptPairing: receiptPairing,
+                                     receiptScope: scope, budgetEnabled: budgetEnabled,
+                                     receiptReviewEnabled: receiptReviewEnabled, reviewScoped: true),
+            ]
+        )
+    }
+
+    func currentReceiptReviewScope(requiresMatch: Bool = false) async -> ReceiptSessionScope? {
+        guard receiptReviewEnabled(), let session = sessionStore?.currentSnapshot(),
+              let device = await receiptPairing?.receiptReviewCredential(
+                for: session.origin, session: session, enabled: true, requiresMatch: requiresMatch
+              ) else { return nil }
+        return ReceiptSessionScope(
+            origin: session.origin, actor: session.actor, ownerKey: device.ownerKey, credential: device.credential
         )
     }
 

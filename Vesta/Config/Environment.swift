@@ -12,10 +12,19 @@ enum AppConfig {
     static var serverURL: URL { BackendURLStore.shared.currentEffectiveURL() }
 
     static let nativeBudgetEnabled = false
+    static let receiptReviewEnabled = false
 
     static var nativeBudgetEnabledForBuild: Bool {
         #if DEBUG
         return nativeBudgetEnabled || ProcessInfo.processInfo.arguments.contains("-vesta.nativeBudget")
+        #else
+        return false
+        #endif
+    }
+
+    static var receiptReviewEnabledForBuild: Bool {
+        #if DEBUG
+        return receiptReviewEnabled || ProcessInfo.processInfo.arguments.contains("-vesta.receiptReview")
         #else
         return false
         #endif
