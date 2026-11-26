@@ -7,6 +7,14 @@ import Vision
 struct TextFragment: Equatable, Sendable {
     let text: String
     let box: CGRect
+    /// Rise over run of the upper text edge in normalised image coordinates.
+    let rowSlope: CGFloat?
+
+    init(text: String, box: CGRect, rowSlope: CGFloat? = nil) {
+        self.text = text
+        self.box = box
+        self.rowSlope = rowSlope
+    }
 }
 
 /// Puts Vision's fragments back into reading order. Vision returns boxes in no
@@ -18,6 +26,7 @@ enum ReceiptLineOrdering {
     /// Fragments whose centres are within this fraction of the median fragment
     /// height belong to the same line.
     static let bandTolerance: CGFloat = 0.5
+    private static let slopeNeighborhood: CGFloat = 0.075
 
     static func lines(from fragments: [TextFragment]) -> [String] {
         let usable = fragments.filter { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -26,7 +35,7 @@ enum ReceiptLineOrdering {
         let tolerance = max(heights[heights.count / 2] * bandTolerance, 0.002)
 
         // Top of the page first: Vision's y grows upwards.
-        let sorted = usable.sorted { $0.box.midY > $1.box.midY }
+        let sorted = alignRows(usable).sorted { $0.box.midY > $1.box.midY }
         var bands: [[TextFragment]] = []
         var bandMid: CGFloat = 0
         for fragment in sorted {
@@ -43,6 +52,28 @@ enum ReceiptLineOrdering {
             band.sorted { $0.box.minX < $1.box.minX }
                 .map { $0.text.trimmingCharacters(in: .whitespaces) }
                 .joined(separator: " ")
+        }
+    }
+
+    private static func alignRows(_ fragments: [TextFragment]) -> [TextFragment] {
+        // Use long text edges rather than short price boxes, whose corners
+        // provide a noisy slope. Give the longer edges more weight.
+        let samples = fragments.compactMap { fragment -> (y: CGFloat, slope: CGFloat, weight: CGFloat)? in
+            guard fragment.box.width > 0.11, let slope = fragment.rowSlope, abs(slope) < 0.25 else { return nil }
+            return (fragment.box.midY, slope, fragment.box.width * fragment.box.width)
+        }
+        return fragments.map { fragment in
+            let nearby = samples.filter { abs($0.y - fragment.box.midY) < slopeNeighborhood }
+            let weight = nearby.reduce(0) { $0 + $1.weight }
+            guard weight > 0 else { return fragment }
+            let slope = nearby.reduce(0) { $0 + $1.slope * $1.weight } / weight
+            // A single tilted title should not shift otherwise level rows.
+            let agreeingEdges = nearby.filter { abs($0.slope) >= 0.01 && $0.slope * slope > 0 }
+            guard agreeingEdges.count >= 2 else { return fragment }
+            // Project centres to a common x. Estimate the slope locally because
+            // the text can curve across a crumpled or curled receipt.
+            let rise = slope * (fragment.box.midX - 0.5)
+            return TextFragment(text: fragment.text, box: fragment.box.offsetBy(dx: 0, dy: -rise))
         }
     }
 }
@@ -69,7 +100,9 @@ struct VisionReceiptRecognizer: ReceiptTextRecognizing {
         let observations = try await request.perform(on: image)
         return observations.compactMap { observation in
             guard let best = observation.topCandidates(1).first else { return nil }
-            return TextFragment(text: best.string, box: observation.boundingBox.cgRect)
+            let width = observation.topRight.x - observation.topLeft.x
+            let slope = width > 0.10 ? (observation.topRight.y - observation.topLeft.y) / width : nil
+            return TextFragment(text: best.string, box: observation.boundingBox.cgRect, rowSlope: slope)
         }
     }
 

@@ -475,8 +475,9 @@ final class PANRedactorTests: XCTestCase {
 // MARK: - Line ordering
 
 final class ReceiptLineOrderingTests: XCTestCase {
-    private func frag(_ text: String, x: CGFloat, y: CGFloat, w: CGFloat = 0.2, h: CGFloat = 0.02) -> TextFragment {
-        TextFragment(text: text, box: CGRect(x: x, y: y, width: w, height: h))
+    private func frag(_ text: String, x: CGFloat, y: CGFloat, w: CGFloat = 0.2, h: CGFloat = 0.02,
+                      slope: CGFloat? = nil) -> TextFragment {
+        TextFragment(text: text, box: CGRect(x: x, y: y, width: w, height: h), rowSlope: slope)
     }
 
     func testTopToBottomLeftToRight() {
@@ -493,6 +494,29 @@ final class ReceiptLineOrderingTests: XCTestCase {
     func testSlightlySkewedFragmentsStayOnOneLine() {
         let fragments = [frag("CHLEB", x: 0.1, y: 0.500), frag("4,99", x: 0.7, y: 0.507)]
         XCTAssertEqual(ReceiptLineOrdering.lines(from: fragments), ["CHLEB 4,99"])
+    }
+
+    func testTiltedItemAmountsStayWithTheirRowsAboveAFlatFooter() {
+        let fragments = [
+            frag("30,00 B", x: 0.67, y: 0.666),
+            frag("PŁYN", x: 0.1, y: 0.671, w: 0.24, slope: -0.06),
+            frag("40,00", x: 0.67, y: 0.51),
+            frag("PALIWO", x: 0.1, y: 0.70, w: 0.24, slope: -0.06),
+            frag("10,00 A", x: 0.67, y: 0.637),
+            frag("SUMA PLN", x: 0.1, y: 0.51, slope: 0),
+        ]
+        XCTAssertEqual(ReceiptLineOrdering.lines(from: fragments), ["PALIWO 30,00 B", "PŁYN 10,00 A", "SUMA PLN 40,00"])
+    }
+
+    func testSingleTiltedHeadingDoesNotShiftLevelItemRows() {
+        let fragments = [
+            frag("SKLEP", x: 0.2, y: 0.75, w: 0.42, slope: -0.10),
+            frag("MLEKO", x: 0.1, y: 0.70),
+            frag("4,00 A", x: 0.7, y: 0.70),
+            frag("CHLEB", x: 0.1, y: 0.67),
+            frag("5,00 A", x: 0.7, y: 0.67),
+        ]
+        XCTAssertEqual(ReceiptLineOrdering.lines(from: fragments), ["SKLEP", "MLEKO 4,00 A", "CHLEB 5,00 A"])
     }
 
     func testDropsBlankFragments() {
