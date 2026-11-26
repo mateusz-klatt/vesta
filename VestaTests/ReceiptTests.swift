@@ -610,15 +610,50 @@ final class ReceiptOCRAssessmentTests: XCTestCase {
         let existingItem = "SOK 1szt * 4,00 4,00 A"
         let recoveredItem = "BATON 1szt * 7,50 7,50 A"
         let total = "SUMA PLN 11,10"
-        let primary = ReceiptOCRAssessment(lines: [existingItem, "OPUST \(recoveredItem) -0,40 A", total])
         let complete = ReceiptOCRAssessment(lines: [existingItem, recoveredItem, "OPUST BATON -0,40 A", total])
         let reducedPrice = ReceiptOCRAssessment(lines: [existingItem, "BATON 1szt * 7,10 7,10 A", total])
         let splitDiscount = ReceiptOCRAssessment(lines: [
             existingItem, recoveredItem, "OPUST BATON -0,20 A", "OPUST BATON -0,20 A", total,
         ])
+        for suffix in [" -0,40 A", " - 0,40 A", " – 0,40 A", "−0,40A", " — 0,40 PLN A", " | -0,40 A ?"] {
+            let primary = ReceiptOCRAssessment(lines: [existingItem, "OPUST \(recoveredItem)\(suffix)", total])
+            XCTAssertTrue(primary.needsRetry)
+            XCTAssertTrue(complete.improves(on: primary))
+            XCTAssertFalse(reducedPrice.improves(on: primary))
+            XCTAssertFalse(splitDiscount.improves(on: primary))
+        }
+    }
+
+    func testRetryPreservesEitherAnAdjacentSignedAmountOrAnUnsignedSuffix() {
+        let item = "BATON 1szt * 7,50 7,50 A"
+        let total = "SUMA PLN 7,10"
+        let complete = ReceiptOCRAssessment(lines: [item, "OPUST BATON -0,40 A", total])
+        let splitDiscount = ReceiptOCRAssessment(lines: [item, "OPUST BATON -0,20 A", "OPUST BATON -0,20 A", total])
+        for mixed in [["OPUST \(item)", "-0,40 A"], ["OPUST \(item) 0,40 A"]] {
+            let primary = ReceiptOCRAssessment(lines: mixed + [total])
+            XCTAssertTrue(primary.needsRetry)
+            XCTAssertTrue(complete.improves(on: primary))
+            XCTAssertFalse(splitDiscount.improves(on: primary))
+        }
+    }
+
+    func testRetryFindsAJoinedCalculationWithoutTruncatingItsMalformedSuffix() {
+        let item = "BATON 1szt * 7,50 7,50 A"
+        let total = "SUMA PLN 7,50"
+        let primary = ReceiptOCRAssessment(lines: ["OPUST \(item) -0,401 A", total])
+        let complete = ReceiptOCRAssessment(lines: [item, total])
+        XCTAssertTrue(primary.needsRetry)
         XCTAssertTrue(complete.improves(on: primary))
-        XCTAssertFalse(reducedPrice.improves(on: primary))
-        XCTAssertFalse(splitDiscount.improves(on: primary))
+    }
+
+    func testRetryCannotCountTheRecoveredItemAsAnotherInconsistentRow() {
+        let item = "BATON 1szt * 7,50 7,50 A"
+        let total = "SUMA PLN 7,10"
+        let primary = ReceiptOCRAssessment(lines: ["MLEKO 1szt * 3,00 2,00 A", "OPUST \(item) -0,40 A", total])
+        let incomplete = ReceiptOCRAssessment(lines: [item, "OPUST BATON -0,40 A", total])
+        let complete = ReceiptOCRAssessment(lines: ["MLEKO 1szt * 0,00 0,00 A", item, "OPUST BATON -0,40 A", total])
+        XCTAssertFalse(incomplete.improves(on: primary))
+        XCTAssertTrue(complete.improves(on: primary))
     }
 
     func testRetryPreservesRepeatedAmountsThatMatchTheirCalculation() {

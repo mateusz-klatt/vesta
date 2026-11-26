@@ -103,11 +103,16 @@ struct ReceiptOCRAssessment {
         let discountItemPattern = #/
             ^(?:OPUST|RABAT)\b.*?[^0-9.,\p{L}]
             ([0-9]{1,6}(?:[.,][0-9]{1,4})?|I(?=\s*SZT\b))\s*(?:L|SZT|KG|G|M)?\s*[*×X=]\s*
-            ([0-9]{1,9}[.,][0-9]{2,4})\s+([0-9]{1,9}[.,][0-9]{2}0{0,2})(?:\s*PLN)?(?:\s*[A-G])?
-            (?:\s+[-−]([0-9]{1,9}[.,][0-9]{2})(?:\s*PLN)?(?:\s*[A-G])?)?$
+            ([0-9]{1,9}[.,][0-9]{2,4})\s+([0-9]{1,9}[.,][0-9]{2}0{0,2})(?![0-9.,])
+            (?:\s*PLN(?![\p{L}\p{N}]))?(?:\s*[A-G](?!\p{L}))?(.*)$
             /#
+        let negativeAmount = #/
+            (?:^|[^\p{L}\p{N}.,])[-−–—]\s*([0-9]{1,9}[.,][0-9]{2})(?![0-9.,])
+            (?:\s*PLN(?![\p{L}\p{N}]))?(?:\s*[A-G](?![\p{L}\p{N}]))?(?=$|[^\p{L}\p{N}.,])
+            /#.ignoresCase()
+        let unsignedAmount = #/^\s*\+?([0-9]{1,9}[.,][0-9]{2})(?:\s*PLN)?(?:\s*[A-G])?\s*$/#
         let totalPattern = #/^(SUMA PLN|DO ZAPLATY)\s+([0-9]{1,9}[.,][0-9]{2})\s*(?:PLN)?$/#
-        for line in lines {
+        for (index, line) in lines.enumerated() {
             let label = line.uppercased().folding(options: .diacriticInsensitive, locale: Self.locale)
                 .replacingOccurrences(of: "Ł", with: "L")
                 .trimmingCharacters(in: .whitespaces)
@@ -122,7 +127,19 @@ struct ReceiptOCRAssessment {
                 if Self.matchesProduct(quantity, unitPrice, lineTotal) {
                     unclassifiedAmounts[lineTotal, default: 0] += 1
                 }
-                if let discount = item.4.flatMap(Self.amount) { recordDiscount(discount) }
+                for discount in item.4.matches(of: negativeAmount).compactMap({ Self.amount($0.1) }) {
+                    recordDiscount(discount)
+                }
+                if let unknown = item.4.wholeMatch(of: unsignedAmount), let amount = Self.amount(unknown.1) {
+                    unclassifiedAmounts[amount, default: 0] += 1
+                }
+                // A lone signed amount may be a separate OCR fragment of this discount.
+                let next = index + 1
+                if lines.indices.contains(next),
+                   let discount = lines[next].trimmingCharacters(in: .whitespaces).wholeMatch(of: negativeAmount),
+                   let amount = Self.amount(discount.1) {
+                    recordDiscount(amount)
+                }
             } else if let discount = label.wholeMatch(of: discountPattern), let amount = Self.amount(discount.1) {
                 recordDiscount(amount)
             } else if let item = line.firstMatch(of: itemPattern),
@@ -142,6 +159,7 @@ struct ReceiptOCRAssessment {
     }
 
     private var printedTotal: Decimal? { payableTotal ?? fiscalTotal }
+    private var calculationRows: Int { balancedRows + inconsistentRows + ambiguousDiscountRows }
 
     private var reconciles: Bool {
         guard let printedTotal, balancedRows > 0, inconsistentRows == 0, ambiguousDiscountRows == 0 else { return false }
@@ -149,7 +167,7 @@ struct ReceiptOCRAssessment {
     }
 
     var needsRetry: Bool {
-        printedTotal != nil && (balancedRows + inconsistentRows + ambiguousDiscountRows) > 0 && !reconciles
+        printedTotal != nil && calculationRows > 0 && !reconciles
     }
 
     func improves(on original: Self) -> Bool {
@@ -161,7 +179,7 @@ struct ReceiptOCRAssessment {
               original.fiscalTotal.map({ $0 == fiscalTotal }) ?? true,
               inconsistentRows <= original.inconsistentRows,
               ambiguousDiscountRows == 0,
-              balancedRows + inconsistentRows >= original.balancedRows + original.inconsistentRows,
+              calculationRows >= original.calculationRows,
               namedBalancedRows >= original.namedBalancedRows,
               original.balancedAmounts.allSatisfy({ balancedAmounts[$0.key, default: 0] >= $0.value }),
               original.discountAmounts.allSatisfy({ discountAmounts[$0.key, default: 0] >= $0.value }),
