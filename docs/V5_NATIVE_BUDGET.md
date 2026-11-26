@@ -46,3 +46,7 @@ The generator drops required nullable `anyOf` fields. Type overrides preserve th
 - [ ] Switch account and then origin while a read is in flight: data clears and the late response is discarded.
 - [ ] Confirm receipt pairing, rotation, interrupted-journal recovery, and receipt submission still work; 401/403 on the exchange must not revoke the prior token.
 - [ ] Build Release without the DEBUG argument and confirm native Budget remains unavailable.
+
+## Known gaps
+
+- A dedicated pairing/status UI for budget.view-only owners without receipt access is out of scope while native Budget is default-off. Settings shows its Receipts/pairing section only when `receiptsAPI` is available; use hestia's existing device management for device limits and recovery.

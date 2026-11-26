@@ -572,7 +572,7 @@ final class BudgetMappingTests: XCTestCase {
     """#
 }
 
-private actor MockBudgetAPI: BudgetAPI {
+private actor MockBudgetAPI: BudgetAPI, ScopeBindingBudgetAPI {
     enum Call: Equatable {
         case monthly(String, String?)
         case transactions(String, String?, String?, String?, Int)
@@ -596,6 +596,7 @@ private actor MockBudgetAPI: BudgetAPI {
     private let categoriesHandler: CategoriesHandler
     private let chartsHandler: ChartsHandler
     private(set) var calls: [Call] = []
+    private(set) var boundScopes: [ReceiptSessionScope] = []
 
     init(
         monthly: @escaping MonthlyHandler = { period, currency in BudgetFixtures.monthly(period: period, currency: currency ?? "PLN") },
@@ -611,6 +612,11 @@ private actor MockBudgetAPI: BudgetAPI {
         overviewHandler = overview
         categoriesHandler = categories
         chartsHandler = charts
+    }
+
+    func bindBudgetScope(_ scope: ReceiptSessionScope) -> any BudgetAPI {
+        boundScopes.append(scope)
+        return self
     }
 
     func monthlyBudget(period: String, currency: String?) async throws -> BudgetMonthly {
@@ -951,6 +957,44 @@ final class BudgetStoreTests: XCTestCase {
             .transactions("2026-11", "EUR", "groceries", nil, 50),
             .transactions("2026-11", "EUR", "groceries", "page-2", 50),
         ])
+    }
+
+    func testClearDuringStaleCursorRestartPreventsNativeAnalyticsFanout() async {
+        actor StaleStage {
+            var sawStale = false
+            func markStale() { sawStale = true }
+        }
+        @MainActor final class Clearer {
+            var store: BudgetStore?
+        }
+        let stage = StaleStage()
+        let clearer = Clearer()
+        let mock = MockBudgetAPI(transactions: { _, _, _, cursor, _ in
+            switch cursor {
+            case nil:
+                if await stage.sawStale {
+                    await clearer.store?.clear()
+                    return BudgetFixtures.page([BudgetFixtures.transaction("new")])
+                }
+                return BudgetFixtures.page([BudgetFixtures.transaction("old")], nextCursor: "stale", total: 2)
+            case "stale":
+                await stage.markStale()
+                throw BudgetError.staleCursor
+            default:
+                return BudgetFixtures.page()
+            }
+        })
+        let store = store(mock)
+        clearer.store = store
+        await store.load()
+
+        await store.loadMore()
+
+        XCTAssertTrue(store.isCleared)
+        let calls = await mock.calls
+        XCTAssertEqual(calls.filter { if case .overview = $0 { return true }; return false }.count, 1)
+        XCTAssertEqual(calls.filter { $0 == .categories }.count, 1)
+        XCTAssertEqual(calls.filter { if case .charts = $0 { return true }; return false }.count, 1)
     }
 
     func testStaleCursor409RestartsPageSequenceAndKeepsLoadMoreActive() async {
@@ -1594,6 +1638,24 @@ final class BudgetClientTests: XCTestCase {
         XCTAssertEqual(sessionStore.currentSnapshot(), replacement)
     }
 
+    func testSessionBoundBudgetAPIForwardsAdmittedScopeToAPIClient() async throws {
+        let scope = ReceiptSessionScope(
+            origin: BudgetFixtures.origin, actor: "u", ownerKey: BudgetFixtures.ownerKey, credential: fakeDeviceToken
+        )
+        let mock = MockBudgetAPI()
+        let boundMock = SessionBoundBudgetAPI(api: mock, scope: scope, isCurrent: { true }, onDenial: { _ in true })
+        _ = try await boundMock.status()
+        let forwardedScopes = await mock.boundScopes
+        XCTAssertEqual(forwardedScopes, [scope])
+
+        let transport = CapturingTransport(status: 200, body: BudgetMappingTests.statusJSON)
+        let client = try pairedClient(transport)
+        let boundClient = SessionBoundBudgetAPI(api: client, scope: scope, isCurrent: { true }, onDenial: { _ in true })
+        _ = try await boundClient.status()
+        XCTAssertEqual(transport.last?.request.headerFields[.authorization], "Bearer \(fakeDeviceToken.token)")
+        XCTAssertNil(transport.last?.request.headerFields[.cookie])
+    }
+
     func testForbiddenResponseWithEmptyBodyIsMapped() async throws {
         let api = try pairedClient(StubTransport { _ in (403, nil) })
         do {
@@ -2109,27 +2171,85 @@ final class BudgetGateTests: XCTestCase {
         XCTAssertTrue(store.isCleared)
     }
 
+    func testTransientFeatureAdditionDoesNotWidenAndPreservesRollbackState() async throws {
+        let fixture = try Fixture()
+        fixture.app.nativeBudgetEnabled = true
+        let grants = Capabilities(user: "u", installation: [.calendarView], ownBudget: BudgetFixtures.owner.ownBudget)
+        try fixture.tokens.save(BudgetFixtures.device())
+        await fixture.mock.setFeatures(BudgetFixtures.features)
+        await fixture.mock.setCapabilities(grants)
+        await fixture.app.connect()
+        let store = try XCTUnwrap(fixture.app.makeBudgetStore())
+        await store.load()
+        XCTAssertNil(fixture.app.calendarAPI)
+
+        let expanded = ServerFeatures(
+            authContract: 2,
+            features: BudgetFixtures.features.features.union([.calendarInstances]),
+            qrOrigin: nil,
+            isLegacy: false
+        )
+        await fixture.mock.setFeatures(expanded)
+        await fixture.mock.setCapabilitiesError(.timedOut)
+        await fixture.app.refresh()
+
+        XCTAssertEqual(fixture.app.serverFeatures, BudgetFixtures.features)
+        XCTAssertEqual(fixture.app.capabilities, grants)
+        XCTAssertNil(fixture.app.calendarAPI)
+        XCTAssertNotNil(fixture.app.budgetAPI)
+        XCTAssertFalse(store.isCleared)
+
+        let token = try XCTUnwrap(fixture.tokens.load())
+        XCTAssertEqual(fixture.pairing.handleTokenRejection(token, status: 401, code: "device_token_invalid"), .rollback)
+        let quarantine = try fixture.tokens.loadRollbackQuarantine()
+        let journal = try fixture.tokens.loadRotationJournal()
+        let exchangeCount = await fixture.exchange.exchangeCount
+
+        await fixture.app.refresh()
+        try await fixture.app.pairReceiptsByExchange()
+
+        XCTAssertEqual(fixture.app.serverFeatures, BudgetFixtures.features)
+        XCTAssertEqual(fixture.app.capabilities, grants)
+        XCTAssertNil(fixture.app.calendarAPI)
+        XCTAssertEqual(try fixture.tokens.loadRollbackQuarantine(), quarantine)
+        XCTAssertEqual(try fixture.tokens.loadRotationJournal(), journal)
+        let exchangesAfter = await fixture.exchange.exchangeCount
+        XCTAssertEqual(exchangesAfter, exchangeCount)
+    }
+
     func testFeatureLossIsPublishedWhenCapabilitiesFailTransiently() async throws {
         let fixture = try Fixture()
         fixture.app.nativeBudgetEnabled = true
+        let grants = Capabilities(user: "u", installation: [.calendarView], ownBudget: BudgetFixtures.owner.ownBudget)
+        let features = ServerFeatures(
+            authContract: 2,
+            features: BudgetFixtures.features.features.union([.calendarInstances]),
+            qrOrigin: nil,
+            isLegacy: false
+        )
         try fixture.tokens.save(BudgetFixtures.device())
-        await fixture.mock.setFeatures(BudgetFixtures.features)
-        await fixture.mock.setCapabilities(BudgetFixtures.owner)
+        await fixture.mock.setFeatures(features)
+        await fixture.mock.setCapabilities(grants)
         await fixture.app.connect()
         let store = try XCTUnwrap(fixture.app.makeBudgetStore())
         await store.load()
         XCTAssertNotNil(store.overview)
+        let agenda = try XCTUnwrap(fixture.app.makeAgendaStore())
+        await agenda.load()
+        XCTAssertFalse(agenda.isDiscarded)
 
         await fixture.mock.setFeatures([.capabilities, .deviceExchange])
         await fixture.mock.setCapabilitiesError(.timedOut)
         await fixture.app.refresh()
 
-        XCTAssertEqual(fixture.app.serverFeatures?.supports(.budgetNativeRead), false)
-        XCTAssertEqual(fixture.app.capabilities, BudgetFixtures.owner)
+        XCTAssertEqual(fixture.app.serverFeatures?.features, [.capabilities, .deviceExchange])
+        XCTAssertEqual(fixture.app.capabilities, grants)
         XCTAssertEqual(fixture.app.phase, .ready)
         XCTAssertNil(fixture.app.budgetAPI)
+        XCTAssertNil(fixture.app.calendarAPI)
         XCTAssertTrue(store.isCleared)
         XCTAssertNil(store.overview)
+        XCTAssertTrue(agenda.isDiscarded)
     }
 
     func testFailurePhaseClosesBudgetAndPreventsNewStore() async throws {
@@ -2150,21 +2270,6 @@ final class BudgetGateTests: XCTestCase {
         XCTAssertTrue(store.isCleared)
         XCTAssertNil(store.overview)
         XCTAssertNil(fixture.app.makeBudgetStore())
-    }
-
-    func testSettingsShowsDevicePairingForNativeBudgetWithoutReceiptAccess() async throws {
-        let fixture = try Fixture()
-        fixture.app.nativeBudgetEnabled = true
-        await fixture.mock.setFeatures(BudgetFixtures.features)
-        await fixture.mock.setCapabilities(BudgetFixtures.owner)
-        await fixture.app.connect()
-
-        XCTAssertEqual(fixture.app.capabilities?.canUseReceipts, false)
-        XCTAssertNil(fixture.app.receiptsAPI)
-        XCTAssertTrue(fixture.app.showsDevicePairingSettings)
-
-        fixture.app.nativeBudgetEnabled = false
-        XCTAssertFalse(fixture.app.showsDevicePairingSettings)
     }
 
     func testBudgetViewOnlyOwnerExchangesAndDispatchesOnlyWhenAllFourGatesPass() async throws {

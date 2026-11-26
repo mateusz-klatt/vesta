@@ -1,7 +1,7 @@
 import OpenAPIRuntime
 
 /// Device-token-authenticated, read-only budget analytics (gated by ``APIClient/budgetEnabled``).
-extension APIClient: BudgetAPI {
+extension APIClient: BudgetAPI, ScopeBindingBudgetAPI {
     func monthlyBudget(period: String, currency: String?) async throws -> BudgetMonthly {
         try await read { client in
             let input = Operations.GetBudgetAnalyticsMonthlyBudget.Input(

@@ -182,11 +182,6 @@ final class AppState {
     }
 
     var receiptsUseExchange: Bool { serverFeatures?.supports(.deviceExchange) == true }
-    var showsDevicePairingSettings: Bool {
-        receiptsAPI != nil || NativeBudgetGate.isEligible(
-            enabled: nativeBudgetEnabled, features: serverFeatures, capabilities: capabilities
-        )
-    }
 
     private var currentReceiptScope: ReceiptSessionScope {
         let session = sessionStore.currentSnapshot()
@@ -231,7 +226,10 @@ final class AppState {
               NativeBudgetGate.isEligible(enabled: nativeBudgetEnabled, features: serverFeatures, capabilities: capabilities),
               let token = receiptPairing.nativeBudgetCredential(for: session.origin, session: session) else { return nil }
         let generation = budgetGeneration
-        return SessionBoundBudgetAPI(api: api, isCurrent: { [weak self] in
+        let scope = ReceiptSessionScope(
+            origin: session.origin, actor: session.actor, ownerKey: token.ownerKey, credential: token.credential
+        )
+        return SessionBoundBudgetAPI(api: api, scope: scope, isCurrent: { [weak self] in
             self?.isCurrentBudgetAPI(session: session, token: token, generation: generation) == true
         }, onDenial: { [weak self] error in
             guard let self, handledBudgetDenialGeneration != generation,
@@ -843,11 +841,25 @@ final class AppState {
                     notice = .forbidden
                 }
             case let failure:
-                publishAuthorization(features: features, capabilities: capabilities)
+                narrowPublishedFeatures(probed: features)
                 if phase == .connecting { phase = .failed(failure) }
             }
             return nil
         }
+    }
+
+    private func narrowPublishedFeatures(probed: ServerFeatures) {
+        guard let published = serverFeatures else { return }
+        let features = published.features.intersection(probed.features)
+        let narrowed = ServerFeatures(
+            authContract: min(published.authContract, probed.authContract),
+            features: features,
+            qrOrigin: features.contains(.qrLogin) && published.qrOrigin == probed.qrOrigin ? published.qrOrigin : nil,
+            isLegacy: published.isLegacy || probed.isLegacy
+        )
+        authorization = (narrowed, capabilities)
+        if calendarAPI == nil { closeAgenda() }
+        if budgetAPI == nil { closeBudget() }
     }
 
     private func publishAuthorization(features: ServerFeatures?, capabilities published: Capabilities?) {

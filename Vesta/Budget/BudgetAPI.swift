@@ -10,6 +10,10 @@ protocol BudgetAPI: Sendable {
     func charts(period: String, currency: String?, history: Int) async throws -> BudgetChartSeries?
 }
 
+protocol ScopeBindingBudgetAPI: Sendable {
+    func bindBudgetScope(_ scope: ReceiptSessionScope) async -> any BudgetAPI
+}
+
 enum BudgetError: LocalizedError, Equatable {
     case unauthorized
     case expiredDeviceToken

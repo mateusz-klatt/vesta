@@ -88,6 +88,7 @@ actor APIClient: HestiaAPI {
     private let receiptPairing: ReceiptPairing?
     private let transport: any ClientTransport
     private let probeTransport: any ClientTransport
+    private let budgetScopeOverride: ReceiptSessionScope?
     let budgetEnabled: @Sendable () -> Bool
 
     // The streaming transport installs its own task delegate. Use the session's
@@ -95,7 +96,8 @@ actor APIClient: HestiaAPI {
     init(transport: (any ClientTransport)? = nil,
          receiptPairing: ReceiptPairing? = nil,
          sessionStore: CredentialSessionStore? = nil,
-         budgetEnabled: @escaping @Sendable () -> Bool = { AppConfig.nativeBudgetEnabledForBuild }) {
+         budgetEnabled: @escaping @Sendable () -> Bool = { AppConfig.nativeBudgetEnabledForBuild },
+         budgetScopeOverride: ReceiptSessionScope? = nil) {
         self.transport = transport ?? URLSessionTransport(
             configuration: .init(session: HTTPSession.shared, httpBodyProcessingMode: .buffered))
         probeTransport = transport ?? URLSessionTransport(
@@ -104,6 +106,7 @@ actor APIClient: HestiaAPI {
         self.sessionStore = sessionStore
         self.receiptPairing = receiptPairing
         self.budgetEnabled = budgetEnabled
+        self.budgetScopeOverride = budgetScopeOverride
     }
 
     private func makeClient(on origin: URL, session: BoundSession?) -> Client {
@@ -125,8 +128,17 @@ actor APIClient: HestiaAPI {
     func currentBudgetScope() async -> ReceiptSessionScope? {
         guard let session = sessionStore?.currentSnapshot(),
               let device = await receiptPairing?.nativeBudgetCredential(for: session.origin, session: session) else { return nil }
-        return ReceiptSessionScope(
+        let current = ReceiptSessionScope(
             origin: session.origin, actor: session.actor, ownerKey: device.ownerKey, credential: device.credential
+        )
+        if let budgetScopeOverride { return budgetScopeOverride == current ? current : nil }
+        return current
+    }
+
+    func bindBudgetScope(_ scope: ReceiptSessionScope) -> any BudgetAPI {
+        APIClient(
+            transport: transport, receiptPairing: receiptPairing, sessionStore: sessionStore,
+            budgetEnabled: budgetEnabled, budgetScopeOverride: scope
         )
     }
 
