@@ -182,6 +182,11 @@ final class AppState {
     }
 
     var receiptsUseExchange: Bool { serverFeatures?.supports(.deviceExchange) == true }
+    var showsDevicePairingSettings: Bool {
+        receiptsAPI != nil || NativeBudgetGate.isEligible(
+            enabled: nativeBudgetEnabled, features: serverFeatures, capabilities: capabilities
+        )
+    }
 
     private var currentReceiptScope: ReceiptSessionScope {
         let session = sessionStore.currentSnapshot()
@@ -258,6 +263,7 @@ final class AppState {
     }
 
     func makeBudgetStore(now: Date = Date()) -> BudgetStore? {
+        guard phase == .ready else { return nil }
         closeBudget()
         guard let api = budgetAPI else { return nil }
         let store = BudgetStore(api: api, now: now)
@@ -837,6 +843,7 @@ final class AppState {
                     notice = .forbidden
                 }
             case let failure:
+                publishAuthorization(features: features, capabilities: capabilities)
                 if phase == .connecting { phase = .failed(failure) }
             }
             return nil
@@ -1024,6 +1031,7 @@ final class AppState {
     private func fail(_ error: APIError) {
         discoveryGeneration += 1
         stopEvents()
+        closeBudget()
         closeAgenda()
         phase = .failed(error)
     }

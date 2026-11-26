@@ -224,6 +224,7 @@ final class BudgetStore {
                 period: query.period, currency: query.currency,
                 categoryID: query.categoryID, cursor: nil, limit: query.limit
             )
+            guard !isTerminal, requestGeneration == generation else { return }
             let native = try await loadNativeAnalytics(period: query.period, currency: query.currency)
             guard !isTerminal, requestGeneration == generation else { return }
             analyticsOverview = native.overview

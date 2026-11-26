@@ -151,9 +151,11 @@ struct BudgetOverviewCategory: Identifiable, Equatable, Sendable {
     let expenses: Decimal
     let refunds: Decimal
     let netSpending: Decimal
+    let archived: Bool
 
     var id: String {
         if let oneOffKey { return oneOffKey }
+        if isOneOff { return "one-off:\(categoryID ?? "uncategorised"):\(name ?? ""):\(currency)" }
         return "\(categoryID ?? "uncategorised"):\(currency)"
     }
 }
@@ -254,7 +256,7 @@ extension BudgetCategory {
     init(wire: Components.Schemas.BudgetAnalyticsMonthlyBudgetCategorySpend) throws {
         categoryID = wire.categoryId
         name = wire.displayLabel ?? wire.displayName ?? wire.name
-        isOneOff = (wire.oneOff ?? false) || wire.oneOffKey != nil
+        isOneOff = wire.oneOff || wire.oneOffKey != nil
         oneOffKey = wire.oneOffKey
         expenses = try BudgetWire.decimal(wire.expenses)
         refunds = try BudgetWire.decimal(wire.refunds)
@@ -326,12 +328,13 @@ extension BudgetOverviewCategory {
     init(wire: Components.Schemas.BudgetAnalyticsCategoryTotal) throws {
         categoryID = wire.categoryId
         name = wire.displayLabel ?? wire.displayName ?? wire.name
-        isOneOff = (wire.oneOff ?? false) || wire.oneOffKey != nil
+        isOneOff = wire.oneOff || wire.oneOffKey != nil
         oneOffKey = wire.oneOffKey
         currency = wire.currency
         expenses = try BudgetWire.decimal(wire.expenses)
         refunds = try BudgetWire.decimal(wire.refunds)
         netSpending = try BudgetWire.decimal(wire.netSpending)
+        archived = wire.archived
     }
 }
 
@@ -424,7 +427,7 @@ struct BudgetAnalyticsCategoryTotalWire: Codable, Hashable, Sendable {
     let expenses: String
     let name: String?
     let netSpending: String
-    let oneOff: Bool?
+    let oneOff: Bool
     let oneOffKey: String?
     let refunds: String
 
@@ -456,7 +459,7 @@ struct BudgetAnalyticsCategoryTotalWire: Codable, Hashable, Sendable {
         }
         name = try values.decodeIfPresent(String.self, forKey: .name)
         netSpending = try values.decode(String.self, forKey: .netSpending)
-        oneOff = try values.contains(.oneOff) ? values.decode(Bool.self, forKey: .oneOff) : nil
+        oneOff = try values.decodeBudgetOneOff(forKey: .oneOff)
         oneOffKey = try values.decodeIfPresent(String.self, forKey: .oneOffKey)
         refunds = try values.decode(String.self, forKey: .refunds)
     }
@@ -489,7 +492,7 @@ struct BudgetAnalyticsMonthlyBudgetSeriesCategoryWire: Codable, Hashable, Sendab
     let displayName: String?
     let name: String?
     let netSpending: String
-    let oneOff: Bool?
+    let oneOff: Bool
     let oneOffKey: String?
 
     private enum CodingKeys: String, CodingKey {
@@ -510,7 +513,57 @@ struct BudgetAnalyticsMonthlyBudgetSeriesCategoryWire: Codable, Hashable, Sendab
         displayName = try values.decodeIfPresent(String.self, forKey: .displayName)
         name = try values.decodeIfPresent(String.self, forKey: .name)
         netSpending = try values.decode(String.self, forKey: .netSpending)
-        oneOff = try values.contains(.oneOff) ? values.decode(Bool.self, forKey: .oneOff) : nil
+        oneOff = try values.decodeBudgetOneOff(forKey: .oneOff)
         oneOffKey = try values.decodeIfPresent(String.self, forKey: .oneOffKey)
+    }
+}
+
+struct BudgetAnalyticsMonthlyBudgetCategorySpendWire: Codable, Hashable, Sendable {
+    let archived: Bool
+    let categoryId: String?
+    let colorHue: Int?
+    let displayLabel: String?
+    let displayName: String?
+    let expenses: String
+    let limit: Components.Schemas.BudgetAnalyticsMonthlyBudgetCategoryLimit?
+    let name: String?
+    let netSpending: String
+    let oneOff: Bool
+    let oneOffKey: String?
+    let refunds: String
+
+    private enum CodingKeys: String, CodingKey {
+        case archived, categoryId = "category_id", colorHue = "color_hue", displayLabel = "display_label"
+        case displayName = "display_name", expenses, limit, name, netSpending = "net_spending"
+        case oneOff = "one_off", oneOffKey = "one_off_key", refunds
+    }
+
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        archived = try values.decode(Bool.self, forKey: .archived)
+        categoryId = try values.decodeIfPresent(String.self, forKey: .categoryId)
+        colorHue = try values.decodeIfPresent(Int.self, forKey: .colorHue)
+        displayLabel = try values.decodeIfPresent(String.self, forKey: .displayLabel)
+        displayName = try values.decodeIfPresent(String.self, forKey: .displayName)
+        expenses = try values.decode(String.self, forKey: .expenses)
+        limit = try values.decodeIfPresent(Components.Schemas.BudgetAnalyticsMonthlyBudgetCategoryLimit.self, forKey: .limit)
+        name = try values.decodeIfPresent(String.self, forKey: .name)
+        netSpending = try values.decode(String.self, forKey: .netSpending)
+        oneOff = try values.decodeBudgetOneOff(forKey: .oneOff)
+        oneOffKey = try values.decodeIfPresent(String.self, forKey: .oneOffKey)
+        refunds = try values.decode(String.self, forKey: .refunds)
+    }
+}
+
+private extension KeyedDecodingContainer {
+    func decodeBudgetOneOff(forKey key: Key) throws -> Bool {
+        guard contains(key) else { return false }
+        if try decodeNil(forKey: key) {
+            throw DecodingError.valueNotFound(
+                Bool.self,
+                .init(codingPath: codingPath + [key], debugDescription: "one_off must be a Boolean when present")
+            )
+        }
+        return try decodeIfPresent(Bool.self, forKey: key) ?? false
     }
 }

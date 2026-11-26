@@ -147,7 +147,7 @@ private struct BudgetErrorView: View {
     let error: BudgetError
     let retry: () -> Void
 
-    private var isDenied: Bool { error == .forbidden || error == .unauthorized }
+    private var isDenied: Bool { error.isAccessDenial }
 
     var body: some View {
         ContentUnavailableView {
@@ -420,7 +420,7 @@ private struct BudgetNativeCategoriesCard: View {
             let definition = total.categoryID.flatMap { byID[$0] }
             return Row(
                 id: total.id, title: total.name ?? definition?.title, total: total,
-                colorHue: definition?.colorHue, archived: definition?.archived ?? false
+                colorHue: definition?.colorHue, archived: definition?.archived ?? total.archived
             )
         }
         let represented = Set(overview.categories.compactMap(\.categoryID))

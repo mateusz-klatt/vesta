@@ -59,7 +59,7 @@ struct SettingsView: View {
                     }
                 }
 
-                if app.receiptsAPI != nil {
+                if app.showsDevicePairingSettings {
                     Section("Receipts") {
                         if app.receiptPairing.status == .paired {
                             Text("Paired")

@@ -75,7 +75,7 @@ private enum BudgetFixtures {
             currencies: [BudgetCurrencyTotal(currency: currency, expenses: spent + 100, refunds: 100, netSpending: spent, income: 2_000)],
             categories: [BudgetOverviewCategory(
                 categoryID: "groceries", name: "Weekly food", isOneOff: false, oneOffKey: nil,
-                currency: currency, expenses: spent + 100, refunds: 100, netSpending: spent
+                currency: currency, expenses: spent + 100, refunds: 100, netSpending: spent, archived: false
             )]
         )
     }
@@ -232,6 +232,46 @@ final class BudgetMappingTests: XCTestCase {
         XCTAssertEqual(overview.categories[0].netSpending, Decimal(string: "500.123456789012345678"))
     }
 
+    func testMonthlyCategoryOneOffAbsentTrueFalseAndRejectsNull() throws {
+        let base: [String: Any] = [
+            "archived": false, "expenses": "1.00", "refunds": "0", "net_spending": "1.00",
+            "one_off_key": NSNull(),
+        ]
+        func decode(_ oneOff: Any?) throws -> Components.Schemas.BudgetAnalyticsMonthlyBudgetCategorySpend {
+            var object = base
+            if let oneOff { object["one_off"] = oneOff }
+            return try JSONDecoder().decode(
+                Components.Schemas.BudgetAnalyticsMonthlyBudgetCategorySpend.self,
+                from: try JSONSerialization.data(withJSONObject: object)
+            )
+        }
+
+        let absent = try decode(nil)
+        XCTAssertFalse(absent.oneOff)
+        XCTAssertNil(absent.oneOffKey)
+        XCTAssertTrue(try decode(true).oneOff)
+        XCTAssertFalse(try decode(false).oneOff)
+        XCTAssertThrowsError(try decode(NSNull()))
+    }
+
+    func testOverviewOneOffCategoryUsesFallbackIdentityAndKeepsArchived() throws {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Self.overviewJSON.utf8)) as? [String: Any])
+        var category = try XCTUnwrap((object["categories"] as? [[String: Any]])?.first)
+        category["one_off"] = true
+        category["one_off_key"] = NSNull()
+        category["archived"] = true
+        object["categories"] = [category]
+
+        let wire = try JSONDecoder().decode(
+            Components.Schemas.BudgetAnalyticsOverview.self,
+            from: try JSONSerialization.data(withJSONObject: object)
+        )
+        let decoded = try BudgetOverview(wire: wire).categories[0]
+        XCTAssertTrue(decoded.isOneOff)
+        XCTAssertEqual(decoded.id, "one-off:groceries:Weekly food:PLN")
+        XCTAssertTrue(decoded.archived)
+    }
+
     func testCategoryCatalogMappingPreservesNullableMetadataAndTranslations() throws {
         let wire = try JSONDecoder().decode(Components.Schemas.BudgetAnalyticsCategories.self, from: Data(Self.categoriesJSON.utf8))
         let categories = wire.categories.map(BudgetCategoryDefinition.init(wire:))
@@ -321,16 +361,22 @@ final class BudgetMappingTests: XCTestCase {
         XCTAssertNil(decoded.categories[0].name)
     }
 
-    func testOverviewRejectsExplicitNullForNonNullableOneOff() throws {
-        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Self.overviewJSON.utf8)) as? [String: Any])
-        var category = try XCTUnwrap((object["categories"] as? [[String: Any]])?.first)
-        category["one_off"] = NSNull()
-        object["categories"] = [category]
+    func testOverviewCategoryOneOffAbsentTrueFalseAndRejectsNull() throws {
+        func decode(_ oneOff: Any?) throws -> Components.Schemas.BudgetAnalyticsOverview {
+            var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Self.overviewJSON.utf8)) as? [String: Any])
+            var category = try XCTUnwrap((object["categories"] as? [[String: Any]])?.first)
+            if let oneOff { category["one_off"] = oneOff } else { category.removeValue(forKey: "one_off") }
+            object["categories"] = [category]
+            return try JSONDecoder().decode(
+                Components.Schemas.BudgetAnalyticsOverview.self,
+                from: try JSONSerialization.data(withJSONObject: object)
+            )
+        }
 
-        XCTAssertThrowsError(try JSONDecoder().decode(
-            Components.Schemas.BudgetAnalyticsOverview.self,
-            from: try JSONSerialization.data(withJSONObject: object)
-        ))
+        XCTAssertFalse(try decode(nil).categories[0].oneOff)
+        XCTAssertTrue(try decode(true).categories[0].oneOff)
+        XCTAssertFalse(try decode(false).categories[0].oneOff)
+        XCTAssertThrowsError(try decode(NSNull()))
     }
 
     func testChartsRequiredSeriesRejectsMissingAndAcceptsExplicitNull() throws {
@@ -372,6 +418,26 @@ final class BudgetMappingTests: XCTestCase {
             }
             XCTAssertEqual(key.stringValue, "category_id")
         }
+    }
+
+    func testSeriesCategoryOneOffAbsentTrueFalseAndRejectsNull() throws {
+        func decode(_ oneOff: Any?) throws -> Components.Schemas.BudgetAnalyticsMonthlyBudgetSeriesCategory {
+            var object: [String: Any] = [
+                "category_id": NSNull(), "net_spending": "1.00", "one_off_key": NSNull(),
+            ]
+            if let oneOff { object["one_off"] = oneOff }
+            return try JSONDecoder().decode(
+                Components.Schemas.BudgetAnalyticsMonthlyBudgetSeriesCategory.self,
+                from: try JSONSerialization.data(withJSONObject: object)
+            )
+        }
+
+        let absent = try decode(nil)
+        XCTAssertFalse(absent.oneOff)
+        XCTAssertNil(absent.oneOffKey)
+        XCTAssertTrue(try decode(true).oneOff)
+        XCTAssertFalse(try decode(false).oneOff)
+        XCTAssertThrowsError(try decode(NSNull()))
     }
 
     static let overviewJSON = #"""
@@ -714,6 +780,29 @@ final class BudgetStoreTests: XCTestCase {
         XCTAssertEqual(store.transactions.map(\.entryReference), ["2026-10"])
     }
 
+    func testClearAfterTransactionsPreventsNativeAnalyticsFanout() async {
+        @MainActor final class Clearer {
+            var store: BudgetStore?
+        }
+        let clearer = Clearer()
+        let mock = MockBudgetAPI(transactions: { _, _, _, _, _ in
+            await clearer.store?.clear()
+            return BudgetFixtures.page()
+        })
+        let store = store(mock)
+        clearer.store = store
+
+        await store.load()
+
+        XCTAssertTrue(store.isCleared)
+        let calls = await mock.calls
+        XCTAssertTrue(calls.contains(.monthly("2026-11", nil)))
+        XCTAssertTrue(calls.contains(.transactions("2026-11", "PLN", nil, nil, 50)))
+        XCTAssertFalse(calls.contains(.overview("2026-11", "PLN")))
+        XCTAssertFalse(calls.contains(.categories))
+        XCTAssertFalse(calls.contains(.charts("2026-11", "PLN", 6)))
+    }
+
     func testNonKeepContentReloadClearsNativeAnalyticsWhileHeld() async throws {
         let gate = BudgetResponseGate()
         let mock = MockBudgetAPI(monthly: { period, currency in
@@ -1049,7 +1138,7 @@ final class BudgetStoreTests: XCTestCase {
     }
 
     func testDenial401And403ClearAllStoreDataAndCancelPendingWork() async throws {
-        for denialError in [BudgetError.unauthorized, BudgetError.forbidden] {
+        for denialError in [BudgetError.unauthorized, .expiredDeviceToken, .revokedDeviceToken, .invalidDeviceToken, .forbidden] {
             let expectedState: BudgetStore.State = denialError == .forbidden ? .forbidden : .unauthorized
             let mock = MockBudgetAPI(transactions: { _, _, _, cursor, _ in
                 if cursor == nil {
@@ -1116,7 +1205,7 @@ final class BudgetStoreTests: XCTestCase {
     }
 
     func testDenialCancelsInFlightWork() async throws {
-        for denialError in [BudgetError.unauthorized, BudgetError.forbidden] {
+        for denialError in [BudgetError.unauthorized, .expiredDeviceToken, .revokedDeviceToken, .invalidDeviceToken, .forbidden] {
             actor CancelTracker {
                 var wasCancelled = false
                 func mark() { wasCancelled = true }
@@ -1177,7 +1266,7 @@ final class BudgetStoreTests: XCTestCase {
     }
 
     func testDenialIsTerminalSoQueuedLoadSendsNothingAndClosesSheet() async throws {
-        for denialError in [BudgetError.unauthorized, BudgetError.forbidden] {
+        for denialError in [BudgetError.unauthorized, .expiredDeviceToken, .revokedDeviceToken, .invalidDeviceToken, .forbidden] {
             let mock = MockBudgetAPI(monthly: { _, _ in throw denialError })
             let store = store(mock)
 
@@ -2018,6 +2107,64 @@ final class BudgetGateTests: XCTestCase {
         XCTAssertEqual(errors.filter { $0 is CancellationError }.count, 1)
         XCTAssertEqual(fixture.session.currentSnapshot(), session)
         XCTAssertTrue(store.isCleared)
+    }
+
+    func testFeatureLossIsPublishedWhenCapabilitiesFailTransiently() async throws {
+        let fixture = try Fixture()
+        fixture.app.nativeBudgetEnabled = true
+        try fixture.tokens.save(BudgetFixtures.device())
+        await fixture.mock.setFeatures(BudgetFixtures.features)
+        await fixture.mock.setCapabilities(BudgetFixtures.owner)
+        await fixture.app.connect()
+        let store = try XCTUnwrap(fixture.app.makeBudgetStore())
+        await store.load()
+        XCTAssertNotNil(store.overview)
+
+        await fixture.mock.setFeatures([.capabilities, .deviceExchange])
+        await fixture.mock.setCapabilitiesError(.timedOut)
+        await fixture.app.refresh()
+
+        XCTAssertEqual(fixture.app.serverFeatures?.supports(.budgetNativeRead), false)
+        XCTAssertEqual(fixture.app.capabilities, BudgetFixtures.owner)
+        XCTAssertEqual(fixture.app.phase, .ready)
+        XCTAssertNil(fixture.app.budgetAPI)
+        XCTAssertTrue(store.isCleared)
+        XCTAssertNil(store.overview)
+    }
+
+    func testFailurePhaseClosesBudgetAndPreventsNewStore() async throws {
+        let fixture = try Fixture()
+        fixture.app.nativeBudgetEnabled = true
+        try fixture.tokens.save(BudgetFixtures.device())
+        await fixture.mock.setFeatures(BudgetFixtures.features)
+        await fixture.mock.setCapabilities(BudgetFixtures.owner)
+        await fixture.app.connect()
+        let store = try XCTUnwrap(fixture.app.makeBudgetStore())
+        await store.load()
+        XCTAssertNotNil(store.overview)
+
+        await fixture.mock.setSceneError(.timedOut)
+        await fixture.app.allLights(on: true)
+
+        XCTAssertEqual(fixture.app.phase, .failed(.timedOut))
+        XCTAssertTrue(store.isCleared)
+        XCTAssertNil(store.overview)
+        XCTAssertNil(fixture.app.makeBudgetStore())
+    }
+
+    func testSettingsShowsDevicePairingForNativeBudgetWithoutReceiptAccess() async throws {
+        let fixture = try Fixture()
+        fixture.app.nativeBudgetEnabled = true
+        await fixture.mock.setFeatures(BudgetFixtures.features)
+        await fixture.mock.setCapabilities(BudgetFixtures.owner)
+        await fixture.app.connect()
+
+        XCTAssertEqual(fixture.app.capabilities?.canUseReceipts, false)
+        XCTAssertNil(fixture.app.receiptsAPI)
+        XCTAssertTrue(fixture.app.showsDevicePairingSettings)
+
+        fixture.app.nativeBudgetEnabled = false
+        XCTAssertFalse(fixture.app.showsDevicePairingSettings)
     }
 
     func testBudgetViewOnlyOwnerExchangesAndDispatchesOnlyWhenAllFourGatesPass() async throws {
