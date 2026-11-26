@@ -4823,6 +4823,745 @@
         ],
         "title": "BudgetStatus",
         "type": "object"
+      },
+      "BudgetAnalyticsCategories": {
+        "properties": {
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/BudgetAnalyticsCategory"
+            },
+            "title": "Categories",
+            "type": "array"
+          }
+        },
+        "required": [
+          "categories"
+        ],
+        "title": "BudgetAnalyticsCategories",
+        "type": "object"
+      },
+      "BudgetAnalyticsCategory": {
+        "properties": {
+          "archived": {
+            "title": "Archived",
+            "type": "boolean"
+          },
+          "color_hue": {
+            "anyOf": [
+              {
+                "maximum": 359,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color Hue"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "number"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "translations": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "propertyNames": {
+                  "enum": [
+                    "ar",
+                    "bn",
+                    "bs",
+                    "cs",
+                    "da",
+                    "de",
+                    "el",
+                    "en",
+                    "es",
+                    "fa",
+                    "fi",
+                    "fil",
+                    "fr",
+                    "ga",
+                    "he",
+                    "hi",
+                    "hr",
+                    "hu",
+                    "hy",
+                    "id",
+                    "is",
+                    "it",
+                    "ja",
+                    "ko",
+                    "lt",
+                    "lv",
+                    "ms",
+                    "my-MM",
+                    "nl",
+                    "no",
+                    "pl",
+                    "pt",
+                    "ro",
+                    "ru",
+                    "sk",
+                    "sq",
+                    "sr",
+                    "sv",
+                    "sw",
+                    "th",
+                    "tr",
+                    "uk",
+                    "vi",
+                    "zh",
+                    "zh-Hant"
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translations"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "number"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "archived",
+          "version",
+          "created_at",
+          "updated_at",
+          "parent_id"
+        ],
+        "title": "BudgetAnalyticsCategory",
+        "type": "object"
+      },
+      "BudgetAnalyticsCategoryTotal": {
+        "properties": {
+          "archived": {
+            "title": "Archived",
+            "type": "boolean"
+          },
+          "category_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "display_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Label"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "expenses": {
+            "title": "Expenses",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "net_spending": {
+            "title": "Net Spending",
+            "type": "string"
+          },
+          "one_off": {
+            "title": "One Off",
+            "type": "boolean"
+          },
+          "one_off_key": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "One Off Key"
+          },
+          "refunds": {
+            "title": "Refunds",
+            "type": "string"
+          }
+        },
+        "required": [
+          "category_id",
+          "name",
+          "archived",
+          "currency",
+          "expenses",
+          "refunds",
+          "net_spending"
+        ],
+        "title": "BudgetAnalyticsCategoryTotal",
+        "type": "object"
+      },
+      "BudgetAnalyticsCurrency": {
+        "description": "Exact decimal strings in one currency; net_spending is expenses minus refunds.",
+        "properties": {
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "excluded_credits": {
+            "title": "Excluded Credits",
+            "type": "string"
+          },
+          "excluded_debits": {
+            "title": "Excluded Debits",
+            "type": "string"
+          },
+          "expenses": {
+            "title": "Expenses",
+            "type": "string"
+          },
+          "gross_credits": {
+            "title": "Gross Credits",
+            "type": "string"
+          },
+          "gross_debits": {
+            "title": "Gross Debits",
+            "type": "string"
+          },
+          "income": {
+            "title": "Income",
+            "type": "string"
+          },
+          "net_spending": {
+            "title": "Net Spending",
+            "type": "string"
+          },
+          "refunds": {
+            "title": "Refunds",
+            "type": "string"
+          },
+          "transfer_credits": {
+            "title": "Transfer Credits",
+            "type": "string"
+          },
+          "transfer_debits": {
+            "title": "Transfer Debits",
+            "type": "string"
+          },
+          "unclassified_credit": {
+            "title": "Unclassified Credit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "currency",
+          "gross_debits",
+          "gross_credits",
+          "expenses",
+          "income",
+          "refunds",
+          "unclassified_credit",
+          "excluded_debits",
+          "excluded_credits",
+          "transfer_debits",
+          "transfer_credits",
+          "net_spending"
+        ],
+        "title": "BudgetAnalyticsCurrency",
+        "type": "object"
+      },
+      "BudgetAnalyticsFreshness": {
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "balances": {
+            "$ref": "#/components/schemas/BudgetComponentStatus"
+          },
+          "transactions": {
+            "$ref": "#/components/schemas/BudgetComponentStatus"
+          }
+        },
+        "required": [
+          "account_id",
+          "transactions",
+          "balances"
+        ],
+        "title": "BudgetAnalyticsFreshness",
+        "type": "object"
+      },
+      "BudgetAnalyticsMonth": {
+        "properties": {
+          "currencies": {
+            "items": {
+              "$ref": "#/components/schemas/BudgetAnalyticsCurrency"
+            },
+            "title": "Currencies",
+            "type": "array"
+          },
+          "month": {
+            "title": "Month",
+            "type": "string"
+          }
+        },
+        "required": [
+          "month",
+          "currencies"
+        ],
+        "title": "BudgetAnalyticsMonth",
+        "type": "object"
+      },
+      "BudgetAnalyticsMonthlyBudgetCategoryLabel": {
+        "properties": {
+          "archived": {
+            "title": "Archived",
+            "type": "boolean"
+          },
+          "category_id": {
+            "title": "Category Id",
+            "type": "string"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "category_id",
+          "name",
+          "archived"
+        ],
+        "title": "BudgetAnalyticsMonthlyBudgetCategoryLabel",
+        "type": "object"
+      },
+      "BudgetAnalyticsMonthlyBudgetCharts": {
+        "description": "Read-only owner-private monthly budget dashboard and chart series evaluated from one snapshot.",
+        "properties": {
+          "budget": {
+            "$ref": "#/components/schemas/BudgetAnalyticsMonthlyBudget"
+          },
+          "series": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BudgetAnalyticsMonthlyBudgetSeries"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "budget",
+          "series"
+        ],
+        "title": "BudgetAnalyticsMonthlyBudgetCharts",
+        "type": "object"
+      },
+      "BudgetAnalyticsMonthlyBudgetDailyPoint": {
+        "properties": {
+          "cumulative_spent": {
+            "maxLength": 192,
+            "title": "Cumulative Spent",
+            "type": "string"
+          },
+          "date": {
+            "title": "Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "cumulative_spent"
+        ],
+        "title": "BudgetAnalyticsMonthlyBudgetDailyPoint",
+        "type": "object"
+      },
+      "BudgetAnalyticsMonthlyBudgetSeries": {
+        "properties": {
+          "category_labels": {
+            "items": {
+              "$ref": "#/components/schemas/BudgetAnalyticsMonthlyBudgetCategoryLabel"
+            },
+            "title": "Category Labels",
+            "type": "array"
+          },
+          "daily": {
+            "items": {
+              "$ref": "#/components/schemas/BudgetAnalyticsMonthlyBudgetDailyPoint"
+            },
+            "maxItems": 31,
+            "minItems": 1,
+            "title": "Daily",
+            "type": "array"
+          },
+          "months": {
+            "items": {
+              "$ref": "#/components/schemas/BudgetAnalyticsMonthlyBudgetSeriesMonth"
+            },
+            "maxItems": 12,
+            "minItems": 1,
+            "title": "Months",
+            "type": "array"
+          }
+        },
+        "required": [
+          "daily",
+          "months",
+          "category_labels"
+        ],
+        "title": "BudgetAnalyticsMonthlyBudgetSeries",
+        "type": "object"
+      },
+      "BudgetAnalyticsMonthlyBudgetSeriesCategory": {
+        "properties": {
+          "category_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
+          "display_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Label"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "net_spending": {
+            "maxLength": 192,
+            "title": "Net Spending",
+            "type": "string"
+          },
+          "one_off": {
+            "title": "One Off",
+            "type": "boolean"
+          },
+          "one_off_key": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "One Off Key"
+          }
+        },
+        "required": [
+          "category_id",
+          "net_spending"
+        ],
+        "title": "BudgetAnalyticsMonthlyBudgetSeriesCategory",
+        "type": "object"
+      },
+      "BudgetAnalyticsMonthlyBudgetSeriesMonth": {
+        "properties": {
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/BudgetAnalyticsMonthlyBudgetSeriesCategory"
+            },
+            "title": "Categories",
+            "type": "array"
+          },
+          "has_activity": {
+            "title": "Has Activity",
+            "type": "boolean"
+          },
+          "income_estimate_partial": {
+            "title": "Income Estimate Partial",
+            "type": "boolean"
+          },
+          "is_current_month": {
+            "title": "Is Current Month",
+            "type": "boolean"
+          },
+          "period": {
+            "title": "Period",
+            "type": "string"
+          },
+          "provisional": {
+            "title": "Provisional",
+            "type": "boolean"
+          },
+          "spent": {
+            "maxLength": 192,
+            "title": "Spent",
+            "type": "string"
+          },
+          "start_budget": {
+            "maxLength": 192,
+            "title": "Start Budget",
+            "type": "string"
+          }
+        },
+        "required": [
+          "period",
+          "has_activity",
+          "is_current_month",
+          "income_estimate_partial",
+          "provisional",
+          "start_budget",
+          "spent",
+          "categories"
+        ],
+        "title": "BudgetAnalyticsMonthlyBudgetSeriesMonth",
+        "type": "object"
+      },
+      "BudgetAnalyticsOverview": {
+        "properties": {
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/BudgetAnalyticsCategoryTotal"
+            },
+            "title": "Categories",
+            "type": "array"
+          },
+          "currencies": {
+            "items": {
+              "$ref": "#/components/schemas/BudgetAnalyticsCurrency"
+            },
+            "title": "Currencies",
+            "type": "array"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "months": {
+            "items": {
+              "$ref": "#/components/schemas/BudgetAnalyticsMonth"
+            },
+            "title": "Months",
+            "type": "array"
+          },
+          "period": {
+            "title": "Period",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/BudgetAnalyticsScope"
+          },
+          "snapshot_digest": {
+            "title": "Snapshot Digest",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "transfer_summary": {
+            "$ref": "#/components/schemas/BudgetAnalyticsTransferSummary"
+          }
+        },
+        "required": [
+          "period",
+          "start",
+          "end",
+          "snapshot_digest",
+          "scope",
+          "currencies",
+          "months",
+          "categories",
+          "transfer_summary"
+        ],
+        "title": "BudgetAnalyticsOverview",
+        "type": "object"
+      },
+      "BudgetAnalyticsScope": {
+        "properties": {
+          "excluded_accounts": {
+            "title": "Excluded Accounts",
+            "type": "integer"
+          },
+          "freshness": {
+            "items": {
+              "$ref": "#/components/schemas/BudgetAnalyticsFreshness"
+            },
+            "title": "Freshness",
+            "type": "array"
+          },
+          "import_unresolved_count": {
+            "title": "Import Unresolved Count",
+            "type": "integer"
+          },
+          "selected_accounts": {
+            "title": "Selected Accounts",
+            "type": "integer"
+          },
+          "uncertain_count": {
+            "title": "Uncertain Count",
+            "type": "integer"
+          },
+          "unresolved_count": {
+            "title": "Unresolved Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "selected_accounts",
+          "excluded_accounts",
+          "uncertain_count",
+          "unresolved_count",
+          "import_unresolved_count",
+          "freshness"
+        ],
+        "title": "BudgetAnalyticsScope",
+        "type": "object"
+      },
+      "BudgetAnalyticsTransferSummary": {
+        "properties": {
+          "accepted": {
+            "title": "Accepted",
+            "type": "integer"
+          },
+          "boundary": {
+            "title": "Boundary",
+            "type": "integer"
+          },
+          "rejected": {
+            "title": "Rejected",
+            "type": "integer"
+          },
+          "review": {
+            "title": "Review",
+            "type": "integer"
+          },
+          "scan_limited": {
+            "title": "Scan Limited",
+            "type": "boolean"
+          },
+          "suggested": {
+            "title": "Suggested",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "suggested",
+          "accepted",
+          "review",
+          "rejected",
+          "boundary",
+          "scan_limited"
+        ],
+        "title": "BudgetAnalyticsTransferSummary",
+        "type": "object"
       }
     }
   },
@@ -7412,6 +8151,367 @@
           }
         },
         "summary": "Stored component freshness and acquisition health",
+        "x-required-role": "admin"
+      }
+    },
+    "/api/budget/analytics/monthly-budget/charts": {
+      "get": {
+        "description": "Pure read-only single-snapshot monthly budget dashboard and chart series evaluated in Europe/Warsaw from one UTC instant. Returns the MonthlyBudget dashboard alongside cumulative daily spending through cutoff and 6 or 12 historical monthly category/income buckets computed with each month's configured income window. Returns series=null when unconfigured. Makes no bank requests and no database writes.",
+        "operationId": "getBudgetAnalyticsMonthlyBudgetCharts",
+        "parameters": [
+          {
+            "description": "Optional calendar month YYYY-MM, 1900 through the current Europe/Warsaw month; defaults to current month.",
+            "in": "query",
+            "name": "period",
+            "required": false,
+            "schema": {
+              "pattern": "^[0-9]{4}-[0-9]{2}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional uppercase 3-letter ISO currency code; defaults to PLN.",
+            "in": "query",
+            "name": "currency",
+            "required": false,
+            "schema": {
+              "default": "PLN",
+              "pattern": "^[A-Z]{3}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional monthly history window (6 or 12 months); defaults to 6.",
+            "in": "query",
+            "name": "history",
+            "required": false,
+            "schema": {
+              "default": "6",
+              "enum": [
+                "6",
+                "12"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetAnalyticsMonthlyBudgetCharts"
+                }
+              }
+            },
+            "description": "Owner-private monthly budget dashboard and chart series from one local snapshot."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Invalid monthly budget charts query: period must match ^[0-9]{4}-[0-9]{2}$ through the current Europe/Warsaw month, currency must match ^[A-Z]{3}$, history must be 6 or 12, and unknown or duplicate parameters are rejected."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "session required; middleware may return an empty body"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "admin owner or browser-origin requirement failed; middleware may return an empty body"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "unknown, disabled or foreign resource"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "SQLite backend required: monthly-budget/charts requires HESTIA_PERSIST=sqlite."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Monthly budget charts limit exceeded (>100,000 selected rows, >1,000 category limits, >192-character aggregate decimal output, or >4 MiB UTF-8 JSON payload); no partial totals returned."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Stored ledger, category, limit, metadata, or timestamp integrity check failed (`budget_analytics_data_error`), including stored-data helper errors mapped to 500 after query validation, or unexpected internal failure (`budget_internal_error`)."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Analytics storage, Europe/Warsaw time zone, or monthly budget configuration unavailable (`budget_analytics_unavailable` or `budget_unavailable`)."
+          }
+        },
+        "summary": "Read the owner-private monthly budget dashboard and chart series",
+        "x-required-permission": "budget.view",
+        "x-required-role": "admin"
+      }
+    },
+    "/api/budget/analytics/overview": {
+      "get": {
+        "operationId": "getBudgetAnalyticsOverview",
+        "parameters": [
+          {
+            "description": "Inclusive calendar month or year, 1900 through 9999.",
+            "in": "query",
+            "name": "period",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9]{4}(?:-[0-9]{2})?$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "currency",
+            "required": false,
+            "schema": {
+              "pattern": "^[A-Z]{3}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetAnalyticsOverview"
+                }
+              }
+            },
+            "description": "owner-scoped stored state; no bank request"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "session required; middleware may return an empty body"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "admin owner or browser-origin requirement failed; middleware may return an empty body"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "unknown, disabled or foreign resource"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Version, financial source, reserved transfer leg, preview or cursor changed; reload and review."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Explicit analytics processing or owner configuration limit; no partial totals."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "internal error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "budget configuration unavailable"
+          }
+        },
+        "summary": "Read owner-private local budget analytics",
+        "x-required-permission": "budget.view",
+        "x-required-role": "admin"
+      }
+    },
+    "/api/budget/analytics/categories": {
+      "get": {
+        "operationId": "getBudgetAnalyticsCategories",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetAnalyticsCategories"
+                }
+              }
+            },
+            "description": "owner-scoped stored state; no bank request"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "session required; middleware may return an empty body"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "admin owner or browser-origin requirement failed; middleware may return an empty body"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "unknown, disabled or foreign resource"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Version, financial source, reserved transfer leg, preview or cursor changed; reload and review."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Explicit analytics processing or owner configuration limit; no partial totals."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "internal error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "budget configuration unavailable"
+          }
+        },
+        "summary": "Read owner-private local budget analytics",
+        "x-required-permission": "budget.view",
         "x-required-role": "admin"
       }
     }

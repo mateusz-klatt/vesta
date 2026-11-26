@@ -88,6 +88,9 @@ final class AppState {
     /// A new login waits for cleanup and the current backend switch's connection.
     private var resetTask: Task<Void, Never>?
     private weak var activeBudgetStore: BudgetStore?
+    private var budgetGeneration = 0
+    private var handledBudgetDenialGeneration: Int?
+    private(set) var budgetDenialHandlingCount = 0
     private weak var activeAgendaStore: AgendaStore?
 
     private struct DiscoveryFence: Equatable {
@@ -212,19 +215,27 @@ final class AppState {
 
     /// Native budget reads stay hidden until hestia advertises
     /// `budget_native_read` and capabilities grant `budget.view` (V2 plan §10).
-    /// Nothing in production turns this on yet; tests do.
-    var nativeBudgetEnabled = AppConfig.nativeBudgetEnabled
+    /// Only tests and the DEBUG launch override turn this on.
+    var nativeBudgetEnabled = AppConfig.nativeBudgetEnabledForBuild {
+        didSet {
+            if nativeBudgetEnabled != oldValue { closeBudget() }
+        }
+    }
     var budgetAPI: (any BudgetAPI)? {
         guard let api = api as? any BudgetAPI, let session = sessionStore.currentSnapshot(),
               NativeBudgetGate.isEligible(enabled: nativeBudgetEnabled, features: serverFeatures, capabilities: capabilities),
               let token = receiptPairing.nativeBudgetCredential(for: session.origin, session: session) else { return nil }
-        return SessionBoundBudgetAPI(api: api, isCurrent: { [weak self] in
-            guard let self, session == sessionStore.currentSnapshot(),
-                  NativeBudgetGate.isEligible(enabled: nativeBudgetEnabled, features: serverFeatures,
-                                              capabilities: capabilities) else { return false }
-            return token == receiptPairing.nativeBudgetCredential(for: session.origin, session: session)
+        let generation = budgetGeneration
+        let scope = ReceiptSessionScope(
+            origin: session.origin, actor: session.actor, ownerKey: token.ownerKey, credential: token.credential
+        )
+        return SessionBoundBudgetAPI(api: api, scope: scope, isCurrent: { [weak self] in
+            self?.isCurrentBudgetAPI(session: session, token: token, generation: generation) == true
         }, onDenial: { [weak self] error in
-            guard let self else { return }
+            guard let self, handledBudgetDenialGeneration != generation,
+                  isCurrentBudgetAPI(session: session, token: token, generation: generation) else { return false }
+            handledBudgetDenialGeneration = generation
+            budgetDenialHandlingCount += 1
             closeBudget()
             switch error {
             case .forbidden: handleDeviceFailure(.forbidden, used: token)
@@ -234,18 +245,32 @@ final class AppState {
             case .unauthorized: _ = beginCapabilityRefresh(source: .denial)
             default: break
             }
+            return true
         })
     }
 
+    private func isCurrentBudgetAPI(
+        session: BoundSession,
+        token: StoredReceiptDeviceToken,
+        generation: Int
+    ) -> Bool {
+        guard generation == budgetGeneration, session == sessionStore.currentSnapshot(),
+              NativeBudgetGate.isEligible(enabled: nativeBudgetEnabled, features: serverFeatures,
+                                          capabilities: capabilities) else { return false }
+        return token == receiptPairing.nativeBudgetCredential(for: session.origin, session: session)
+    }
+
     func makeBudgetStore(now: Date = Date()) -> BudgetStore? {
-        guard let api = budgetAPI else { return nil }
+        guard phase == .ready else { return nil }
         closeBudget()
+        guard let api = budgetAPI else { return nil }
         let store = BudgetStore(api: api, now: now)
         activeBudgetStore = store
         return store
     }
 
     func closeBudget() {
+        budgetGeneration += 1
         activeBudgetStore?.clear()
         activeBudgetStore = nil
     }
@@ -618,7 +643,7 @@ final class AppState {
                                                                          features: serverFeatures, capabilities: capabilities)
         else { return }
         let previous = currentReceiptScope
-        let budgetToken = activeBudgetStore == nil ? nil : receiptPairing.nativeBudgetCredential(for: session.origin, session: session)
+        let budgetToken = receiptPairing.nativeBudgetCredential(for: session.origin, session: session)
         defer {
             if session == sessionStore.currentSnapshot() {
                 if previous != currentReceiptScope { receiptAccessGeneration += 1 }
@@ -816,10 +841,25 @@ final class AppState {
                     notice = .forbidden
                 }
             case let failure:
+                narrowPublishedFeatures(probed: features)
                 if phase == .connecting { phase = .failed(failure) }
             }
             return nil
         }
+    }
+
+    private func narrowPublishedFeatures(probed: ServerFeatures) {
+        guard let published = serverFeatures else { return }
+        let features = published.features.intersection(probed.features)
+        let narrowed = ServerFeatures(
+            authContract: min(published.authContract, probed.authContract),
+            features: features,
+            qrOrigin: features.contains(.qrLogin) && published.qrOrigin == probed.qrOrigin ? published.qrOrigin : nil,
+            isLegacy: published.isLegacy || probed.isLegacy
+        )
+        authorization = (narrowed, capabilities)
+        if calendarAPI == nil { closeAgenda() }
+        if budgetAPI == nil { closeBudget() }
     }
 
     private func publishAuthorization(features: ServerFeatures?, capabilities published: Capabilities?) {
@@ -1003,6 +1043,7 @@ final class AppState {
     private func fail(_ error: APIError) {
         discoveryGeneration += 1
         stopEvents()
+        closeBudget()
         closeAgenda()
         phase = .failed(error)
     }

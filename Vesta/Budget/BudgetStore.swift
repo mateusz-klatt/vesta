@@ -42,6 +42,9 @@ final class BudgetStore {
     private(set) var availableCurrencies: [String] = []
     private(set) var categoryID: String?
     private(set) var overview: BudgetMonthly?
+    private(set) var analyticsOverview: BudgetOverview?
+    private(set) var categoryCatalog: [BudgetCategoryDefinition] = []
+    private(set) var chartSeries: BudgetChartSeries?
     private(set) var transactions: [BudgetTransaction] = []
     private(set) var filteredTotal = 0
     private(set) var nextCursor: String?
@@ -147,6 +150,9 @@ final class BudgetStore {
         activeQuery = nil
         if !keepContent {
             overview = nil
+            analyticsOverview = nil
+            categoryCatalog = []
+            chartSeries = nil
             transactions = []
             filteredTotal = 0
             dataAsOf = nil
@@ -186,6 +192,9 @@ final class BudgetStore {
 
     private func wipeData() {
         overview = nil
+        analyticsOverview = nil
+        categoryCatalog = []
+        chartSeries = nil
         transactions = []
         filteredTotal = 0
         nextCursor = nil
@@ -216,6 +225,11 @@ final class BudgetStore {
                 categoryID: query.categoryID, cursor: nil, limit: query.limit
             )
             guard !isTerminal, requestGeneration == generation else { return }
+            let native = try await loadNativeAnalytics(period: query.period, currency: query.currency)
+            guard !isTerminal, requestGeneration == generation else { return }
+            analyticsOverview = native.overview
+            categoryCatalog = native.categories
+            chartSeries = native.charts
             applyLoaded(monthly: monthlyResult, page: pageResult, resolvedPeriod: resolvedPeriod, query: query)
             isLoading = false
             isRefreshing = false
@@ -226,6 +240,16 @@ final class BudgetStore {
             if Self.isCancellation(error) { return }
             publish(BudgetError.wrap(error))
         }
+    }
+
+    private func loadNativeAnalytics(
+        period: String,
+        currency: String
+    ) async throws -> (overview: BudgetOverview, categories: [BudgetCategoryDefinition], charts: BudgetChartSeries?) {
+        async let overviewResult = api.overview(period: period, currency: currency)
+        async let categoryResult = api.categories()
+        async let chartResult = api.charts(period: period, currency: currency, history: 6)
+        return try await (overviewResult, categoryResult, chartResult)
     }
 
     private func performLoadMore(cursor: String, query: TransactionQuery, requestGeneration: Int) async {
@@ -269,6 +293,11 @@ final class BudgetStore {
                     categoryID: refreshedQuery.categoryID, cursor: nil, limit: refreshedQuery.limit
                 )
                 guard !isTerminal, requestGeneration == generation else { return }
+                let native = try await loadNativeAnalytics(period: refreshedQuery.period, currency: refreshedQuery.currency)
+                guard !isTerminal, requestGeneration == generation else { return }
+                analyticsOverview = native.overview
+                categoryCatalog = native.categories
+                chartSeries = native.charts
                 applyLoaded(monthly: monthlyResult, page: restarted, resolvedPeriod: resolvedPeriod, query: refreshedQuery)
                 isLoadingMore = false
             } catch {

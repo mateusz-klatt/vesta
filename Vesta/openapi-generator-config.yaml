@@ -18,3 +18,9 @@ typeOverrides:
     CalendarExpandedInstance: CalendarExpandedInstanceWire
     # Allow malformed instances to be skipped while preserving the page metadata.
     CalendarInstances: CalendarInstancesWire
+    # Preserve required nullable anyOf fields in the verbatim 0.55.0 budget schemas.
+    BudgetAnalyticsCategory: BudgetAnalyticsCategoryWire
+    BudgetAnalyticsCategoryTotal: BudgetAnalyticsCategoryTotalWire
+    BudgetAnalyticsMonthlyBudgetCategorySpend: BudgetAnalyticsMonthlyBudgetCategorySpendWire
+    BudgetAnalyticsMonthlyBudgetCharts: BudgetAnalyticsMonthlyBudgetChartsWire
+    BudgetAnalyticsMonthlyBudgetSeriesCategory: BudgetAnalyticsMonthlyBudgetSeriesCategoryWire

@@ -17,7 +17,7 @@ struct BearerAuthMiddleware: ClientMiddleware {
          receiptPairing: ReceiptPairing? = nil,
          receiptScope: ReceiptSessionScope? = nil,
          revoking: (origin: URL, credential: ReceiptDeviceToken)? = nil,
-         budgetEnabled: @escaping @Sendable () -> Bool = { AppConfig.nativeBudgetEnabled }) {
+         budgetEnabled: @escaping @Sendable () -> Bool = { AppConfig.nativeBudgetEnabledForBuild }) {
         self.session = session
         self.receiptPairing = receiptPairing
         self.receiptScope = receiptScope
@@ -35,10 +35,9 @@ struct BearerAuthMiddleware: ClientMiddleware {
         Operations.GetBudgetAnalyticsMonthlyBudget.id: "/api/budget/analytics/monthly-budget",
         Operations.GetBudgetAnalyticsTransactions.id: "/api/budget/analytics/transactions",
         Operations.GetBudgetStatus.id: "/api/budget/status",
-        // Reserved for the later native budget client. V4 does not pin or call these paths.
-        "getBudgetAnalyticsMonthlyBudgetCharts": "/api/budget/analytics/monthly-budget/charts",
-        "getBudgetAnalyticsOverview": "/api/budget/analytics/overview",
-        "getBudgetAnalyticsCategories": "/api/budget/analytics/categories",
+        Operations.GetBudgetAnalyticsMonthlyBudgetCharts.id: "/api/budget/analytics/monthly-budget/charts",
+        Operations.GetBudgetAnalyticsOverview.id: "/api/budget/analytics/overview",
+        Operations.GetBudgetAnalyticsCategories.id: "/api/budget/analytics/categories",
     ]
 
     func intercept(
@@ -78,6 +77,12 @@ struct BearerAuthMiddleware: ClientMiddleware {
                 throw BudgetError.forbidden
             }
             try Task.checkCancellation()
+            if let receiptScope {
+                guard OriginMatcher.matches(baseURL, receiptScope.origin),
+                      receiptScope.matches(device, actor: session?.actor ?? device.actor) else {
+                    throw CancellationError()
+                }
+            }
             request.headerFields[.authorization] = "Bearer \(device.credential.token)"
             let (response, responseBody) = try await next(request, body, baseURL)
             guard response.status.code == 200 else {

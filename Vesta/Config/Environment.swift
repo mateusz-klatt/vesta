@@ -13,6 +13,14 @@ enum AppConfig {
 
     static let nativeBudgetEnabled = false
 
+    static var nativeBudgetEnabledForBuild: Bool {
+        #if DEBUG
+        return nativeBudgetEnabled || ProcessInfo.processInfo.arguments.contains("-vesta.nativeBudget")
+        #else
+        return false
+        #endif
+    }
+
     enum ContentType {
         static let json = "application/json"
         static let eventStream = "text/event-stream"

@@ -5,6 +5,13 @@ protocol BudgetAPI: Sendable {
     func monthlyBudget(period: String, currency: String?) async throws -> BudgetMonthly
     func transactions(period: String, currency: String?, categoryID: String?, cursor: String?, limit: Int) async throws -> BudgetTransactionPage
     func status() async throws -> BudgetStatus
+    func overview(period: String, currency: String?) async throws -> BudgetOverview
+    func categories() async throws -> [BudgetCategoryDefinition]
+    func charts(period: String, currency: String?, history: Int) async throws -> BudgetChartSeries?
+}
+
+protocol ScopeBindingBudgetAPI: Sendable {
+    func bindBudgetScope(_ scope: ReceiptSessionScope) async -> any BudgetAPI
 }
 
 enum BudgetError: LocalizedError, Equatable {

@@ -134,6 +134,70 @@ struct BudgetStatus: Equatable, Sendable {
     let dataAsOf: Date?
 }
 
+struct BudgetCurrencyTotal: Equatable, Sendable {
+    let currency: String
+    let expenses: Decimal
+    let refunds: Decimal
+    let netSpending: Decimal
+    let income: Decimal
+}
+
+struct BudgetOverviewCategory: Identifiable, Equatable, Sendable {
+    let categoryID: String?
+    let name: String?
+    let isOneOff: Bool
+    let oneOffKey: String?
+    let currency: String
+    let expenses: Decimal
+    let refunds: Decimal
+    let netSpending: Decimal
+    let archived: Bool
+
+    var id: String {
+        if let oneOffKey { return oneOffKey }
+        if isOneOff { return "one-off:\(categoryID ?? "uncategorised"):\(name ?? ""):\(currency)" }
+        return "\(categoryID ?? "uncategorised"):\(currency)"
+    }
+}
+
+struct BudgetOverview: Equatable, Sendable {
+    let period: String
+    let currencies: [BudgetCurrencyTotal]
+    let categories: [BudgetOverviewCategory]
+}
+
+struct BudgetCategoryDefinition: Identifiable, Equatable, Sendable {
+    let id: String
+    let name: String
+    let displayName: String?
+    let parentID: String?
+    let colorHue: Int?
+    let archived: Bool
+    let translations: [String: String]
+
+    var title: String { displayName ?? name }
+}
+
+struct BudgetChartPoint: Identifiable, Equatable, Sendable {
+    let date: String
+    let cumulativeSpent: Decimal
+
+    var id: String { date }
+}
+
+struct BudgetChartMonth: Identifiable, Equatable, Sendable {
+    let period: String
+    let startBudget: Decimal
+    let spent: Decimal
+
+    var id: String { period }
+}
+
+struct BudgetChartSeries: Equatable, Sendable {
+    let daily: [BudgetChartPoint]
+    let months: [BudgetChartMonth]
+}
+
 private enum BudgetWire {
     static let posix = Locale(identifier: "en_US_POSIX")
 
@@ -192,7 +256,7 @@ extension BudgetCategory {
     init(wire: Components.Schemas.BudgetAnalyticsMonthlyBudgetCategorySpend) throws {
         categoryID = wire.categoryId
         name = wire.displayLabel ?? wire.displayName ?? wire.name
-        isOneOff = (wire.oneOff ?? false) || wire.oneOffKey != nil
+        isOneOff = wire.oneOff || wire.oneOffKey != nil
         oneOffKey = wire.oneOffKey
         expenses = try BudgetWire.decimal(wire.expenses)
         refunds = try BudgetWire.decimal(wire.refunds)
@@ -247,5 +311,259 @@ extension BudgetStatus {
             }
         }
         dataAsOf = timestamps.compactMap { $0 }.max().map(Date.init(timeIntervalSince1970:))
+    }
+}
+
+extension BudgetCurrencyTotal {
+    init(wire: Components.Schemas.BudgetAnalyticsCurrency) throws {
+        currency = wire.currency
+        expenses = try BudgetWire.decimal(wire.expenses)
+        refunds = try BudgetWire.decimal(wire.refunds)
+        netSpending = try BudgetWire.decimal(wire.netSpending)
+        income = try BudgetWire.decimal(wire.income)
+    }
+}
+
+extension BudgetOverviewCategory {
+    init(wire: Components.Schemas.BudgetAnalyticsCategoryTotal) throws {
+        categoryID = wire.categoryId
+        name = wire.displayLabel ?? wire.displayName ?? wire.name
+        isOneOff = wire.oneOff || wire.oneOffKey != nil
+        oneOffKey = wire.oneOffKey
+        currency = wire.currency
+        expenses = try BudgetWire.decimal(wire.expenses)
+        refunds = try BudgetWire.decimal(wire.refunds)
+        netSpending = try BudgetWire.decimal(wire.netSpending)
+        archived = wire.archived
+    }
+}
+
+extension BudgetOverview {
+    init(wire: Components.Schemas.BudgetAnalyticsOverview) throws {
+        period = wire.period
+        currencies = try wire.currencies.map(BudgetCurrencyTotal.init(wire:))
+        categories = try wire.categories.map(BudgetOverviewCategory.init(wire:))
+    }
+}
+
+extension BudgetCategoryDefinition {
+    init(wire: Components.Schemas.BudgetAnalyticsCategory) {
+        id = wire.id
+        name = wire.name
+        displayName = wire.displayName
+        parentID = wire.parentId
+        colorHue = wire.colorHue
+        archived = wire.archived
+        translations = wire.translations ?? [:]
+    }
+}
+
+extension BudgetChartPoint {
+    init(wire: Components.Schemas.BudgetAnalyticsMonthlyBudgetDailyPoint) throws {
+        date = wire.date
+        cumulativeSpent = try BudgetWire.decimal(wire.cumulativeSpent)
+    }
+}
+
+extension BudgetChartMonth {
+    init(wire: Components.Schemas.BudgetAnalyticsMonthlyBudgetSeriesMonth) throws {
+        period = wire.period
+        startBudget = try BudgetWire.decimal(wire.startBudget)
+        spent = try BudgetWire.decimal(wire.spent)
+    }
+}
+
+extension BudgetChartSeries {
+    init(wire: Components.Schemas.BudgetAnalyticsMonthlyBudgetSeries) throws {
+        daily = try wire.daily.map(BudgetChartPoint.init(wire:))
+        months = try wire.months.map(BudgetChartMonth.init(wire:))
+    }
+}
+
+struct BudgetAnalyticsCategoryWire: Codable, Hashable, Sendable {
+    let archived: Bool
+    let colorHue: Int?
+    let createdAt: Double
+    let displayName: String?
+    let id: String
+    let name: String
+    let parentId: String?
+    let translations: [String: String]?
+    let updatedAt: Double
+    let version: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case archived, colorHue = "color_hue", createdAt = "created_at", displayName = "display_name"
+        case id, name, parentId = "parent_id", translations, updatedAt = "updated_at", version
+    }
+
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        archived = try values.decode(Bool.self, forKey: .archived)
+        colorHue = try values.decodeIfPresent(Int.self, forKey: .colorHue)
+        createdAt = try values.decode(Double.self, forKey: .createdAt)
+        displayName = try values.decodeIfPresent(String.self, forKey: .displayName)
+        id = try values.decode(String.self, forKey: .id)
+        name = try values.decode(String.self, forKey: .name)
+        guard values.contains(.parentId) else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.parentId,
+                .init(codingPath: values.codingPath, debugDescription: "Required parent_id is missing")
+            )
+        }
+        parentId = try values.decodeIfPresent(String.self, forKey: .parentId)
+        translations = try values.decodeIfPresent([String: String].self, forKey: .translations)
+        updatedAt = try values.decode(Double.self, forKey: .updatedAt)
+        version = try values.decode(Int.self, forKey: .version)
+    }
+}
+
+struct BudgetAnalyticsCategoryTotalWire: Codable, Hashable, Sendable {
+    let archived: Bool
+    let categoryId: String?
+    let currency: String
+    let displayLabel: String?
+    let displayName: String?
+    let expenses: String
+    let name: String?
+    let netSpending: String
+    let oneOff: Bool
+    let oneOffKey: String?
+    let refunds: String
+
+    private enum CodingKeys: String, CodingKey {
+        case archived, categoryId = "category_id", currency, displayLabel = "display_label"
+        case displayName = "display_name", expenses, name, netSpending = "net_spending"
+        case oneOff = "one_off", oneOffKey = "one_off_key", refunds
+    }
+
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        archived = try values.decode(Bool.self, forKey: .archived)
+        guard values.contains(.categoryId) else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.categoryId,
+                .init(codingPath: values.codingPath, debugDescription: "Required category_id is missing")
+            )
+        }
+        categoryId = try values.decodeIfPresent(String.self, forKey: .categoryId)
+        currency = try values.decode(String.self, forKey: .currency)
+        displayLabel = try values.decodeIfPresent(String.self, forKey: .displayLabel)
+        displayName = try values.decodeIfPresent(String.self, forKey: .displayName)
+        expenses = try values.decode(String.self, forKey: .expenses)
+        guard values.contains(.name) else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.name,
+                .init(codingPath: values.codingPath, debugDescription: "Required name is missing")
+            )
+        }
+        name = try values.decodeIfPresent(String.self, forKey: .name)
+        netSpending = try values.decode(String.self, forKey: .netSpending)
+        oneOff = try values.decodeBudgetOneOff(forKey: .oneOff)
+        oneOffKey = try values.decodeIfPresent(String.self, forKey: .oneOffKey)
+        refunds = try values.decode(String.self, forKey: .refunds)
+    }
+}
+
+struct BudgetAnalyticsMonthlyBudgetChartsWire: Codable, Hashable, Sendable {
+    let budget: Components.Schemas.BudgetAnalyticsMonthlyBudget
+    let series: Components.Schemas.BudgetAnalyticsMonthlyBudgetSeries?
+
+    private enum CodingKeys: String, CodingKey {
+        case budget, series
+    }
+
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        budget = try values.decode(Components.Schemas.BudgetAnalyticsMonthlyBudget.self, forKey: .budget)
+        guard values.contains(.series) else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.series,
+                .init(codingPath: values.codingPath, debugDescription: "Required series is missing")
+            )
+        }
+        series = try values.decodeIfPresent(Components.Schemas.BudgetAnalyticsMonthlyBudgetSeries.self, forKey: .series)
+    }
+}
+
+struct BudgetAnalyticsMonthlyBudgetSeriesCategoryWire: Codable, Hashable, Sendable {
+    let categoryId: String?
+    let displayLabel: String?
+    let displayName: String?
+    let name: String?
+    let netSpending: String
+    let oneOff: Bool
+    let oneOffKey: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case categoryId = "category_id", displayLabel = "display_label", displayName = "display_name"
+        case name, netSpending = "net_spending", oneOff = "one_off", oneOffKey = "one_off_key"
+    }
+
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        guard values.contains(.categoryId) else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.categoryId,
+                .init(codingPath: values.codingPath, debugDescription: "Required category_id is missing")
+            )
+        }
+        categoryId = try values.decodeIfPresent(String.self, forKey: .categoryId)
+        displayLabel = try values.decodeIfPresent(String.self, forKey: .displayLabel)
+        displayName = try values.decodeIfPresent(String.self, forKey: .displayName)
+        name = try values.decodeIfPresent(String.self, forKey: .name)
+        netSpending = try values.decode(String.self, forKey: .netSpending)
+        oneOff = try values.decodeBudgetOneOff(forKey: .oneOff)
+        oneOffKey = try values.decodeIfPresent(String.self, forKey: .oneOffKey)
+    }
+}
+
+struct BudgetAnalyticsMonthlyBudgetCategorySpendWire: Codable, Hashable, Sendable {
+    let archived: Bool
+    let categoryId: String?
+    let colorHue: Int?
+    let displayLabel: String?
+    let displayName: String?
+    let expenses: String
+    let limit: Components.Schemas.BudgetAnalyticsMonthlyBudgetCategoryLimit?
+    let name: String?
+    let netSpending: String
+    let oneOff: Bool
+    let oneOffKey: String?
+    let refunds: String
+
+    private enum CodingKeys: String, CodingKey {
+        case archived, categoryId = "category_id", colorHue = "color_hue", displayLabel = "display_label"
+        case displayName = "display_name", expenses, limit, name, netSpending = "net_spending"
+        case oneOff = "one_off", oneOffKey = "one_off_key", refunds
+    }
+
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        archived = try values.decode(Bool.self, forKey: .archived)
+        categoryId = try values.decodeIfPresent(String.self, forKey: .categoryId)
+        colorHue = try values.decodeIfPresent(Int.self, forKey: .colorHue)
+        displayLabel = try values.decodeIfPresent(String.self, forKey: .displayLabel)
+        displayName = try values.decodeIfPresent(String.self, forKey: .displayName)
+        expenses = try values.decode(String.self, forKey: .expenses)
+        limit = try values.decodeIfPresent(Components.Schemas.BudgetAnalyticsMonthlyBudgetCategoryLimit.self, forKey: .limit)
+        name = try values.decodeIfPresent(String.self, forKey: .name)
+        netSpending = try values.decode(String.self, forKey: .netSpending)
+        oneOff = try values.decodeBudgetOneOff(forKey: .oneOff)
+        oneOffKey = try values.decodeIfPresent(String.self, forKey: .oneOffKey)
+        refunds = try values.decode(String.self, forKey: .refunds)
+    }
+}
+
+private extension KeyedDecodingContainer {
+    func decodeBudgetOneOff(forKey key: Key) throws -> Bool {
+        guard contains(key) else { return false }
+        if try decodeNil(forKey: key) {
+            throw DecodingError.valueNotFound(
+                Bool.self,
+                .init(codingPath: codingPath + [key], debugDescription: "one_off must be a Boolean when present")
+            )
+        }
+        return try decodeIfPresent(Bool.self, forKey: key) ?? false
     }
 }
