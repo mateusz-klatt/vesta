@@ -31,14 +31,16 @@ enum ReceiptLineOrdering {
     private static let slopeNeighborhood: CGFloat = 0.075
     private static let priceColumnTolerance: CGFloat = 0.03
 
-    static func lines(from fragments: [TextFragment]) -> [String] {
+    static func lines(from fragments: [TextFragment], imageAspectRatio: CGFloat = 1) -> [String] {
         let usable = fragments.filter { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty }
         guard !usable.isEmpty else { return [] }
         let heights = usable.map(\.box.height).sorted()
-        let tolerance = max(heights[heights.count / 2] * bandTolerance, 0.002)
+        let verticalScale = ReceiptOCRStrip.orderingScale(forAspectRatio: imageAspectRatio)
+        let tolerance = max(heights[heights.count / 2] * bandTolerance, 0.002 * verticalScale)
         let text = usable.map { $0.text.trimmingCharacters(in: .whitespaces) }
-        let centers = alignRows(usable)
-        let rows = discountRows(in: usable, text: text, centers: centers, tolerance: tolerance)
+        let centers = alignRows(usable, verticalScale: verticalScale)
+        let bands = discountRows(in: usable, text: text, centers: centers, tolerance: tolerance)
+        let rows = curvedRows(in: usable, text: text, bands: bands, tolerance: tolerance, verticalScale: verticalScale)
         return rows.map { row in
             row.sorted { usable[$0].box.minX < usable[$1].box.minX }
                 .map { text[$0] }
@@ -136,20 +138,130 @@ enum ReceiptLineOrdering {
         return rows
     }
 
-    private static func alignRows(_ fragments: [TextFragment]) -> [CGFloat] {
+    /// The two columns can drift apart by a full line on a crumpled receipt.
+    /// Fit the slope between observations, then test each pair against a local
+    /// baseline inferred from its neighbors. Keep the preceding band and
+    /// discount repairs when the columns do not support a unique assignment.
+    private static func curvedRows(
+        in fragments: [TextFragment], text: [String], bands: [[Int]], tolerance: CGFloat, verticalScale: CGFloat
+    ) -> [[Int]] {
+        let rightAmount = #/^(?=[+−-]?[0-9]|I(?=\s*SZT\b)).*[0-9][.,][0-9]{2}(?:\s*PLN)?(?:\s*[A-G])?$/#.ignoresCase()
+        let discountLabel = #/^(?:SUMA\s+)?(?:OPUST|RABAT)/#.ignoresCase()
+        let boxes = fragments.map(\.box)
+        let ordered = boxes.indices.sorted { boxes[$0].midY > boxes[$1].midY }
+        let amounts = ordered.filter { boxes[$0].minX >= 0.45 && text[$0].wholeMatch(of: rightAmount) != nil }
+        // Smaller sets do not constrain a fit well enough to revise a band.
+        guard amounts.count >= 4 else { return bands }
+        let labels = ordered.filter { boxes[$0].minX < 0.45 && text[$0].contains(where: \.isLetter) }
+        guard labels.count >= amounts.count else { return bands }
+
+        let amountSet = Set(amounts)
+        let labelSet = Set(labels)
+        let hasDetachedAmount = bands.contains { row in
+            let prices = row.filter { amountSet.contains($0) }
+            guard !prices.isEmpty else { return false }
+            let names = row.filter { labelSet.contains($0) }
+            guard prices.count == 1, names.count == 1 else { return true }
+            return abs(boxes[prices[0]].midY - boxes[names[0]].midY) > tolerance
+        }
+        guard hasDetachedAmount else { return bands }
+
+        let isDiscount = Set(labels.filter { text[$0].firstMatch(of: discountLabel) != nil })
+        let candidates = amounts.map { amount in
+            let negative = text[amount].first == "-" || text[amount].first == "−"
+            return labels.indices.filter { index in
+                let label = labels[index]
+                let run = boxes[amount].midX - boxes[label].midX
+                let rise = boxes[amount].midY - boxes[label].midY
+                return boxes[label].maxX <= boxes[amount].minX && abs(rise) <= 0.14 * verticalScale * run
+                    && (negative || !isDiscount.contains(label))
+            }
+        }
+        guard candidates.allSatisfy({ !$0.isEmpty }) else { return bands }
+
+        func error(_ amountIndex: Int, _ labelIndex: Int, slope: CGFloat) -> CGFloat {
+            let label = boxes[labels[labelIndex]]
+            let amount = boxes[amounts[amountIndex]]
+            return abs(amount.midY - label.midY - slope * (amount.midX - label.midX))
+        }
+
+        func bestLabel(for amountIndex: Int, slope: CGFloat) -> Int? {
+            candidates[amountIndex].min { error(amountIndex, $0, slope: slope) < error(amountIndex, $1, slope: slope) }
+        }
+
+        // Try different starting tilts to find the column correspondences.
+        // A fit is one-to-one and monotone, so a price cannot move past its
+        // neighbor or join another purchase sharing the same printed text.
+        let assignments = Set((-12...12).compactMap { step -> [Int]? in
+            let slope = CGFloat(step) * 0.01 * verticalScale
+            let matches = amounts.indices.compactMap { bestLabel(for: $0, slope: slope) }
+            guard zip(matches, matches.dropFirst()).allSatisfy({ $0 < $1 }) else { return nil }
+            return matches
+        })
+
+        let toleranceForFit = min(tolerance, 0.012 * verticalScale)
+        let fits = assignments.compactMap { matches -> (labels: [Int], error: CGFloat, slope: CGFloat)? in
+            let ys = matches.map { boxes[labels[$0]].midY }
+            let slopes = amounts.indices.map { index in
+                let label = boxes[labels[matches[index]]]
+                let amount = boxes[amounts[index]]
+                return (amount.midY - label.midY) / (amount.midX - label.midX)
+            }
+            var totalError: CGFloat = 0
+            for index in amounts.indices {
+                // Interpolate using the two adjacent rows, or extrapolate
+                // from the two closest rows at either end of the column.
+                let (first, second) = switch index {
+                case 0: (1, 2)
+                case ys.count - 1: (index - 2, index - 1)
+                default: (index - 1, index + 1)
+                }
+                let span = ys[second] - ys[first]
+                guard span != 0 else { return nil }
+                let slope = slopes[first] + (slopes[second] - slopes[first]) * (ys[index] - ys[first]) / span
+                let residual = error(index, matches[index], slope: slope)
+                guard bestLabel(for: index, slope: slope) == matches[index],
+                      residual <= toleranceForFit else { return nil }
+                totalError += residual
+            }
+            return (matches.map { labels[$0] }, totalError / CGFloat(amounts.count), slopes.sorted()[slopes.count / 2])
+        }.sorted { $0.error < $1.error }
+        guard let best = fits.first, abs(best.slope) >= 0.01 * verticalScale,
+              fits.count == 1 || fits[1].error - best.error > toleranceForFit * 0.25 else {
+            return bands
+        }
+
+        let amountByLabel = Dictionary(uniqueKeysWithValues: zip(best.labels, amounts))
+        let leftAndOther = bands.map { $0.filter { !amountSet.contains($0) } }
+        // Keep any other already grouped fragments, but leave ambiguous bands
+        // untouched if a price would be attached to multiple candidate names.
+        guard leftAndOther.allSatisfy({ row in
+                  row.filter { labelSet.contains($0) }.count <= 1 || row.allSatisfy { amountByLabel[$0] == nil }
+              }),
+              bands.allSatisfy({ row in
+                  row.allSatisfy { amountSet.contains($0) || labelSet.contains($0) }
+                      || row.allSatisfy { !amountSet.contains($0) }
+              }) else { return bands }
+        return leftAndOther.filter { !$0.isEmpty }.map { row in
+            row + row.compactMap { amountByLabel[$0] }
+        }
+    }
+
+    private static func alignRows(_ fragments: [TextFragment], verticalScale: CGFloat) -> [CGFloat] {
         // Use long text edges rather than short price boxes, whose corners
         // provide a noisy slope. Give the longer edges more weight.
         let samples = fragments.compactMap { fragment -> (y: CGFloat, slope: CGFloat, weight: CGFloat)? in
-            guard fragment.box.width > 0.11, let slope = fragment.rowSlope, abs(slope) < 0.25 else { return nil }
+            guard fragment.box.width > 0.11, let slope = fragment.rowSlope,
+                  abs(slope) < 0.25 * verticalScale else { return nil }
             return (fragment.box.midY, slope, fragment.box.width * fragment.box.width)
         }
         return fragments.map { fragment in
-            let nearby = samples.filter { abs($0.y - fragment.box.midY) < slopeNeighborhood }
+            let nearby = samples.filter { abs($0.y - fragment.box.midY) < slopeNeighborhood * verticalScale }
             let weight = nearby.reduce(0) { $0 + $1.weight }
             guard weight > 0 else { return fragment.box.midY }
             let slope = nearby.reduce(0) { $0 + $1.slope * $1.weight } / weight
             // A single tilted title should not shift otherwise level rows.
-            let agreeingEdges = nearby.filter { abs($0.slope) >= 0.01 && $0.slope * slope > 0 }
+            let agreeingEdges = nearby.filter { abs($0.slope) >= 0.01 * verticalScale && $0.slope * slope > 0 }
             guard agreeingEdges.count >= 2 else { return fragment.box.midY }
             // Project centres to a common x. Estimate the slope locally because
             // the text can curve across a crumpled or curled receipt.
@@ -294,81 +406,35 @@ protocol ReceiptTextRecognizing: Sendable {
     func recognize(_ image: CGImage) async throws -> [TextFragment]
 }
 
-/// Horizontal crops described in source pixels, with y measured from the top.
-private struct ReceiptOCRStrip {
-    let rows: Range<Int>
-    let ownedRows: Range<CGFloat>
-
-    static func plan(width: Int, height: Int) -> [Self] {
-        // Ordinary photos use the whole-photo OCR path. Above 3:1, a strip
-        // no taller than 3/4 of the width makes small print larger relative
-        // to Vision's 1/32 minimum text height fraction at native resolution.
-        guard CGFloat(height) / CGFloat(width) > 3 else { return [] }
-        let maxStripHeight = max(1, width * 3 / 4)
-        let overlap = maxStripHeight / 4
-        let halfOverlap = CGFloat(overlap) / 2
-        let stripCount = (height - overlap - 1) / (maxStripHeight - overlap) + 1
-        // Distribute the rows (counting overlaps twice) evenly among strips
-        // so the last strip also has about a quarter of its height in overlap.
-        let rowsWithOverlap = height + (stripCount - 1) * overlap
-        let stripHeight = rowsWithOverlap / stripCount
-        let extraRows = rowsWithOverlap % stripCount
-        return (0..<stripCount).map { index in
-            let top = index * (stripHeight - overlap) + min(index, extraRows)
-            let bottom = top + stripHeight + (index < extraRows ? 1 : 0)
-            let ownedTop = index == 0 ? 0 : CGFloat(top) + halfOverlap
-            let ownedBottom = index == stripCount - 1 ? CGFloat(height) : CGFloat(bottom) - halfOverlap
-            return Self(rows: top..<bottom, ownedRows: ownedTop..<ownedBottom)
-        }
-    }
-
-    func map(_ fragment: TextFragment, toImageHeight imageHeight: Int) -> TextFragment? {
-        let box = fragment.box
-        let stripHeight = CGFloat(rows.count)
-        let centerFromTop = CGFloat(rows.upperBound) - box.midY * stripHeight
-        // Split the overlap at its midpoint, keeping each fragment from the
-        // strip whose edge is farther away. The lower strip owns the cut itself.
-        guard ownedRows.contains(centerFromTop) else { return nil }
-
-        // Vision measures y from the bottom and normalizes to the crop.
-        // Width is unchanged, so both the y coordinates and slope scale by
-        // the crop's share of the full image height.
-        let scale = stripHeight / CGFloat(imageHeight)
-        let offset = CGFloat(imageHeight - rows.upperBound) / CGFloat(imageHeight)
-        return TextFragment(
-            text: fragment.text,
-            box: CGRect(x: box.minX, y: offset + box.minY * scale, width: box.width, height: box.height * scale),
-            rowSlope: fragment.rowSlope.map { $0 * scale }
-        )
-    }
-}
-
 /// Vision-backed OCR: accurate level, Polish first, then English. Nothing leaves
 /// the device here; the image is dropped by the caller as soon as this returns.
 struct VisionReceiptRecognizer: ReceiptTextRecognizing {
     static let preferredLanguages = ["pl-PL", "en-US"]
-    private static let renderContext = CIContext()
+    private static let renderContext = CIContext(options: [.cacheIntermediates: false])
 
     private enum ReadingError: Error { case imagePreparationFailed }
 
     func recognize(_ image: CGImage) async throws -> [TextFragment] {
-        try await recognize(image, using: Self.read)
+        try await recognize(image, using: nil)
     }
 
     func recognize(
-        _ image: CGImage, using read: @Sendable (CGImage) async throws -> [TextFragment]
+        _ image: CGImage, using read: (@Sendable (CGImage) async throws -> [TextFragment])?
     ) async throws -> [TextFragment] {
         let strips = ReceiptOCRStrip.plan(width: image.width, height: image.height)
+        let aspectRatio = CGFloat(image.height) / CGFloat(image.width)
         let primary = try await Self.readPass(image, strips: strips, using: read, resampling: false)
         // Assess the complete receipt in each pass: its item rows and printed
         // total can be on different strips. Only the retry resamples each crop.
-        let assessment = ReceiptOCRAssessment(lines: ReceiptLineOrdering.lines(from: primary))
+        let assessment = ReceiptOCRAssessment(lines: ReceiptLineOrdering.lines(from: primary, imageAspectRatio: aspectRatio))
         try Task.checkCancellation()
         guard assessment.needsRetry else { return primary }
 
         do {
             let alternate = try await Self.readPass(image, strips: strips, using: read, resampling: true)
-            let alternateAssessment = ReceiptOCRAssessment(lines: ReceiptLineOrdering.lines(from: alternate))
+            let alternateAssessment = ReceiptOCRAssessment(
+                lines: ReceiptLineOrdering.lines(from: alternate, imageAspectRatio: aspectRatio)
+            )
             try Task.checkCancellation()
             return alternateAssessment.improves(on: assessment) ? alternate : primary
         } catch let error as CancellationError {
@@ -381,33 +447,50 @@ struct VisionReceiptRecognizer: ReceiptTextRecognizing {
 
     private static func readPass(
         _ image: CGImage, strips: [ReceiptOCRStrip],
-        using read: @Sendable (CGImage) async throws -> [TextFragment], resampling: Bool
+        using read: (@Sendable (CGImage) async throws -> [TextFragment])?, resampling: Bool
     ) async throws -> [TextFragment] {
-        func readImage(_ image: CGImage) async throws -> [TextFragment] {
-            let input: CGImage
-            if resampling {
-                guard let resized = resampled(image) else { throw ReadingError.imagePreparationFailed }
-                input = resized
-            } else {
-                input = image
-            }
+        try Task.checkCancellation()
+        if strips.isEmpty {
+            let input = try prepare(image, resampling: resampling)
             try Task.checkCancellation()
-            let fragments = try await read(input)
+            let fragments = try await (read ?? Self.read)(input)
             try Task.checkCancellation()
             return fragments
         }
-
-        try Task.checkCancellation()
-        guard !strips.isEmpty else { return try await readImage(image) }
-        var merged: [TextFragment] = []
+        var mapped: [[TextFragment]] = []
         for strip in strips {
             try Task.checkCancellation()
-            let rect = CGRect(x: 0, y: strip.rows.lowerBound, width: image.width, height: strip.rows.count)
-            guard let crop = image.cropping(to: rect) else { throw ReadingError.imagePreparationFailed }
-            let fragments = try await readImage(crop)
-            merged.append(contentsOf: fragments.compactMap { strip.map($0, toImageHeight: image.height) })
+            let fragments: [TextFragment]
+            if let read {
+                let input = try autoreleasepool { try prepareStrip(strip, in: image, resampling: resampling) }
+                try Task.checkCancellation()
+                fragments = try await read(input)
+            } else {
+                // An autorelease pool is thread-local and cannot span an await.
+                // Run the synchronous Vision request with crop and resampling
+                // in the same pool so only the text/geometry escapes this strip.
+                fragments = try autoreleasepool {
+                    let input = try prepareStrip(strip, in: image, resampling: resampling)
+                    try Task.checkCancellation()
+                    return try readStrip(input)
+                }
+            }
+            try Task.checkCancellation()
+            mapped.append(fragments.map { strip.map($0, toImageHeight: image.height) })
         }
-        return merged
+        return ReceiptOCRStrip.merge(mapped, strips: strips, imageHeight: image.height)
+    }
+
+    private static func prepareStrip(_ strip: ReceiptOCRStrip, in image: CGImage, resampling: Bool) throws -> CGImage {
+        let rect = CGRect(x: 0, y: strip.rows.lowerBound, width: image.width, height: strip.rows.count)
+        guard let crop = image.cropping(to: rect) else { throw ReadingError.imagePreparationFailed }
+        return try prepare(crop, resampling: resampling)
+    }
+
+    private static func prepare(_ image: CGImage, resampling: Bool) throws -> CGImage {
+        guard resampling else { return image }
+        guard let resized = resampled(image) else { throw ReadingError.imagePreparationFailed }
+        return resized
     }
 
     private static func resampled(_ image: CGImage) -> CGImage? {
@@ -429,10 +512,8 @@ struct VisionReceiptRecognizer: ReceiptTextRecognizing {
         var request = RecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
-        let supported = Set(request.supportedRecognitionLanguages.map { $0.maximalIdentifier })
-        let wanted = Self.preferredLanguages.map { Locale.Language(identifier: $0) }
-        let usable = wanted.filter { supported.contains($0.maximalIdentifier) }
-        request.recognitionLanguages = usable.isEmpty ? wanted : usable
+        request.recognitionLanguages = languages(supported: request.supportedRecognitionLanguages)
+            .map { Locale.Language(identifier: $0) }
 
         let observations = try await request.perform(on: image)
         return observations.compactMap { observation in
@@ -441,6 +522,29 @@ struct VisionReceiptRecognizer: ReceiptTextRecognizing {
             let slope = width > 0.10 ? (observation.topRight.y - observation.topLeft.y) / width : nil
             return TextFragment(text: best.string, box: observation.boundingBox.cgRect, rowSlope: slope)
         }
+    }
+
+    private static func readStrip(_ image: CGImage) throws -> [TextFragment] {
+        let request = VNRecognizeTextRequest()
+        request.revision = VNRecognizeTextRequestRevision3
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        request.minimumTextHeight = RecognizeTextRequest().minimumTextHeightFraction
+        let supported = (try? request.supportedRecognitionLanguages()) ?? []
+        request.recognitionLanguages = languages(supported: supported.map { Locale.Language(identifier: $0) })
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        return (request.results ?? []).compactMap { observation in
+            guard let best = observation.topCandidates(1).first else { return nil }
+            let width = observation.topRight.x - observation.topLeft.x
+            let slope = width > 0.10 ? (observation.topRight.y - observation.topLeft.y) / width : nil
+            return TextFragment(text: best.string, box: observation.boundingBox, rowSlope: slope)
+        }
+    }
+
+    private static func languages(supported: [Locale.Language]) -> [String] {
+        let identifiers = Set(supported.map(\.maximalIdentifier))
+        let usable = preferredLanguages.filter { identifiers.contains(Locale.Language(identifier: $0).maximalIdentifier) }
+        return usable.isEmpty ? preferredLanguages : usable
     }
 
     /// Whether this device's Vision can read Polish (diacritics `ą ę ł ż …`).

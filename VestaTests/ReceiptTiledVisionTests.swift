@@ -23,7 +23,9 @@ final class ReceiptTiledVisionTests: XCTestCase {
         }
         let image = try renderReceipt(rows)
         let fragments = try await VisionReceiptRecognizer().recognize(image)
-        let lines = ReceiptLineOrdering.lines(from: fragments)
+        let lines = ReceiptLineOrdering.lines(
+            from: fragments, imageAspectRatio: CGFloat(image.height) / CGFloat(image.width)
+        )
         let expectedIndexes = Dictionary(uniqueKeysWithValues: rows.enumerated().map { index, row in
             ("\(row.name) \(row.price)", index)
         })

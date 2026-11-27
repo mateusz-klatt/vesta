@@ -496,6 +496,33 @@ final class ReceiptLineOrderingTests: XCTestCase {
         XCTAssertEqual(ReceiptLineOrdering.lines(from: fragments), ["CHLEB 4,99"])
     }
 
+    func testTiledBandFloorKeepsCloselySpacedRowsSeparate() {
+        let fragments = [
+            frag("FIRST", x: 0.1, y: 0.8000, h: 0.001),
+            frag("SECOND", x: 0.1, y: 0.7986, h: 0.001),
+        ]
+        let ordinary = ReceiptLineOrdering.lines(from: fragments)
+        XCTAssertEqual(ordinary.count, 1)
+        XCTAssertEqual(ReceiptLineOrdering.lines(from: fragments, imageAspectRatio: 3), ordinary)
+        XCTAssertEqual(ReceiptLineOrdering.lines(from: fragments, imageAspectRatio: 10), ["FIRST", "SECOND"])
+    }
+
+    func testTiledSlopeAlignmentUsesNearbySmallSlopes() {
+        let fragments = [
+            frag("FIRST", x: 0.1, y: 0.800, w: 0.22, h: 0.001, slope: 0.004),
+            frag("TAG ONE", x: 0.75, y: 0.80236, w: 0.10, h: 0.001),
+            frag("SECOND", x: 0.1, y: 0.797, w: 0.22, h: 0.001, slope: 0.004),
+            frag("TAG TWO", x: 0.75, y: 0.79936, w: 0.10, h: 0.001),
+            // A differently tilted part of the paper lies within the old
+            // full-height neighborhood and outside the tiled neighborhood.
+            frag("HEADING", x: 0.1, y: 0.768, w: 0.28, h: 0.001, slope: -0.009),
+            frag("FOOTER", x: 0.1, y: 0.765, w: 0.28, h: 0.001, slope: -0.009),
+        ]
+        XCTAssertEqual(ReceiptLineOrdering.lines(from: fragments, imageAspectRatio: 10), [
+            "FIRST TAG ONE", "SECOND TAG TWO", "HEADING", "FOOTER",
+        ])
+    }
+
     func testTiltedItemAmountsStayWithTheirRowsAboveAFlatFooter() {
         let fragments = [
             frag("30,00 B", x: 0.67, y: 0.666),
@@ -831,7 +858,10 @@ final class ReceiptOCRStripTests: XCTestCase {
 
         let sizes = await reads.sizes
         XCTAssertEqual(sizes, stripRows.map { CGSize(width: 128, height: $0.count) })
-        XCTAssertEqual(ReceiptLineOrdering.lines(from: merged), samples.map(\.text))
+        XCTAssertEqual(
+            ReceiptLineOrdering.lines(from: merged, imageAspectRatio: CGFloat(image.height) / CGFloat(image.width)),
+            samples.map(\.text)
+        )
         XCTAssertEqual(merged.count, samples.count)
         for (fragment, sample) in zip(merged.sorted { $0.box.midY > $1.box.midY }, samples) {
             XCTAssertEqual(fragment.box.minX, 0.125)
@@ -869,7 +899,7 @@ final class ReceiptOCRStripTests: XCTestCase {
         let sizes = await reads.sizes
         XCTAssertEqual(sizes.map(\.width), Array(repeating: CGFloat(128), count: stripRows.count)
             + Array(repeating: CGFloat(192), count: stripRows.count))
-        XCTAssertEqual(ReceiptLineOrdering.lines(from: merged), [
+        XCTAssertEqual(ReceiptLineOrdering.lines(from: merged, imageAspectRatio: CGFloat(image.height) / CGFloat(image.width)), [
             "PALIWO 2L * 5,00 10,00 B", "MLEKO 1 * 2,00 2,00 A", "SUMA PLN 12,00"
         ])
     }

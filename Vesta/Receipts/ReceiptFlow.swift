@@ -278,8 +278,8 @@ actor ReceiptDraftJanitor {
 /// text and nothing else.
 ///
 /// One request at a time (``isBusy`` guards every network step). Leaving the
-/// flow (``abandon()``) deletes the open draft, including one whose parse
-/// response arrives after the sheet is gone; deletes go through
+/// flow (``abandon()``) cancels OCR and deletes the open draft, including one
+/// whose parse response arrives after the sheet is gone; deletes go through
 /// ``ReceiptDraftJanitor`` so a failed one is retried by a later flow.
 @MainActor
 @Observable
@@ -303,6 +303,7 @@ final class ReceiptFlow {
     private let isCleanupScopeCurrent: ReceiptScopeValidator
     private var abandoned = false
     private var captureGeneration = 0
+    private var recognitionTask: Task<Void, Never>?
     private var source: ReceiptSourceKind = .paste
 
     init(api: any ReceiptsAPI,
@@ -336,12 +337,28 @@ final class ReceiptFlow {
     }
 
     /// Photo loading and recognition share one busy interval and capture generation.
-    func recognize(loading loadPages: @MainActor () async throws -> [CGImage]) async {
+    func recognize(loading loadPages: @escaping @MainActor () async throws -> [CGImage]) async {
         guard step == .capture, !isBusy, !abandoned, isCurrent else { return }
         let generation = captureGeneration
         isBusy = true
-        defer { isBusy = false }
         error = nil
+        let task = Task { await performRecognition(loading: loadPages, generation: generation) }
+        recognitionTask = task
+        defer {
+            recognitionTask = nil
+            isBusy = false
+        }
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    private func performRecognition(
+        loading loadPages: @MainActor () async throws -> [CGImage], generation: Int
+    ) async {
+        guard isCurrentCapture(generation) else { return }
         do {
             let pages = try await loadPages()
             guard isCurrentCapture(generation) else { return }
@@ -353,7 +370,8 @@ final class ReceiptFlow {
             for page in pages {
                 let fragments = try await recognizer.recognize(page)
                 guard isCurrentCapture(generation) else { return }
-                lines += ReceiptLineOrdering.lines(from: fragments)
+                let aspectRatio = CGFloat(page.height) / CGFloat(page.width)
+                lines += ReceiptLineOrdering.lines(from: fragments, imageAspectRatio: aspectRatio)
             }
             let recognizedText = lines.joined(separator: "\n")
             guard !recognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -479,6 +497,7 @@ final class ReceiptFlow {
     /// Otherwise discard the current draft and retry earlier failed deletes.
     func abandon() async {
         abandoned = true
+        recognitionTask?.cancel()
         guard !isBusy else { return }
         await deleteCurrentDraft()
     }
