@@ -68916,6 +68916,280 @@
           }
         }
       }
+    },
+    "Confirm imported without linking": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تأكيد الإيصالات المستوردة دون ربط"
+          }
+        },
+        "bn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "লিঙ্ক না করে আমদানি করা রসিদ নিশ্চিত করুন"
+          }
+        },
+        "bs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Potvrdi uvezene račune bez povezivanja"
+          }
+        },
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Potvrdit importované účtenky bez propojení"
+          }
+        },
+        "da": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bekræft importerede kvitteringer uden at tilknytte dem"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importierte Belege ohne Verknüpfung bestätigen"
+          }
+        },
+        "el": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Επιβεβαίωση εισαγμένων αποδείξεων χωρίς σύνδεση"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Confirm imported without linking"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Confirmar recibos importados sin vincular"
+          }
+        },
+        "fa": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تأیید رسیدهای واردشده بدون پیوند"
+          }
+        },
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vahvista tuodut kuitit linkittämättä"
+          }
+        },
+        "fil": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kumpirmahin ang mga na-import na resibo nang walang pag-link"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Confirmer les reçus importés sans les associer"
+          }
+        },
+        "ga": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deimhnigh admhálacha iompórtáilte gan iad a nascadh"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "אישור קבלות שיובאו ללא קישור"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "बिना लिंक किए आयातित रसीदों की पुष्टि करें"
+          }
+        },
+        "hr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Potvrdi uvezene račune bez povezivanja"
+          }
+        },
+        "hu": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importált nyugták megerősítése összekapcsolás nélkül"
+          }
+        },
+        "hy": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Հաստատել ներմուծված կտրոնները՝ առանց կապելու"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Konfirmasi struk yang diimpor tanpa menautkannya"
+          }
+        },
+        "is": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Staðfesta innfluttar kvittanir án tengingar"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conferma le ricevute importate senza collegarle"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取り込み済みのレシートをリンクせずに確定"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "가져온 영수증을 연결하지 않고 확인"
+          }
+        },
+        "lt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Patvirtinti importuotus kvitus jų nesusiejant"
+          }
+        },
+        "lv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apstiprināt importētos čekus bez sasaistes"
+          }
+        },
+        "ms": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sahkan resit yang diimport tanpa memautkannya"
+          }
+        },
+        "my": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "တင်သွင်းထားသော ပြေစာများကို မချိတ်ဆက်ဘဲ အတည်ပြုပါ"
+          }
+        },
+        "nb": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bekreft importerte kvitteringer uten å koble dem"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Geïmporteerde bonnen bevestigen zonder koppeling"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Potwierdź zaimportowane paragony bez powiązania"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Confirmar recibos importados sem vincular"
+          }
+        },
+        "ro": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Confirmă bonurile importate fără asociere"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Подтвердить импортированные чеки без привязки"
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Potvrdiť importované bločky bez prepojenia"
+          }
+        },
+        "sq": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Konfirmo faturat e importuara pa i lidhur"
+          }
+        },
+        "sr-Latn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Potvrdi uvezene račune bez povezivanja"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bekräfta importerade kvitton utan att länka dem"
+          }
+        },
+        "sw": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thibitisha risiti zilizoingizwa bila kuziunganisha"
+          }
+        },
+        "th": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ยืนยันใบเสร็จที่นำเข้าโดยไม่เชื่อมโยง"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "İçe aktarılan fişleri bağlantı kurmadan onayla"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Підтвердити імпортовані чеки без прив’язки"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Xác nhận biên lai đã nhập mà không liên kết"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "确认已导入的收据，不关联交易"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "確認已匯入的收據，不關聯交易"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

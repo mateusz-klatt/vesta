@@ -15,7 +15,7 @@ struct BearerAuthMiddleware: ClientMiddleware {
     private let receiptReviewEnabled: @Sendable () -> Bool
     private let reviewScoped: Bool
     private let reviewRequiresMatch: Bool
-    private let reviewListFilter: ReceiptReviewListFilter
+    private let reviewListFilter: ReceiptReviewListFilter?
 
     init(session: BoundSession? = nil,
          receiptPairing: ReceiptPairing? = nil,
@@ -25,7 +25,7 @@ struct BearerAuthMiddleware: ClientMiddleware {
          receiptReviewEnabled: @escaping @Sendable () -> Bool = { AppConfig.receiptReviewEnabledForBuild },
          reviewScoped: Bool = false,
          reviewRequiresMatch: Bool = false,
-         reviewListFilter: ReceiptReviewListFilter = .needsAction) {
+         reviewListFilter: ReceiptReviewListFilter? = nil) {
         self.session = session
         self.receiptPairing = receiptPairing
         self.receiptScope = receiptScope

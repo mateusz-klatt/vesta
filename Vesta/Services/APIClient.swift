@@ -165,7 +165,7 @@ actor APIClient: HestiaAPI {
     }
 
     func requestReceiptReviewClient(
-        scope: ReceiptSessionScope, requiresMatch: Bool, listFilter: ReceiptReviewListFilter
+        scope: ReceiptSessionScope, requiresMatch: Bool, listFilter: ReceiptReviewListFilter?
     ) -> Client {
         Client(
             serverURL: scope.origin,

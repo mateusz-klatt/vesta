@@ -39,7 +39,7 @@ enum ReceiptReviewGate {
 typealias ReceiptListPage = Components.Schemas.BudgetReceiptListResult
 typealias ReceiptDetailResult = Components.Schemas.BudgetReceiptDetailResult
 
-enum ReceiptReviewListFilter: Sendable {
+enum ReceiptReviewListFilter: Equatable, Sendable {
     case needsAction, imported
 }
 
@@ -55,7 +55,9 @@ struct ReceiptReviewPage: Sendable {
 }
 
 protocol ReceiptReviewAPI: Sendable {
-    func listReviewReceipts(cursor: ReceiptReviewCursor?, scope: ReceiptSessionScope) async throws -> ReceiptReviewPage
+    func listReviewReceipts(
+        cursor: ReceiptReviewCursor?, firstPageFilter: ReceiptReviewListFilter, scope: ReceiptSessionScope
+    ) async throws -> ReceiptReviewPage
     func receiptDetail(id: String, scope: ReceiptSessionScope) async throws -> ReceiptDetailResult
     func confirmImportedReceipt(_ request: ReceiptConfirmRequest, scope: ReceiptSessionScope) async throws -> ReceiptDetail
 }
@@ -66,8 +68,12 @@ struct SessionBoundReceiptReviewAPI: ReceiptReviewAPI {
     let isCurrent: @MainActor @Sendable () -> Bool
     let onDenial: @MainActor @Sendable (ReceiptError) -> Bool
 
-    func listReviewReceipts(cursor: ReceiptReviewCursor?, scope requested: ReceiptSessionScope) async throws -> ReceiptReviewPage {
-        try await run(requested) { try await api.listReviewReceipts(cursor: cursor, scope: scope) }
+    func listReviewReceipts(
+        cursor: ReceiptReviewCursor?, firstPageFilter: ReceiptReviewListFilter, scope requested: ReceiptSessionScope
+    ) async throws -> ReceiptReviewPage {
+        try await run(requested) {
+            try await api.listReviewReceipts(cursor: cursor, firstPageFilter: firstPageFilter, scope: scope)
+        }
     }
 
     func receiptDetail(id: String, scope requested: ReceiptSessionScope) async throws -> ReceiptDetailResult {

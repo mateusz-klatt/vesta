@@ -4,10 +4,17 @@ import Observation
 typealias ReceiptReviewSummary = Components.Schemas.BudgetReceiptSummary
 
 extension ReceiptReviewSummary {
-    var shopNameForDisplay: String? { displayShopName ?? rawShopName }
+    var shopNameForDisplay: String? { preferredShopName ?? rawShopName }
 }
 
 private extension ReceiptReviewSummary {
+    var preferredShopName: String? {
+        guard let displayShopName, !displayShopName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return displayShopName
+    }
+
     var normalizedRawShopName: String? {
         guard let rawShopName else { return nil }
         let name = ReceiptConfirmLines.normalizeConfirmName(rawShopName).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -25,10 +32,17 @@ struct ReceiptMerchantGroup: Equatable, Identifiable {
     var receipts: [ReceiptReviewSummary]
 
     var name: String? {
-        receipts.lazy.compactMap(\.displayShopName).first ?? receipts.first?.normalizedRawShopName
+        receipts.lazy.compactMap(\.preferredShopName).first ?? receipts.first?.normalizedRawShopName
     }
 
     var canConfirmWithoutLinking: Bool { id != "unknown" && receipts.contains(where: \.canConfirmInReview) }
+
+    var bulkConfirmationTitle: LocalizedStringResource? {
+        guard canConfirmWithoutLinking else { return nil }
+        return receipts.allSatisfy(\.canConfirmInReview)
+            ? "Confirm all without linking"
+            : "Confirm imported without linking"
+    }
 
     static func group(_ receipts: [ReceiptReviewSummary]) -> [ReceiptMerchantGroup] {
         var groups: [String: ReceiptMerchantGroup] = [:]
@@ -89,6 +103,7 @@ final class ReceiptReviewStore {
     private let isCurrent: @MainActor () -> Bool
     private var generation = 0
     private var activeTask: Task<Void, Never>?
+    private var listFilter: ReceiptReviewListFilter = .needsAction
 
     private(set) var receipts: [ReceiptReviewSummary] = []
     private(set) var state: State = .loading
@@ -179,7 +194,7 @@ final class ReceiptReviewStore {
                 var detail = result.receipt
                 guard try self.canReview(detail.summary, for: receipt, selectingDetail: true) else { return }
                 if detail.summary.version == receipt.version {
-                    detail.summary.displayShopName = detail.summary.displayShopName ?? receipt.displayShopName
+                    detail.summary.displayShopName = detail.summary.preferredShopName ?? receipt.preferredShopName
                     if detail.summary.hasBankLink {
                         detail.summary.linkedTransaction = detail.summary.linkedTransaction ?? receipt.linkedTransaction
                     }
@@ -384,7 +399,14 @@ final class ReceiptReviewStore {
         var cursors: Set<String> = []
         do {
             while true {
-                let page = try await api.listReviewReceipts(cursor: cursor, scope: scope)
+                let page: ReceiptReviewPage
+                do {
+                    page = try await api.listReviewReceipts(cursor: cursor, firstPageFilter: listFilter, scope: scope)
+                } catch ReceiptError.unsupportedContractVersion where cursor == nil && listFilter == .needsAction {
+                    guard isCurrent(request) else { return }
+                    listFilter = .imported
+                    continue
+                }
                 guard isCurrent(request) else { return }
                 loaded.append(contentsOf: page.receipts.filter {
                     $0.status != .confirmed && ids.insert($0.receiptId).inserted
@@ -470,6 +492,7 @@ final class ReceiptReviewStore {
     }
 
     private func wipe() {
+        listFilter = .needsAction
         receipts = []
         detail = nil
         detailID = nil

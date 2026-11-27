@@ -1,23 +1,16 @@
 import OpenAPIRuntime
 
 extension APIClient: ReceiptReviewAPI {
-    func listReviewReceipts(cursor: ReceiptReviewCursor?, scope: ReceiptSessionScope) async throws -> ReceiptReviewPage {
-        do {
-            return try await listReviewPage(cursor: cursor?.value, filter: cursor?.filter ?? .needsAction, scope: scope)
-        } catch ReceiptError.unsupportedContractVersion where cursor == nil {
-            return try await listReviewPage(cursor: nil, filter: .imported, scope: scope)
-        }
-    }
-
-    private func listReviewPage(
-        cursor: String?, filter: ReceiptReviewListFilter, scope: ReceiptSessionScope
+    func listReviewReceipts(
+        cursor: ReceiptReviewCursor?, firstPageFilter: ReceiptReviewListFilter, scope: ReceiptSessionScope
     ) async throws -> ReceiptReviewPage {
-        try await review(scope, listFilter: filter) { client in
+        let filter = cursor?.filter ?? firstPageFilter
+        return try await review(scope, listFilter: filter) { client in
             let body: Components.Schemas.BudgetReceiptListRequest = switch filter {
             case .needsAction:
-                .init(cursor: cursor, statuses: ["imported", "needs_review", "draft"])
+                .init(cursor: cursor?.value, statuses: ["imported", "needs_review", "draft"])
             case .imported:
-                .init(cursor: cursor, status: "imported")
+                .init(cursor: cursor?.value, status: "imported")
             }
             let page = try await client.listBudgetReceipts(.init(body: .json(body))).ok.body.json
             return ReceiptReviewPage(
@@ -28,14 +21,14 @@ extension APIClient: ReceiptReviewAPI {
     }
 
     func receiptDetail(id: String, scope: ReceiptSessionScope) async throws -> ReceiptDetailResult {
-        try await review(scope) { client in
+        try await review(scope, listFilter: nil) { client in
             let input = Operations.GetBudgetReceiptDetail.Input(query: .init(receiptId: id))
             return try await client.getBudgetReceiptDetail(input).ok.body.json
         }
     }
 
     func confirmImportedReceipt(_ request: ReceiptConfirmRequest, scope: ReceiptSessionScope) async throws -> ReceiptDetail {
-        try await review(scope, requiresMatch: request.link != nil) { client in
+        try await review(scope, requiresMatch: request.link != nil, listFilter: nil) { client in
             try await client.confirmBudgetReceipt(.init(body: .json(request))).ok.body.json.receipt
         }
     }
@@ -43,7 +36,7 @@ extension APIClient: ReceiptReviewAPI {
     private func review<Value: Sendable>(
         _ scope: ReceiptSessionScope,
         requiresMatch: Bool = false,
-        listFilter: ReceiptReviewListFilter = .needsAction,
+        listFilter: ReceiptReviewListFilter?,
         _ operation: (Client) async throws -> Value
     ) async throws -> Value {
         guard receiptReviewEnabled() else { throw ReceiptError.forbidden }

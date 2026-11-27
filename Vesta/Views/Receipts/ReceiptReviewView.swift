@@ -77,9 +77,11 @@ struct ReceiptReviewView: View {
                         if let name = group.name { Text(verbatim: name) }
                         else { Text("Unknown merchant") }
                         Spacer()
-                        if group.canConfirmWithoutLinking {
-                            Button("Confirm all without linking") {
+                        if let title = group.bulkConfirmationTitle {
+                            Button {
                                 Task { await store.confirmMerchant(group) }
+                            } label: {
+                                Text(title)
                             }
                             .font(.caption)
                             .disabled(store.isBusy)

@@ -1,8 +1,8 @@
-# V6 imported receipt review
+# V6 receipt review
 
 ## Scope and default
 
-V6 adds a DEBUG-only phone flow for receipts already imported by hestia. It lists `status: imported` receipts with the default `evidence: exclude`, pages through the result, and groups rows by merchant. A detail view offers bank candidates, an explicit no-link choice, and single confirmation. Each merchant group also has a bulk action that always confirms with `link: null`.
+V6 adds a DEBUG-only phone flow for receipts that need action. It pages through the results and groups rows by merchant. Unlinked imports can be confirmed individually with a bank candidate or without linking. Eligible merchant groups can bulk-confirm unlinked imports with `link: null`.
 
 The scan → parse → confirm flow retains its existing request format. Gmail import controls, receipt images, search, and editing imported receipt fields are out of scope.
 
@@ -18,14 +18,15 @@ Presentation, exchange eligibility, and every review request require:
 
 The app checks current grants for the budget attached to the token. Grants from a different budget do not count. Choosing a candidate additionally requires `budget.receipts.match` both for that budget and on the issued token. Without match, candidates and selection are cleared and only `link: null` can be sent.
 
-List, detail, and review-confirm requests authenticate with the exchanged device bearer and negotiate `X-Hestia-Contract-Version: 0.60.0`. The add-receipt scan path leaves the header unset so it can still call older Hestia servers that reject a version higher than their own.
+List, detail, and review-confirm requests authenticate with the exchanged device bearer. The list negotiates `X-Hestia-Contract-Version: 0.65.0` with `statuses`. If the first page returns HTTP 400 with `budget_receipt_contract_version_invalid`, the store retries once at `0.60.0` with `status: imported`. Refreshes reuse the downgrade for the lifetime of the store. Clearing the store resets the negotiation. Detail and review confirm use `0.60.0`. The add-receipt scan path leaves the header unset for compatibility with older Hestia servers.
 
 A 401, 403, flag change, capability/token withdrawal, account switch, origin switch, or sign-out clears cached receipt/detail data and terminates the store. Session-bound APIs revalidate after every awaited operation, so late responses and late denials cannot republish into a newer session. V4 rotation and its journal remain unchanged.
 
 ## Review rules
 
-- The list request sends `status: imported`, `evidence: exclude`, and `limit: 200`, then follows distinct cursors.
-- Merchant groups use a non-empty `chain_key`, a valid NIP, or a normalized case-insensitive shop name, in that order. The Unknown merchant group offers individual review. Known groups can bulk confirm their unlinked rows.
+- The default list request sends `statuses: [imported, needs_review, draft]` and omits `status`. Both list versions send `evidence: exclude` and `limit: 200`, then follow distinct cursors with the filter that issued them.
+- Drafts and needs-review receipts show status badges and open read-only with a hint to finish them on the web.
+- Merchant groups use a non-empty `chain_key`, a valid NIP, or a normalized case-insensitive raw shop name, in that order. Display prefers a nonblank canonical issuer name when available. Known groups can bulk-confirm unlinked imports. When only part of a group is eligible, the button reads “Confirm imported without linking”.
 - Exactly one candidate with `match_strength` `id`, `nip`, or `distinctive` is preselected when receipt metadata is recognized. A weak or unknown candidate or multiple candidates require a choice before confirming.
 - A row with linked transaction metadata shows its booking date and amount with a bank indicator. Linked receipts open read-only and can carry the list transaction into detail. Receipts with an unknown status have no confirm action.
 - A single confirm uses the chosen signed candidate link or explicit `link: null`. The review flow only submits unlinked imports. If a receipt was confirmed since listing, it is removed from the pending list without another write.
@@ -51,10 +52,12 @@ The generator drops nullable `anyOf` properties. Wire overrides preserve them. S
 
 The receipt schema additions from Hestia 0.60.0 at `ca152ff` include ID-match candidates, linked transaction and group metadata, and required nullable confirm-line fields. Both existing confirm transports already supply these fields.
 
+The additions from Hestia 0.65.0 at `335711a` are `BudgetReceiptListRequest.statuses` and the optional `display_shop_name` field on receipt summary and detail.
+
 ## UAT checklist
 
-- [ ] Without `-vesta.receiptReview`, verify Home has no imported-review entry and zero list/detail/review-confirm requests.
-- [ ] In DEBUG with the flag, use an exchanged token with view/edit. Verify imported rows group by merchant and all list pages load.
+- [ ] Without `-vesta.receiptReview`, verify Home has no receipt-review entry and zero list/detail/review-confirm requests.
+- [ ] In DEBUG with the flag, use an exchanged token with view/edit. Verify that all list pages load and that drafts and needs-review receipts open read-only.
 - [ ] Verify a single `id`, `nip`, or `distinctive` candidate is preselected. Verify zero, two, and single weak candidates produce no selection.
 - [ ] Open a linked row and verify the booking date and amount appear on the list and in its read-only detail.
 - [ ] Confirm one receipt with a chosen candidate; confirm another with “Don’t link”. Inspect the server ledger and links.
