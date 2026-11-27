@@ -14,7 +14,7 @@ struct ReceiptMerchantGroup: Equatable, Identifiable {
         var groups: [String: ReceiptMerchantGroup] = [:]
         var order: [String] = []
         for receipt in receipts {
-            let shop = receipt.rawShopName.map(ReceiptForm.matchKey)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let shop = receipt.rawShopName.map(ReceiptConfirmLines.normalizeConfirmName)?.trimmingCharacters(in: .whitespacesAndNewlines)
             let chain = receipt.chainKey?.trimmingCharacters(in: .whitespacesAndNewlines)
             let id: String
             if let chain, !chain.isEmpty {
@@ -95,13 +95,15 @@ final class ReceiptReviewStore {
     }
     var confirmLineError: ReceiptError? {
         guard case .failure(let error) = selectedLinePlan else { return nil }
-        return error.receiptError
+        return error
     }
 
-    private var selectedLinePlan: Result<ReceiptConfirmLinePlan, ReceiptConfirmLineError>? {
-        guard let detail, let total = detail.summary.totalAmount.flatMap(ReceiptConfirmLines.normalizeConfirmTotal)
-        else { return nil }
-        return Self.linePlan(for: detail, total: total)
+    private var selectedLinePlan: Result<ReceiptConfirmLinePlan, ReceiptError>? {
+        guard let detail else { return nil }
+        guard let total = detail.summary.totalAmount.flatMap(ReceiptConfirmLines.normalizeConfirmTotal) else {
+            return .failure(.invalidTotal)
+        }
+        return Self.linePlan(for: detail, total: total).mapError(\.receiptError)
     }
 
     private(set) var hasLinkChoice = false
@@ -276,8 +278,8 @@ final class ReceiptReviewStore {
         let incomplete = ReceiptError.rejected("incomplete_receipt")
         guard let day = summary.receiptDate.flatMap(ReceiptDay.init(iso:)),
               let currency = summary.currency, currency.wholeMatch(of: /[A-Z]{3}/) != nil,
-              let total = summary.totalAmount.flatMap(ReceiptConfirmLines.normalizeConfirmTotal),
               time.map(ReceiptForm.validTime) != false else { throw incomplete }
+        guard let total = summary.totalAmount.flatMap(ReceiptConfirmLines.normalizeConfirmTotal) else { throw .invalidTotal }
         let payment = summary.paymentMethod.flatMap(ReceiptConfirmRequest.PaymentMethodPayload.init(rawValue:)) ?? .unknown
         guard candidate == nil || (payment != .cash && payment != .mixed) else { throw incomplete }
 

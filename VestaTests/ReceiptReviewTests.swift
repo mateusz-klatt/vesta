@@ -359,6 +359,29 @@ final class ReceiptReviewStoreTests: XCTestCase {
         XCTAssertTrue(confirms.isEmpty)
     }
 
+    func testMissingOrInvalidTotalDisablesSaveAndShowsReasonBeforeTap() async {
+        let invalidTotals: [String?] = [nil, "", "invalid", "0.00", "-12.34"]
+        for total in invalidTotals {
+            let api = MockReceiptReviewAPI()
+            var detail = ReviewFixtures.detail()
+            detail.summary.totalAmount = total
+            await api.setPage(cursor: nil, receipts: [detail.summary], next: nil)
+            await api.setDetail(detail)
+            let store = ReceiptReviewStore(api: api, scope: scope)
+            await store.load()
+            await store.select(detail.summary)
+
+            XCTAssertNil(store.totalAdjustment)
+            XCTAssertFalse(store.canConfirmSelected)
+            XCTAssertEqual(store.confirmLineError, .invalidTotal)
+            XCTAssertEqual(store.confirmLineError?.message.key, "The receipt total is missing or invalid.")
+            await store.confirmSelected()
+
+            let confirms = await api.confirms
+            XCTAssertTrue(confirms.isEmpty)
+        }
+    }
+
     func testSingleConfirmWithoutMatchPermissionSendsNull() async throws {
         let api = MockReceiptReviewAPI()
         let summary = ReviewFixtures.summary()

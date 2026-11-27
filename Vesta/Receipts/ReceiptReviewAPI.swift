@@ -114,6 +114,7 @@ extension ReceiptError {
         case .alreadyLinked: "budget_receipt_tx_already_linked"
         case .alreadySubmitted: "already_submitted"
         case .staleCandidate: "budget_receipt_stale_source"
+        case .invalidTotal: "incomplete_receipt"
         case .totalMismatch: "budget_receipt_total_mismatch"
         case .redactedLinesEditBlocked: "budget_receipt_redacted_lines_edit_blocked"
         case .deviceLimit: "device_token_limit_reached"

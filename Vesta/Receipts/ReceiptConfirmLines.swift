@@ -35,6 +35,7 @@ enum ReceiptConfirmLines {
     private typealias LineInput = Components.Schemas.BudgetReceiptLineInput
 
     private static let maxReceiptLines = 300
+    static let maxNameLength = 128
     private static let posix = Locale(identifier: "en_US_POSIX")
     // Match the web input's trim and whitespace collapse, including non-breaking spaces.
     private static let whitespace = CharacterSet(charactersIn:
@@ -90,14 +91,25 @@ enum ReceiptConfirmLines {
         }
     }
 
-    static func cleanConfirmLine(_ input: ReceiptLine) throws(ReceiptConfirmLineError) -> Components.Schemas.BudgetReceiptLineInput {
-        let name = cleanText(input.rawName)
-        let unit = input.rawUnit.map(cleanText).flatMap(nonempty)
+    static func normalizeConfirmName(_ name: String) -> String {
+        name.precomposedStringWithCanonicalMapping
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+    }
+
+    private static func validConfirmLineName(_ name: String) -> Bool {
+        guard name.unicodeScalars.count <= maxNameLength else { return false }
         let nameKey = trim(String(name.decomposedStringWithCanonicalMapping.unicodeScalars.filter {
             $0.properties.generalCategory != .nonspacingMark
         }))
+        return !nameKey.isEmpty && nameKey.unicodeScalars.count <= maxNameLength
+    }
+
+    static func cleanConfirmLine(_ input: ReceiptLine) throws(ReceiptConfirmLineError) -> Components.Schemas.BudgetReceiptLineInput {
+        let name = cleanText(input.rawName)
+        let unit = input.rawUnit.map(cleanText).flatMap(nonempty)
         let unitPrice = input.unitPriceRaw.flatMap(normalizeConfirmMoney)
-        guard !nameKey.isEmpty, name.unicodeScalars.count <= 128, nameKey.unicodeScalars.count <= 128,
+        guard validConfirmLineName(name),
               validConfirmLineText(input.rawName), (unit?.unicodeScalars.count ?? 0) <= 16,
               input.rawUnit.map(validConfirmLineText) ?? true,
               let quantity = normalizeConfirmMoney(input.quantity), input.unitPriceRaw == nil || unitPrice != nil,
@@ -218,12 +230,16 @@ enum ReceiptConfirmLines {
         summaryFallbackName: String = "Document"
     ) -> Components.Schemas.BudgetReceiptLineInput {
         func usableName(_ text: String) -> String? {
-            isRedactedValue(text) ? nil : nonempty(trim(text))
+            let name = normalizeConfirmName(text)
+            guard !isRedactedValue(name), validConfirmLineText(text), validConfirmLineName(name) else { return nil }
+            return name
         }
-        let candidate = invoiceNumber.flatMap(usableName) ?? usableName(trim(draftShopName))
-            ?? storedShopName.flatMap(usableName) ?? summaryFallbackName
-        let rawName = candidate.isEmpty || isRedactedValue(candidate) ? "Document" : candidate
-        return synthesizeTotalLine(rawName, amount: normalizedTotal, kind: .other)
+        func usableShopName(_ text: String) -> String? {
+            usableName(PANRedactor.redact(text))
+        }
+        let name = invoiceNumber.flatMap(usableName) ?? usableShopName(draftShopName)
+            ?? storedShopName.flatMap(usableShopName) ?? usableName(summaryFallbackName) ?? "Document"
+        return synthesizeTotalLine(name, amount: normalizedTotal, kind: .other)
     }
 
     private static func synthesizeTotalLine(_ name: String, amount: String, kind: LineInput.LineKindPayload) -> LineInput {

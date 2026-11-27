@@ -1178,6 +1178,32 @@ final class ReceiptsClientTests: XCTestCase {
         XCTAssertEqual(line["net_line_total"] as? String, object["total_amount"] as? String)
     }
 
+    func testConfirmWireUsesDocumentAndStripsStoredCardNumberForEmptyInvoice() async throws {
+        let cardNumber = "4111 1111 1111 1111"
+        let transport = CapturingTransport(status: 409, body: #"{"error":{"code":"budget_receipt_stale_source"}}"#)
+        let api = pairedClient(transport: transport)
+        var parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: body(sampleParseJSON))
+        parsed.draft.summary.documentKind = .invoice
+        parsed.draft.summary.rawShopName = cardNumber
+        parsed.draft.lines = []
+        let form = ReceiptForm(draft: parsed.draft, candidates: parsed.candidates)
+        let request = try XCTUnwrap(form.request(
+            receiptID: parsed.receiptId, version: parsed.version, candidates: parsed.candidates
+        ))
+        await assertReceiptError(try await api.confirmReceipt(request), .staleCandidate)
+
+        let sent = try XCTUnwrap(transport.last)
+        let bodyText = String(decoding: sent.body, as: UTF8.self)
+        for group in Set(cardNumber.split(separator: " ")) {
+            XCTAssertFalse(bodyText.contains(group))
+        }
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: sent.body) as? [String: Any])
+        XCTAssertEqual(object["raw_shop_name"] as? String, PANRedactor.placeholder)
+        let lines = try XCTUnwrap(object["lines"] as? [[String: Any]])
+        XCTAssertEqual(lines.count, 1)
+        XCTAssertEqual(lines.first?["raw_name"] as? String, "Document")
+    }
+
     func testBudgetDisabledMapped() {
         XCTAssertEqual(ReceiptError.from(status: 404, code: "budget_disabled"), .disabled)
     }
@@ -1439,13 +1465,32 @@ final class ReceiptFormTests: XCTestCase {
         p.draft.summary.documentKind = .invoice
         p.draft.lines = []
         var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
-        form.shopName = "  Test  shop  "
+        form.shopName = "  Cafe\u{0301}\t  shop  "
 
         let request = try XCTUnwrap(form.request(receiptID: p.receiptId, version: p.version, candidates: p.candidates))
         XCTAssertNil(form.totalAdjustment)
         XCTAssertNil(request.link)
-        XCTAssertEqual(request.rawShopName, "Test shop")
-        XCTAssertEqual(request.lines?.map(\.rawName), ["Test  shop"])
+        let shop = try XCTUnwrap(request.rawShopName)
+        let name = try XCTUnwrap(request.lines?.first?.rawName)
+        XCTAssertEqual(Array(shop.utf8), Array("Café shop".utf8))
+        XCTAssertEqual(Array(name.utf8), Array(shop.utf8))
+    }
+
+    func testEmptyInvoiceFallsBackForOverlongShopName() throws {
+        var p = try parsed()
+        p.draft.summary.documentKind = .invoice
+        p.draft.summary.rawShopName = nil
+        p.draft.lines = []
+        var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
+        let atLimit = String(repeating: "X", count: 128)
+        for (shopName, lineName) in [(atLimit, atLimit), (atLimit + "X", "Document")] {
+            form.shopName = shopName
+            let request = try XCTUnwrap(form.request(
+                receiptID: p.receiptId, version: p.version, candidates: p.candidates
+            ))
+            XCTAssertEqual(request.rawShopName, atLimit)
+            XCTAssertEqual(request.lines?.map(\.rawName), [lineName])
+        }
     }
 
     func testEmptyInvoiceRedactsCardDataInItsSummaryLine() throws {

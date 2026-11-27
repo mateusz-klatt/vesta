@@ -152,6 +152,8 @@ enum ReceiptError: LocalizedError, Equatable {
     case alreadySubmitted
     /// 409 `budget_receipt_stale_source`: the bank transaction changed since preview.
     case staleCandidate
+    /// The receipt total is missing or cannot be sent in a confirmation request.
+    case invalidTotal
     /// 400 `budget_receipt_total_mismatch`: line totals don't add up to the total.
     case totalMismatch
     case redactedLinesEditBlocked
@@ -180,6 +182,7 @@ enum ReceiptError: LocalizedError, Equatable {
         case .alreadyLinked: "Transaction already has a receipt"
         case .alreadySubmitted: "Receipt saved"
         case .staleCandidate: "Bank transaction changed"
+        case .invalidTotal: "Total"
         case .totalMismatch: "Totals don’t add up"
         case .redactedLinesEditBlocked: "Receipt rejected"
         case .deviceLimit: "Device limit reached"
@@ -204,6 +207,7 @@ enum ReceiptError: LocalizedError, Equatable {
         case .alreadyLinked: "Pick a different transaction or save the receipt without one."
         case .alreadySubmitted: "Receipt saved"
         case .staleCandidate: "Scan the receipt again to refresh the matching transactions."
+        case .invalidTotal: "The receipt total is missing or invalid."
         case .totalMismatch: "Fix the receipt text so the item totals add up to the total, then read it again."
         case .redactedLinesEditBlocked: "Lines with redacted content can’t be edited."
         case .deviceLimit: DevicePairingError.deviceLimit.message

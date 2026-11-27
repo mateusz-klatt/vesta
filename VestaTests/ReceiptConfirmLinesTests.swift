@@ -189,8 +189,8 @@ final class ReceiptConfirmLinesTests: XCTestCase {
     func testInvoiceSummaryNameUsesInvoiceNumberThenDraftShopThenStoredShop() {
         let cases: [(number: String?, draft: String, stored: String?, expected: String)] = [
             (" INV-SAMPLE-1\n", "Draft shop", "Stored shop", "INV-SAMPLE-1"),
-            ("  ", " Draft  shop ", "Stored shop", "Draft  shop"),
-            (nil, " \t", " Stored shop ", "Stored shop"),
+            ("  ", " Draft  shop ", "Stored shop", "Draft shop"),
+            (nil, " \t", " Stored\tshop ", "Stored shop"),
         ]
         for (number, draft, stored, expected) in cases {
             let line = ReceiptConfirmLines.synthesizeInvoiceSummaryLine(

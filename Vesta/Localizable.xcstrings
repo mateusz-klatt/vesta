@@ -62614,6 +62614,280 @@
           }
         }
       }
+    },
+    "The receipt total is missing or invalid.": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "المبلغ الإجمالي للإيصال مفقود أو غير صالح."
+          }
+        },
+        "bn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "রসিদের মোট টাকার অঙ্ক দেওয়া নেই অথবা তা বৈধ নয়।"
+          }
+        },
+        "bs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ukupni iznos računa nedostaje ili nije ispravan."
+          }
+        },
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Celková částka na účtence chybí nebo je neplatná."
+          }
+        },
+        "da": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kvitteringens totalbeløb mangler eller er ugyldigt."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Gesamtbetrag des Belegs fehlt oder ist ungültig."
+          }
+        },
+        "el": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Το συνολικό ποσό της απόδειξης λείπει ή δεν είναι έγκυρο."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The receipt total is missing or invalid."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Falta el importe total del recibo o no es válido."
+          }
+        },
+        "fa": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "مبلغ کل رسید ثبت نشده یا نامعتبر است."
+          }
+        },
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kuitin loppusumma puuttuu tai on virheellinen."
+          }
+        },
+        "fil": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wala o hindi wasto ang kabuuang halaga ng resibo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le montant total du reçu est manquant ou invalide."
+          }
+        },
+        "ga": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tá méid iomlán na hadmhála in easnamh nó tá sé neamhbhailí."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הסכום הכולל של הקבלה חסר או לא תקין."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "रसीद की कुल राशि मौजूद नहीं है या अमान्य है।"
+          }
+        },
+        "hr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ukupni iznos računa nedostaje ili nije valjan."
+          }
+        },
+        "hu": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A nyugta végösszege hiányzik vagy érvénytelen."
+          }
+        },
+        "hy": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Անդորրագրի ընդհանուր գումարը բացակայում է կամ անվավեր է։"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jumlah total pada struk tidak ada atau tidak valid."
+          }
+        },
+        "is": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Heildarupphæð kvittunarinnar er ekki gefin upp eða er ógild."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il totale dello scontrino è mancante o non valido."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "レシートの合計金額がないか、無効です。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "영수증 총액이 누락되었거나 유효하지 않습니다."
+          }
+        },
+        "lt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bendra kvito suma nenurodyta arba netinkama."
+          }
+        },
+        "lv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Čeka kopsumma nav norādīta vai nav derīga."
+          }
+        },
+        "ms": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jumlah keseluruhan pada resit tiada atau tidak sah."
+          }
+        },
+        "my": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ပြေစာ၏ စုစုပေါင်းငွေပမာဏ မပါဝင်ပါ သို့မဟုတ် မမှန်ကန်ပါ။"
+          }
+        },
+        "nb": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Totalbeløpet på kvitteringen mangler eller er ugyldig."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Het totaalbedrag van de bon ontbreekt of is ongeldig."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Brakuje kwoty całkowitej paragonu lub jest ona nieprawidłowa."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O valor total do recibo está ausente ou é inválido."
+          }
+        },
+        "ro": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Suma totală de pe bon lipsește sau nu este validă."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Итоговая сумма чека отсутствует или указана неверно."
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Celková suma na účtenke chýba alebo je neplatná."
+          }
+        },
+        "sq": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shuma totale e faturës mungon ose është e pavlefshme."
+          }
+        },
+        "sr-Latn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ukupan iznos računa nedostaje ili nije ispravan."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kvittots totalbelopp saknas eller är ogiltigt."
+          }
+        },
+        "sw": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jumla ya malipo kwenye risiti haipo au si halali."
+          }
+        },
+        "th": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ไม่มียอดรวมในใบเสร็จหรือยอดรวมไม่ถูกต้อง"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fişin toplam tutarı eksik veya geçersiz."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Підсумкова сума чека відсутня або некоректна."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tổng số tiền trên biên lai bị thiếu hoặc không hợp lệ."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "收据的总金额缺失或无效。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "收據的總金額缺漏或無效。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

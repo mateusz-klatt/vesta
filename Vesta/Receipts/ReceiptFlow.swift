@@ -97,20 +97,15 @@ struct ReceiptForm: Equatable {
     /// signs the shop name after NFC + whitespace normalisation, so a
     /// whitespace-only edit keeps the match.
     var matchFieldsEdited: Bool {
-        outgoingShopName != Self.matchKey(parsedShopName) || nip != parsedNIP
+        outgoingShopName != ReceiptConfirmLines.normalizeConfirmName(parsedShopName) || nip != parsedNIP
     }
 
     /// The shop name exactly as confirm sends it: card-redacted, normalised
     /// the way hestia signs it, and capped at 128 characters. The link check
     /// compares this value, so a truncation can't slip past it.
     var outgoingShopName: String {
-        String(Self.matchKey(PANRedactor.redact(shopName)).prefix(128))
-    }
-
-    static func matchKey(_ shop: String) -> String {
-        shop.precomposedStringWithCanonicalMapping
-            .split(whereSeparator: \.isWhitespace)
-            .joined(separator: " ")
+        let name = ReceiptConfirmLines.normalizeConfirmName(PANRedactor.redact(shopName))
+        return String(name.unicodeScalars.prefix(ReceiptConfirmLines.maxNameLength))
     }
 
     private var normalizedTotal: String? { ReceiptConfirmLines.normalizeConfirmTotal(total) }
@@ -158,7 +153,7 @@ struct ReceiptForm: Equatable {
         let shop = outgoingShopName
         let requestLines = ReceiptConfirmLines.linesForRequest(
             plan, documentKind: documentKind, originalLines: parsedLines, draftLines: lines,
-            invoiceNumber: invoiceNumber, draftShopName: PANRedactor.redact(shopName),
+            invoiceNumber: invoiceNumber, draftShopName: shopName,
             storedShopName: parsedShopName, total: total
         )
         return ReceiptConfirmRequest(
