@@ -115,6 +115,7 @@ extension ReceiptError {
         case .alreadySubmitted: "already_submitted"
         case .staleCandidate: "budget_receipt_stale_source"
         case .totalMismatch: "budget_receipt_total_mismatch"
+        case .redactedLinesEditBlocked: "budget_receipt_redacted_lines_edit_blocked"
         case .deviceLimit: "device_token_limit_reached"
         case .rejected(let code): code
         case .unavailable: "unavailable"

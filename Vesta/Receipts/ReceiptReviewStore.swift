@@ -43,16 +43,19 @@ struct ReceiptConfirmationOutcome: Equatable, Identifiable {
     let status: Status
     let code: String
     let error: ReceiptError?
+    let adjustment: ReceiptTotalAdjustment?
 
     var id: String { receipt.receiptId }
 
-    static func success(_ receipt: ImportedReceiptSummary, alreadySubmitted: Bool = false) -> Self {
+    static func success(
+        _ receipt: ImportedReceiptSummary, alreadySubmitted: Bool = false, adjustment: ReceiptTotalAdjustment? = nil
+    ) -> Self {
         .init(receipt: receipt, status: alreadySubmitted ? .alreadySubmitted : .confirmed,
-              code: alreadySubmitted ? "already_submitted" : "confirmed", error: nil)
+              code: alreadySubmitted ? "already_submitted" : "confirmed", error: nil, adjustment: adjustment)
     }
 
     static func failure(_ receipt: ImportedReceiptSummary, error: ReceiptError) -> Self {
-        .init(receipt: receipt, status: .failed, code: error.reviewCode, error: error)
+        .init(receipt: receipt, status: .failed, code: error.reviewCode, error: error, adjustment: nil)
     }
 }
 
@@ -84,6 +87,13 @@ final class ReceiptReviewStore {
     var isDenied: Bool { state == .unauthorized || state == .forbidden }
     var canMatchReceipts: Bool { !isCleared && isCurrent() && allowsMatching() }
     var canConfirmSelected: Bool { !isBusy && detail != nil && (candidates.isEmpty || hasLinkChoice) }
+    var totalAdjustment: ReceiptTotalAdjustment? {
+        guard let detail, let total = detail.summary.totalAmount else { return nil }
+        return ReceiptConfirmLines.receiptTotalAdjustment(
+            documentKind: detail.summary.documentKind, originalLines: detail.lines,
+            draftLines: detail.lines, total: total
+        )
+    }
     private(set) var hasLinkChoice = false
 
     init(api: any ReceiptReviewAPI, scope: ReceiptSessionScope,
@@ -163,13 +173,14 @@ final class ReceiptReviewStore {
             candidate = candidates.first { ReceiptForm.CandidateID($0) == selectedCandidate }
             guard candidate != nil else { return }
         }
-        guard let request = Self.confirmation(for: detail, candidate: candidate) else {
-            failure = .rejected("incomplete_receipt")
-            return
-        }
-        guard let operation = reserve() else { return }
-        await run(operation) {
-            await self.performConfirm(request, summary: summary, request: operation, clearDetail: true)
+        do {
+            let confirmation = try Self.confirmation(for: detail, candidate: candidate)
+            guard let operation = reserve() else { return }
+            await run(operation) {
+                await self.performConfirm(confirmation, summary: summary, request: operation, clearDetail: true)
+            }
+        } catch {
+            failure = error
         }
     }
 
@@ -185,11 +196,14 @@ final class ReceiptReviewStore {
                     guard self.isCurrent(operation) else { return }
                     guard try self.canReview(result.receipt.summary, for: summary, clearDetail: false) else { continue }
                     guard result.receipt.summary.version == summary.version else { throw ReceiptError.versionConflict }
-                    guard let request = Self.confirmation(for: result.receipt, candidate: nil) else {
-                        self.record(.failure(summary, error: .rejected("incomplete_receipt")))
+                    let confirmation: Confirmation
+                    do throws(ReceiptError) {
+                        confirmation = try Self.confirmation(for: result.receipt, candidate: nil)
+                    } catch {
+                        self.record(.failure(summary, error: error))
                         continue
                     }
-                    await self.performConfirm(request, summary: summary, request: operation, clearDetail: false)
+                    await self.performConfirm(confirmation, summary: summary, request: operation, clearDetail: false)
                     if self.isCleared { return }
                 } catch {
                     if self.recordFailure(error, summary: summary, request: operation) { return }
@@ -228,29 +242,42 @@ final class ReceiptReviewStore {
         return true
     }
 
-    private static func confirmation(for detail: ReceiptDetail, candidate: ReceiptCandidate?) -> ReceiptConfirmRequest? {
+    private struct Confirmation {
+        let request: ReceiptConfirmRequest
+        let adjustment: ReceiptTotalAdjustment?
+    }
+
+    private static func confirmation(
+        for detail: ReceiptDetail, candidate: ReceiptCandidate?
+    ) throws(ReceiptError) -> Confirmation {
         let summary = detail.summary
         let time = summary.receiptTime == "" ? nil : summary.receiptTime
+        let incomplete = ReceiptError.rejected("incomplete_receipt")
         guard let day = summary.receiptDate.flatMap(ReceiptDay.init(iso:)),
               let currency = summary.currency, currency.wholeMatch(of: /[A-Z]{3}/) != nil,
-              let total = summary.totalAmount.flatMap(ReceiptForm.money),
-              let amount = Decimal(string: total, locale: Locale(identifier: "en_US_POSIX")), amount > 0,
-              time.map(ReceiptForm.validTime) != false else { return nil }
+              let total = summary.totalAmount.flatMap(ReceiptConfirmLines.normalizeConfirmTotal),
+              time.map(ReceiptForm.validTime) != false else { throw incomplete }
         let payment = summary.paymentMethod.flatMap(ReceiptConfirmRequest.PaymentMethodPayload.init(rawValue:)) ?? .unknown
-        guard candidate == nil || (payment != .cash && payment != .mixed) else { return nil }
+        guard candidate == nil || (payment != .cash && payment != .mixed) else { throw incomplete }
 
-        var lines: [Components.Schemas.BudgetReceiptLineInput]?
-        if detail.lines.isEmpty {
-            guard summary.documentKind == .invoice else { return nil }
-            lines = [.init(discountAmount: "0", grossLineTotal: total, lineKind: .other, netLineTotal: total,
-                           quantity: "1", rawName: String(localized: "Invoice"))]
+        let plan: ReceiptConfirmLinePlan
+        do {
+            plan = try ReceiptConfirmLines.planConfirmLines(
+                documentKind: summary.documentKind, originalLines: detail.lines,
+                draftLines: detail.lines, total: total
+            )
+        } catch {
+            throw error.receiptError
         }
-        return .init(currency: currency, expectedVersion: summary.version, lines: lines,
-                     link: candidate.map { .init(accountId: $0.accountId, candidateToken: $0.candidateToken,
-                                                 entryReference: $0.entryReference) },
-                     paymentMethod: payment, receiptDate: day.iso, receiptId: summary.receiptId,
-                     receiptKind: summary.receiptKind == .refund ? .refund : .purchase,
-                     receiptTime: time, totalAmount: total)
+        let request = ReceiptConfirmRequest(
+            currency: currency, expectedVersion: summary.version, lines: plan.lines,
+            link: candidate.map { .init(accountId: $0.accountId, candidateToken: $0.candidateToken,
+                                        entryReference: $0.entryReference) },
+            paymentMethod: payment, receiptDate: day.iso, receiptId: summary.receiptId,
+            receiptKind: summary.receiptKind == .refund ? .refund : .purchase,
+            receiptTime: time, totalAmount: total
+        )
+        return Confirmation(request: request, adjustment: plan.adjustment)
     }
 
     private func reserve() -> Int? {
@@ -300,12 +327,12 @@ final class ReceiptReviewStore {
     }
 
     private func performConfirm(
-        _ confirm: ReceiptConfirmRequest, summary: ImportedReceiptSummary, request: Int, clearDetail: Bool
+        _ confirmation: Confirmation, summary: ImportedReceiptSummary, request: Int, clearDetail: Bool
     ) async {
         do {
-            _ = try await api.confirmImportedReceipt(confirm, scope: scope)
+            _ = try await api.confirmImportedReceipt(confirmation.request, scope: scope)
             guard isCurrent(request) else { return }
-            finishConfirmation(summary, clearDetail: clearDetail)
+            finishConfirmation(summary, clearDetail: clearDetail, adjustment: confirmation.adjustment)
         } catch ReceiptError.alreadySubmitted {
             guard isCurrent(request) else { return }
             finishConfirmation(summary, alreadySubmitted: true, clearDetail: clearDetail)
@@ -315,9 +342,10 @@ final class ReceiptReviewStore {
     }
 
     private func finishConfirmation(
-        _ summary: ImportedReceiptSummary, alreadySubmitted: Bool = false, clearDetail: Bool
+        _ summary: ImportedReceiptSummary, alreadySubmitted: Bool = false, clearDetail: Bool,
+        adjustment: ReceiptTotalAdjustment? = nil
     ) {
-        record(.success(summary, alreadySubmitted: alreadySubmitted))
+        record(.success(summary, alreadySubmitted: alreadySubmitted, adjustment: adjustment))
         receipts.removeAll { $0.receiptId == summary.receiptId }
         if clearDetail {
             detail = nil

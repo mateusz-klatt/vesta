@@ -61792,6 +61792,828 @@
           }
         }
       }
+    },
+    "Items were read partially — the receipt is confirmed using its total.": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تمت قراءة بعض بنود الإيصال فقط — سيُؤكَّد الإيصال استنادًا إلى مبلغه الإجمالي."
+          }
+        },
+        "bn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "রসিদের কিছু আইটেম পড়া গেছে — মোট টাকার অঙ্কের ভিত্তিতে রসিদটি নিশ্চিত করা হবে।"
+          }
+        },
+        "bs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stavke su djelimično očitane — račun će se potvrditi na osnovu ukupnog iznosa."
+          }
+        },
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Položky se podařilo načíst jen částečně — účtenka se potvrdí podle celkové částky."
+          }
+        },
+        "da": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Varelinjerne blev kun delvist aflæst — kvitteringen bekræftes ud fra det samlede beløb."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Positionen wurden nur teilweise erfasst — der Beleg wird anhand des Gesamtbetrags bestätigt."
+          }
+        },
+        "el": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Τα είδη αναγνώστηκαν μόνο εν μέρει — η απόδειξη θα επιβεβαιωθεί βάσει του συνολικού ποσού."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Items were read partially — the receipt is confirmed using its total."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Las partidas solo se leyeron en parte — el recibo se confirmará usando el importe total."
+          }
+        },
+        "fa": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "اقلام فقط تا حدی خوانده شدند — رسید براساس مبلغ کل آن تأیید می‌شود."
+          }
+        },
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kuitin rivit luettiin vain osittain — kuitti vahvistetaan loppusumman perusteella."
+          }
+        },
+        "fil": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bahagya lang nabasa ang mga item — kukumpirmahin ang resibo batay sa kabuuang halaga nito."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les lignes ont été lues en partie — le reçu sera confirmé sur la base de son montant total."
+          }
+        },
+        "ga": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Níor léadh ach cuid de na míreanna — deimhneofar an admháil de réir an mhéid iomláin atá uirthi."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הפריטים נקראו רק בחלקם — הקבלה תאושר לפי הסכום הכולל שלה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "रसीद के आइटम आंशिक रूप से पढ़े गए हैं — रसीद की पुष्टि उसकी कुल राशि के आधार पर की जाएगी।"
+          }
+        },
+        "hr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stavke su djelomično očitane — račun će se potvrditi prema ukupnom iznosu."
+          }
+        },
+        "hu": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A tételeket csak részben sikerült beolvasni — a nyugtát a végösszeg alapján erősítjük meg."
+          }
+        },
+        "hy": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ապրանքացանկը կարդացվել է միայն մասամբ․ անդորրագիրը կհաստատվի ընդհանուր գումարի հիման վրա։"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rincian item hanya terbaca sebagian — struk akan dikonfirmasi berdasarkan jumlah totalnya."
+          }
+        },
+        "is": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aðeins tókst að lesa hluta af línunum — kvittunin verður staðfest út frá heildarupphæðinni."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le voci sono state lette solo in parte — lo scontrino verrà confermato in base all’importo totale."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "明細の一部だけを読み取れました。レシートは合計金額に基づいて確定されます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "일부 항목만 읽혔습니다. 영수증은 총액을 기준으로 확인됩니다."
+          }
+        },
+        "lt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nuskaityta tik dalis eilučių — kvitas bus patvirtintas pagal bendrą sumą."
+          }
+        },
+        "lv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nolasīta tikai daļa pozīciju — čeks tiks apstiprināts pēc kopsummas."
+          }
+        },
+        "ms": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Butiran item hanya dibaca sebahagiannya — resit akan disahkan berdasarkan jumlah keseluruhannya."
+          }
+        },
+        "my": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ပြေစာပါ ပစ္စည်းစာရင်းကို တစ်စိတ်တစ်ပိုင်းသာ ဖတ်နိုင်ခဲ့သည်။ ပြေစာကို စုစုပေါင်းငွေပမာဏအရ အတည်ပြုပါမည်။"
+          }
+        },
+        "nb": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Postene ble bare delvis lest — kvitteringen bekreftes ut fra totalbeløpet."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De artikelen zijn slechts gedeeltelijk ingelezen — de bon wordt bevestigd op basis van het totaalbedrag."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pozycje odczytane częściowo — paragon zostanie potwierdzony na podstawie kwoty całkowitej."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Os itens foram lidos parcialmente — o recibo será confirmado pelo valor total."
+          }
+        },
+        "ro": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pozițiile au fost citite doar parțial — bonul va fi confirmat pe baza sumei totale."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Позиции распознаны частично — чек будет подтверждён по итоговой сумме."
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Položky sa podarilo načítať len čiastočne — účtenka sa potvrdí podľa celkovej sumy."
+          }
+        },
+        "sq": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zërat u lexuan pjesërisht — fatura do të konfirmohet sipas shumës së përgjithshme."
+          }
+        },
+        "sr-Latn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stavke su delimično očitane — račun će se potvrditi na osnovu ukupnog iznosa."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Raderna lästes bara in delvis — kvittot bekräftas utifrån totalbeloppet."
+          }
+        },
+        "sw": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bidhaa zilizosomwa ni sehemu tu ya orodha — risiti itathibitishwa kwa kutumia jumla ya malipo."
+          }
+        },
+        "th": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "อ่านรายการได้เพียงบางส่วน ระบบจะยืนยันใบเสร็จตามยอดรวม"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kalemler kısmen okundu — fiş toplam tutarı esas alınarak onaylanacak."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Позиції розпізнано частково — чек буде підтверджено за підсумковою сумою."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chỉ đọc được một phần các mục trên biên lai — biên lai sẽ được xác nhận dựa trên tổng số tiền."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "只读取了部分明细，收据将按总金额确认。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "僅讀取到部分明細，收據將依總金額確認。"
+          }
+        }
+      }
+    },
+    "The items could not be used — the receipt is confirmed using its total.": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تعذّر استخدام البنود — سيُؤكَّد الإيصال استنادًا إلى مبلغه الإجمالي."
+          }
+        },
+        "bn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "আইটেমগুলো ব্যবহার করা যায়নি — মোট টাকার অঙ্কের ভিত্তিতে রসিদটি নিশ্চিত করা হবে।"
+          }
+        },
+        "bs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stavke se ne mogu koristiti — račun će se potvrditi na osnovu ukupnog iznosa."
+          }
+        },
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Položky nelze použít — účtenka se potvrdí podle celkové částky."
+          }
+        },
+        "da": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Varelinjerne kunne ikke bruges — kvitteringen bekræftes ud fra det samlede beløb."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Positionen konnten nicht verwendet werden — der Beleg wird anhand des Gesamtbetrags bestätigt."
+          }
+        },
+        "el": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Δεν ήταν δυνατό να χρησιμοποιηθούν τα είδη — η απόδειξη θα επιβεβαιωθεί βάσει του συνολικού ποσού."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The items could not be used — the receipt is confirmed using its total."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudieron usar las partidas — el recibo se confirmará usando el importe total."
+          }
+        },
+        "fa": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "اقلام قابل استفاده نبودند — رسید براساس مبلغ کل آن تأیید می‌شود."
+          }
+        },
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kuitin rivejä ei voitu käyttää — kuitti vahvistetaan loppusumman perusteella."
+          }
+        },
+        "fil": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hindi magamit ang mga item — kukumpirmahin ang resibo batay sa kabuuang halaga nito."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les lignes n’ont pas pu être utilisées — le reçu sera confirmé sur la base de son montant total."
+          }
+        },
+        "ga": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Níorbh fhéidir na míreanna a úsáid — deimhneofar an admháil de réir an mhéid iomláin atá uirthi."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "לא ניתן היה להשתמש בפריטים — הקבלה תאושר לפי הסכום הכולל שלה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "आइटम का इस्तेमाल नहीं हो सका — रसीद की पुष्टि उसकी कुल राशि के आधार पर की जाएगी।"
+          }
+        },
+        "hr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stavke se ne mogu upotrijebiti — račun će se potvrditi prema ukupnom iznosu."
+          }
+        },
+        "hu": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A tételeket nem lehetett felhasználni — a nyugtát a végösszeg alapján erősítjük meg."
+          }
+        },
+        "hy": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ապրանքացանկը հնարավոր չեղավ օգտագործել․ անդորրագիրը կհաստատվի ընդհանուր գումարի հիման վրա։"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rincian item tidak dapat digunakan — struk akan dikonfirmasi berdasarkan jumlah totalnya."
+          }
+        },
+        "is": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ekki var hægt að nota línurnar — kvittunin verður staðfest út frá heildarupphæðinni."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Non è stato possibile usare le voci — lo scontrino verrà confermato in base all’importo totale."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "明細を使用できませんでした。レシートは合計金額に基づいて確定されます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "항목을 사용할 수 없습니다. 영수증은 총액을 기준으로 확인됩니다."
+          }
+        },
+        "lt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eilučių nepavyko panaudoti — kvitas bus patvirtintas pagal bendrą sumą."
+          }
+        },
+        "lv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pozīcijas nevarēja izmantot — čeks tiks apstiprināts pēc kopsummas."
+          }
+        },
+        "ms": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Butiran item tidak dapat digunakan — resit akan disahkan berdasarkan jumlah keseluruhannya."
+          }
+        },
+        "my": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ပြေစာပါ ပစ္စည်းစာရင်းကို အသုံးမပြုနိုင်ခဲ့ပါ။ ပြေစာကို စုစုပေါင်းငွေပမာဏအရ အတည်ပြုပါမည်။"
+          }
+        },
+        "nb": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Postene kunne ikke brukes — kvitteringen bekreftes ut fra totalbeløpet."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De artikelen konden niet worden gebruikt — de bon wordt bevestigd op basis van het totaalbedrag."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nie udało się użyć pozycji — paragon zostanie potwierdzony na podstawie kwoty całkowitej."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível usar os itens — o recibo será confirmado pelo valor total."
+          }
+        },
+        "ro": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pozițiile nu au putut fi folosite — bonul va fi confirmat pe baza sumei totale."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Позиции не удалось использовать — чек будет подтверждён по итоговой сумме."
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Položky sa nepodarilo použiť — účtenka sa potvrdí podľa celkovej sumy."
+          }
+        },
+        "sq": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zërat nuk mund të përdoreshin — fatura do të konfirmohet sipas shumës së përgjithshme."
+          }
+        },
+        "sr-Latn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stavke se ne mogu koristiti — račun će se potvrditi na osnovu ukupnog iznosa."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Raderna kunde inte användas — kvittot bekräftas utifrån totalbeloppet."
+          }
+        },
+        "sw": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Orodha ya bidhaa haikuweza kutumika — risiti itathibitishwa kwa kutumia jumla ya malipo."
+          }
+        },
+        "th": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ไม่สามารถใช้รายการได้ ระบบจะยืนยันใบเสร็จตามยอดรวม"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kalemler kullanılamadı — fiş toplam tutarı esas alınarak onaylanacak."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не вдалося використати позиції — чек буде підтверджено за підсумковою сумою."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Không thể sử dụng các mục trên biên lai — biên lai sẽ được xác nhận dựa trên tổng số tiền."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "明细无法使用，收据将按总金额确认。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "明細無法使用，收據將依總金額確認。"
+          }
+        }
+      }
+    },
+    "Lines with redacted content can’t be edited.": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لا يمكن تعديل البنود التي تتضمن بيانات محجوبة."
+          }
+        },
+        "bn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "যেসব লাইনের তথ্য আড়াল করা হয়েছে, সেগুলো সম্পাদনা করা যাবে না।"
+          }
+        },
+        "bs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stavke sa skrivenim podacima ne mogu se uređivati."
+          }
+        },
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Položky se skrytými údaji nelze upravit."
+          }
+        },
+        "da": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Linjer med skjulte oplysninger kan ikke redigeres."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Positionen mit geschwärzten Angaben können nicht bearbeitet werden."
+          }
+        },
+        "el": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Οι γραμμές με αποκρυμμένα στοιχεία δεν μπορούν να τροποποιηθούν."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lines with redacted content can’t be edited."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pueden editar las líneas que contienen datos ocultos."
+          }
+        },
+        "fa": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ردیف‌های دارای اطلاعات پوشانده‌شده قابل ویرایش نیستند."
+          }
+        },
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rivejä, joissa on peitettyjä tietoja, ei voi muokata."
+          }
+        },
+        "fil": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hindi mae-edit ang mga linyang may itinagong impormasyon."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les lignes contenant des données masquées ne peuvent pas être modifiées."
+          }
+        },
+        "ga": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ní féidir línte ina bhfuil sonraí folaithe a chur in eagar."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "אי אפשר לערוך שורות שמכילות מידע מוסתר."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "जिन पंक्तियों में जानकारी छिपाई गई है, उन्हें संपादित नहीं किया जा सकता।"
+          }
+        },
+        "hr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stavke sa skrivenim podacima ne mogu se uređivati."
+          }
+        },
+        "hu": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A kitakart adatokat tartalmazó sorok nem szerkeszthetők."
+          }
+        },
+        "hy": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Թաքցված տվյալներ պարունակող տողերը հնարավոր չէ խմբագրել։"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Baris yang berisi informasi yang disamarkan tidak dapat diedit."
+          }
+        },
+        "is": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ekki er hægt að breyta línum með földum upplýsingum."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le righe con dati oscurati non possono essere modificate."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "情報が伏せられた明細行は編集できません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "가려진 정보가 포함된 줄은 편집할 수 없습니다."
+          }
+        },
+        "lt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eilučių su paslėptais duomenimis redaguoti negalima."
+          }
+        },
+        "lv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rindas ar aizklātiem datiem nevar rediģēt."
+          }
+        },
+        "ms": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Baris yang mengandungi maklumat yang disembunyikan tidak boleh disunting."
+          }
+        },
+        "my": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "အချက်အလက်ဖုံးကွယ်ထားသော စာကြောင်းများကို တည်းဖြတ်၍မရပါ။"
+          }
+        },
+        "nb": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Linjer med skjulte opplysninger kan ikke redigeres."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Regels met afgeschermde gegevens kunnen niet worden gewijzigd."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nie można edytować pozycji z ukrytymi danymi."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não é possível editar linhas que contêm dados ocultos."
+          }
+        },
+        "ro": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rândurile cu date mascate nu pot fi editate."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Строки со скрытыми данными нельзя редактировать."
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Riadky so skrytými údajmi sa nedajú upraviť."
+          }
+        },
+        "sq": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rreshtat me të dhëna të fshehura nuk mund të redaktohen."
+          }
+        },
+        "sr-Latn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stavke sa skrivenim podacima ne mogu se uređivati."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rader med dolda uppgifter kan inte redigeras."
+          }
+        },
+        "sw": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mistari yenye taarifa zilizofichwa haiwezi kuhaririwa."
+          }
+        },
+        "th": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ไม่สามารถแก้ไขบรรทัดที่มีข้อมูลถูกปกปิดได้"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gizlenmiş bilgiler içeren satırlar düzenlenemez."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Рядки з прихованими даними не можна редагувати."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Không thể chỉnh sửa các dòng chứa thông tin đã được che."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "含有已遮盖信息的明细行无法编辑。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "含有已遮蔽資訊的明細列無法編輯。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

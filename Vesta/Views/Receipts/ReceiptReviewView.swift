@@ -185,6 +185,11 @@ private struct ImportedReceiptDetailView: View {
                     .disabled(store.isBusy || !store.canMatchReceipts)
                 }
                 Section {
+                    if let adjustment = store.totalAdjustment {
+                        Text(adjustment.message)
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
                     Button("Save receipt") { Task { await store.confirmSelected() } }
                         .buttonStyle(.borderedProminent)
                         .disabled(!store.canConfirmSelected)
@@ -243,6 +248,9 @@ private struct ReceiptConfirmationOutcomeRow: View {
                 Text(error.message).font(.caption).foregroundStyle(Theme.textSecondary)
             } else {
                 Text("Receipt saved").font(.caption).foregroundStyle(Theme.textSecondary)
+                if let adjustment = outcome.adjustment {
+                    Text(adjustment.message).font(.caption).foregroundStyle(Theme.textSecondary)
+                }
             }
             Text(verbatim: outcome.code).font(.caption2).foregroundStyle(Theme.textSecondary)
         }

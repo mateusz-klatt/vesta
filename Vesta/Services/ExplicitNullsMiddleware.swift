@@ -2,8 +2,8 @@ import Foundation
 import HTTPTypes
 import OpenAPIRuntime
 
-/// Older hestia versions require all confirm keys. Import review uses the
-/// newer contract, where omitting a shop name, NIP, or lines preserves them.
+/// Fill nullable confirm fields. Omitted lines are kept as stored by hestia.
+/// Import review can also leave the stored shop name and NIP unchanged.
 struct ExplicitNullsMiddleware: ClientMiddleware {
     var preserveStoredReceiptFields = false
 
@@ -30,7 +30,7 @@ struct ExplicitNullsMiddleware: ClientMiddleware {
             return try await next(request, body, baseURL)
         }
         let data = try await Data(collecting: body, upTo: Self.maxBody)
-        let top = preserveStoredReceiptFields ? ["receipt_time", "link"] : keys.top
+        let top = preserveStoredReceiptFields ? ["receipt_time", "link"] : keys.top.filter { $0 != "lines" }
         let patched = try Self.fill(data, top: top, lines: keys.lines)
         var request = request
         request.headerFields[.contentLength] = String(patched.count)
