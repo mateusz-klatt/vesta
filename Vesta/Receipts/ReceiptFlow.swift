@@ -512,15 +512,11 @@ final class ReceiptFlow {
         let summary = receipt?.summary
         // An already-submitted response has no receipt to inspect.
         let isLinked = summary?.linked ?? sentLink
-        let hasDifferentLink = if let candidate, let accountId = summary?.linkedAccountId,
-                                  let entryRef = summary?.linkedEntryRef {
-            accountId != candidate.accountId || entryRef != candidate.entryReference
-        } else {
-            false
-        }
         if !isLinked {
             linkOutcomeMessage = "Waiting for the bank transaction"
-        } else if summary != nil, let candidate, !hasDifferentLink {
+        } else if let summary, let candidate,
+                  (summary.linkedAccountId ?? candidate.accountId) == candidate.accountId,
+                  (summary.linkedEntryRef ?? candidate.entryReference) == candidate.entryReference {
             let display = candidate.scanDisplay
             linkOutcomeMessage = "Linked to transaction: \(display.date) \(display.amount)"
         } else {

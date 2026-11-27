@@ -2034,19 +2034,57 @@ final class ReceiptFlowTests: XCTestCase {
         }
     }
 
-    func testConfirmShowsCandidateDetailsWhenResponseOnlyProvidesLinkedAccount() async throws {
+    func testConfirmShowsGenericLinkWhenResponseOnlyProvidesDifferentLinkedAccount() async throws {
         let parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: body(sampleParseJSON))
         let candidate = try XCTUnwrap(parsed.candidates.first)
         var receipt = confirmedReceipt(parsed.draft, linkedTo: candidate)
         receipt.summary.linkedAccountId = "acc2"
         receipt.summary.linkedEntryRef = nil
-        let flow = ReceiptFlow(api: MockReceiptsAPI(parseResult: parsed, confirmResult: receipt))
+        let api = MockReceiptsAPI(parseResult: parsed, confirmResult: receipt)
+        let flow = ReceiptFlow(api: api)
         flow.useText("Receipt text")
         await flow.send()
         await flow.confirm()
 
         XCTAssertEqual(flow.step, .done)
-        XCTAssertEqual(String(localized: try XCTUnwrap(flow.linkOutcomeMessage)), "Linked to transaction: 2026-11-22 7.98 PLN")
+        let request = await api.confirmRequest
+        XCTAssertEqual(request?.link?.accountId, candidate.accountId)
+        XCTAssertEqual(String(localized: try XCTUnwrap(flow.linkOutcomeMessage)), "Linked to transaction")
+    }
+
+    func testConfirmShowsCandidateDetailsWhenOnlyMatchingAccountOrNoIdentifiersAreReported() async throws {
+        let parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: body(sampleParseJSON))
+        let candidate = try XCTUnwrap(parsed.candidates.first)
+        for accountId in [candidate.accountId, nil] {
+            var receipt = confirmedReceipt(parsed.draft, linkedTo: candidate)
+            receipt.summary.linkedAccountId = accountId
+            receipt.summary.linkedEntryRef = nil
+            let flow = ReceiptFlow(api: MockReceiptsAPI(parseResult: parsed, confirmResult: receipt))
+            flow.useText("Receipt text")
+            await flow.send()
+            await flow.confirm()
+
+            XCTAssertEqual(flow.step, .done)
+            XCTAssertEqual(String(localized: try XCTUnwrap(flow.linkOutcomeMessage)), "Linked to transaction: 2026-11-22 7.98 PLN")
+        }
+    }
+
+    func testConfirmShowsGenericLinkWhenResponseOnlyProvidesDifferentLinkedEntry() async throws {
+        let parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: body(sampleParseJSON))
+        let candidate = try XCTUnwrap(parsed.candidates.first)
+        var receipt = confirmedReceipt(parsed.draft, linkedTo: candidate)
+        receipt.summary.linkedAccountId = nil
+        receipt.summary.linkedEntryRef = "tx2"
+        let api = MockReceiptsAPI(parseResult: parsed, confirmResult: receipt)
+        let flow = ReceiptFlow(api: api)
+        flow.useText("Receipt text")
+        await flow.send()
+        await flow.confirm()
+
+        XCTAssertEqual(flow.step, .done)
+        let request = await api.confirmRequest
+        XCTAssertEqual(request?.link?.entryReference, candidate.entryReference)
+        XCTAssertEqual(String(localized: try XCTUnwrap(flow.linkOutcomeMessage)), "Linked to transaction")
     }
 
     func testConfirmByTotalShowsSelectedLinkDetails() async throws {
