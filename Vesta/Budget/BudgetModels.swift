@@ -113,15 +113,43 @@ struct BudgetTransaction: Identifiable, Equatable, Sendable {
     let accountID: String
     let entryReference: String
     let amount: Decimal
-    let isCredit: Bool
+    let creditDebitIndicator: BudgetAnalyticsTransactionWire.CreditDebitIndicatorPayload
     let currency: String
     let bookingDate: String?
     let payee: String?
     let details: String?
     let categoryID: String?
     let kind: String
+    let receipt: BudgetTransactionReceipt?
 
-    var signedAmount: Decimal { isCredit ? amount : -amount }
+    var isCredit: Bool { creditDebitIndicator == .crdt }
+
+    var signedAmount: Decimal? {
+        switch creditDebitIndicator {
+        case .crdt: amount
+        case .dbit: -amount
+        case .unknown: nil
+        }
+    }
+
+    func formattedAmount(locale: Locale) -> String {
+        let value = (signedAmount ?? abs(amount)).formatted(.currency(code: currency).locale(locale))
+        return isCredit ? "+\(value)" : value
+    }
+}
+
+struct BudgetTransactionReceipt: Equatable, Sendable {
+    let shopName: String?
+    let total: Decimal?
+    let currency: String?
+    let status: BudgetAnalyticsTransactionReceiptWire.Status
+
+    init(wire: Components.Schemas.BudgetAnalyticsTransactionReceipt) {
+        shopName = wire.shopName
+        total = wire.total.flatMap { try? BudgetWire.decimal($0) }
+        currency = wire.currency
+        status = wire.status
+    }
 }
 
 struct BudgetTransactionPage: Equatable, Sendable {
@@ -284,14 +312,89 @@ extension BudgetTransaction {
         entryReference = wire.entryReference
         id = "\(wire.accountId)\u{1f}\(wire.entryReference)"
         amount = try BudgetWire.decimal(wire.amount)
-        isCredit = wire.creditDebitIndicator == .crdt
+        creditDebitIndicator = wire.creditDebitIndicator
         currency = wire.currency
         bookingDate = wire.bookingDate ?? wire.valueDate ?? wire.transactionDate
-        payee = isCredit ? wire.metadata?.debtorName : wire.metadata?.creditorName
+        payee = switch creditDebitIndicator {
+        case .crdt: wire.metadata?.debtorName
+        case .dbit: wire.metadata?.creditorName
+        case .unknown: wire.metadata?.creditorName ?? wire.metadata?.debtorName
+        }
         let details = wire.remittanceInformation.filter { !$0.isEmpty }.joined(separator: " · ")
         self.details = details.isEmpty ? nil : details
         categoryID = wire.effective.categoryId
         kind = wire.effective.kind
+        receipt = wire.receipt.map(BudgetTransactionReceipt.init(wire:))
+    }
+}
+
+// Keep the optional anyOf-null receipt alongside the existing generated field types.
+struct BudgetAnalyticsTransactionWire: Codable, Hashable, Sendable {
+    enum CreditDebitIndicatorPayload: String, Codable, Hashable, Sendable, CaseIterable, APIResponseStringEnum {
+        case crdt = "CRDT", dbit = "DBIT", unknown
+    }
+
+    enum StatusPayload: String, Codable, Hashable, Sendable, CaseIterable, APIResponseStringEnum {
+        case book = "BOOK", unknown
+    }
+
+    let accountId: String
+    let amount: String
+    let annotation: Components.Schemas.BudgetAnalyticsAnnotation
+    let apiObservedAt: Double?
+    let bookingDate: String?
+    let counterpartyAccount: String?
+    let counterpartyAccountKey: String?
+    let creditDebitIndicator: CreditDebitIndicatorPayload
+    let currency: String
+    let effective: Components.Schemas.BudgetAnalyticsEffective
+    let entryReference: String
+    let fingerprint: String
+    let metadata: Components.Schemas.BudgetAnalyticsMetadata?
+    let observedAt: Double
+    let receipt: Components.Schemas.BudgetAnalyticsTransactionReceipt?
+    let remittanceInformation: [String]
+    let source: String
+    let status: StatusPayload
+    let transactionDate: String?
+    let transfer: Components.Schemas.BudgetAnalyticsTransactionTransfer
+    let transferFingerprint: String
+    let valueDate: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case accountId = "account_id", amount, annotation, apiObservedAt = "api_observed_at"
+        case bookingDate = "booking_date", counterpartyAccount = "counterparty_account"
+        case counterpartyAccountKey = "counterparty_account_key", creditDebitIndicator = "credit_debit_indicator"
+        case currency, effective, entryReference = "entry_reference", fingerprint, metadata, observedAt = "observed_at"
+        case receipt, remittanceInformation = "remittance_information", source, status
+        case transactionDate = "transaction_date", transfer, transferFingerprint = "transfer_fingerprint", valueDate = "value_date"
+    }
+
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        accountId = try values.decode(String.self, forKey: .accountId)
+        amount = try values.decode(String.self, forKey: .amount)
+        annotation = try values.decode(Components.Schemas.BudgetAnalyticsAnnotation.self, forKey: .annotation)
+        apiObservedAt = try values.decodeIfPresent(Double.self, forKey: .apiObservedAt)
+        bookingDate = try values.decodeIfPresent(String.self, forKey: .bookingDate)
+        counterpartyAccount = try values.decodeIfPresent(String.self, forKey: .counterpartyAccount)
+        counterpartyAccountKey = try values.decodeIfPresent(String.self, forKey: .counterpartyAccountKey)
+        creditDebitIndicator = try values.decode(CreditDebitIndicatorPayload.self, forKey: .creditDebitIndicator)
+        currency = try values.decode(String.self, forKey: .currency)
+        effective = try values.decode(Components.Schemas.BudgetAnalyticsEffective.self, forKey: .effective)
+        entryReference = try values.decode(String.self, forKey: .entryReference)
+        fingerprint = try values.decode(String.self, forKey: .fingerprint)
+        metadata = try values.decodeIfPresent(Components.Schemas.BudgetAnalyticsMetadata.self, forKey: .metadata)
+        observedAt = try values.decode(Double.self, forKey: .observedAt)
+        // A malformed receipt summary only affects the chip on this row.
+        receipt = try? values.decodeIfPresent(Components.Schemas.BudgetAnalyticsTransactionReceipt.self, forKey: .receipt)
+        remittanceInformation = try values.decode([String].self, forKey: .remittanceInformation)
+        source = try values.decode(String.self, forKey: .source)
+        status = try values.decode(StatusPayload.self, forKey: .status)
+        transactionDate = try values.decodeIfPresent(String.self, forKey: .transactionDate)
+        transfer = try values.decode(Components.Schemas.BudgetAnalyticsTransactionTransfer.self, forKey: .transfer)
+        transferFingerprint = try values.decode(String.self, forKey: .transferFingerprint)
+        valueDate = try values.decodeIfPresent(String.self, forKey: .valueDate)
     }
 }
 

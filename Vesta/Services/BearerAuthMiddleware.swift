@@ -44,7 +44,8 @@ struct BearerAuthMiddleware: ClientMiddleware {
     private static let receiptReviewOperations: Set<String> = [
         Operations.ListBudgetReceipts.id, Operations.GetBudgetReceiptDetail.id,
     ]
-    private static let receiptContractHeader = HTTPField.Name("X-Hestia-Contract-Version")!
+    private static let contractHeader = HTTPField.Name("X-Hestia-Contract-Version")!
+    private static let receiptLinkContractVersion = "0.60.0"
     private static let budgetReadPaths = [
         Operations.GetBudgetAnalyticsMonthlyBudget.id: "/api/budget/analytics/monthly-budget",
         Operations.GetBudgetAnalyticsTransactions.id: "/api/budget/analytics/transactions",
@@ -68,7 +69,7 @@ struct BearerAuthMiddleware: ClientMiddleware {
         if reviewOperation {
             guard reviewScoped, receiptScope != nil, receiptReviewEnabled() else { throw ReceiptError.forbidden }
             // V6 needs 0.60.0 for linked transactions. Keep scan unversioned for older servers.
-            request.headerFields[Self.receiptContractHeader] = "0.60.0"
+            request.headerFields[Self.contractHeader] = Self.receiptLinkContractVersion
         }
         let issuesDeviceToken = operationID == Operations.RedeemBudgetReceiptDevice.id
             || operationID == Operations.LoginBudgetReceiptDevice.id
@@ -105,6 +106,10 @@ struct BearerAuthMiddleware: ClientMiddleware {
                 }
             }
             request.headerFields[.authorization] = "Bearer \(device.credential.token)"
+            if operationID == Operations.GetBudgetAnalyticsTransactions.id {
+                // Before 0.60.0, hestia ignores this header on the transactions route.
+                request.headerFields[Self.contractHeader] = Self.receiptLinkContractVersion
+            }
             let (response, responseBody) = try await next(request, body, baseURL)
             guard response.status.code == 200 else {
                 let code = await Self.errorCode(in: responseBody)

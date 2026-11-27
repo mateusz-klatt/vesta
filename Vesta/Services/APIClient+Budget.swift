@@ -13,6 +13,7 @@ extension APIClient: BudgetAPI, ScopeBindingBudgetAPI {
 
     func transactions(period: String, currency: String?, categoryID: String?, cursor: String?, limit: Int) async throws -> BudgetTransactionPage {
         try await read { client in
+            // BearerAuthMiddleware supplies the optional contract version header.
             let input = Operations.GetBudgetAnalyticsTransactions.Input(
                 query: .init(
                     period: period, currency: currency, categoryId: categoryID,
