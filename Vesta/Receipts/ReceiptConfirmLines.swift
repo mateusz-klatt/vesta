@@ -234,11 +234,11 @@ enum ReceiptConfirmLines {
             guard !isRedactedValue(name), validConfirmLineText(text), validConfirmLineName(name) else { return nil }
             return name
         }
-        func usableShopName(_ text: String) -> String? {
+        func usableNameAfterRedaction(_ text: String) -> String? {
             usableName(PANRedactor.redact(text))
         }
-        let name = invoiceNumber.flatMap(usableName) ?? usableShopName(draftShopName)
-            ?? storedShopName.flatMap(usableShopName) ?? usableName(summaryFallbackName) ?? "Document"
+        let name = invoiceNumber.flatMap(usableNameAfterRedaction) ?? usableNameAfterRedaction(draftShopName)
+            ?? storedShopName.flatMap(usableNameAfterRedaction) ?? usableName(summaryFallbackName) ?? "Document"
         return synthesizeTotalLine(name, amount: normalizedTotal, kind: .other)
     }
 

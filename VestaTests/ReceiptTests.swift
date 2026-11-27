@@ -1204,6 +1204,36 @@ final class ReceiptsClientTests: XCTestCase {
         XCTAssertEqual(lines.first?["raw_name"] as? String, "Document")
     }
 
+    func testConfirmWireRedactsInvoiceNumberForEmptyInvoice() async throws {
+        let cardNumber = "4111 1111 1111 1111"
+        let shopName = "Test shop"
+        let cases = [(cardNumber, shopName), ("FV-TEST \(cardNumber)", "FV-TEST [REDACTED]")]
+        for (invoiceNumber, expectedName) in cases {
+            let transport = CapturingTransport(status: 409, body: #"{"error":{"code":"budget_receipt_stale_source"}}"#)
+            let api = pairedClient(transport: transport)
+            var parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: body(sampleParseJSON))
+            parsed.draft.summary.documentKind = .invoice
+            parsed.draft.summary.invoiceNumber = invoiceNumber
+            parsed.draft.summary.rawShopName = shopName
+            parsed.draft.lines = []
+            let form = ReceiptForm(draft: parsed.draft, candidates: parsed.candidates)
+            let request = try XCTUnwrap(form.request(
+                receiptID: parsed.receiptId, version: parsed.version, candidates: parsed.candidates
+            ))
+            await assertReceiptError(try await api.confirmReceipt(request), .staleCandidate)
+
+            let sent = try XCTUnwrap(transport.last)
+            let bodyText = String(decoding: sent.body, as: UTF8.self)
+            for group in Set(cardNumber.split(separator: " ")) {
+                XCTAssertFalse(bodyText.contains(group))
+            }
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: sent.body) as? [String: Any])
+            let lines = try XCTUnwrap(object["lines"] as? [[String: Any]])
+            XCTAssertEqual(lines.count, 1)
+            XCTAssertEqual(lines.first?["raw_name"] as? String, expectedName)
+        }
+    }
+
     func testBudgetDisabledMapped() {
         XCTAssertEqual(ReceiptError.from(status: 404, code: "budget_disabled"), .disabled)
     }
