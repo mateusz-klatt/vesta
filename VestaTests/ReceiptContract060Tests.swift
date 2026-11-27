@@ -161,8 +161,15 @@ final class ReceiptContract060Tests: XCTestCase {
 
         var knownReceipt = summaryObject()
         knownReceipt["receipt_id"] = "00000000-0000-0000-0000-000000000002"
-        let page = try listPage(receipt, knownReceipt)
-        XCTAssertEqual(page.receipts.count, 2)
+        var reviewReceipt = knownReceipt
+        reviewReceipt["receipt_id"] = "00000000-0000-0000-0000-000000000004"
+        reviewReceipt["status"] = "needs_review"
+        var draftReceipt = knownReceipt
+        draftReceipt["receipt_id"] = "00000000-0000-0000-0000-000000000005"
+        draftReceipt["status"] = "draft"
+        let page = try listPage(receipt, knownReceipt, reviewReceipt, draftReceipt)
+        XCTAssertEqual(page.receipts.map(\.status), [.unknown, .imported, .needsReview, .draft])
+        XCTAssertEqual(page.receipts.map { $0.status.reviewBadge.key }, ["Unknown", "Imported", "Needs review", "Draft"])
         let summary = try XCTUnwrap(page.receipts.first)
         XCTAssertEqual(summary.status, .unknown)
         XCTAssertEqual(summary.sourceKind, .unknown)
@@ -170,7 +177,6 @@ final class ReceiptContract060Tests: XCTestCase {
         XCTAssertEqual(summary.gatewayStatus, .unknown)
         XCTAssertEqual(summary.receiptKind, .unknown)
         XCTAssertTrue(summary.hasUnknownReviewMetadata)
-        XCTAssertEqual(page.receipts.last?.status, .imported)
         XCTAssertEqual(page.receipts.last?.hasUnknownReviewMetadata, false)
 
         let line: [String: Any] = [

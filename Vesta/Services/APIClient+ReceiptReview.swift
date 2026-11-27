@@ -1,12 +1,29 @@
 import OpenAPIRuntime
 
 extension APIClient: ReceiptReviewAPI {
-    func listImportedReceipts(cursor: String?, scope: ReceiptSessionScope) async throws -> ReceiptListPage {
-        try await review(scope) { client in
-            let body = Components.Schemas.BudgetReceiptListRequest(
-                cursor: cursor, evidence: "exclude", limit: 200, status: "imported"
+    func listReviewReceipts(cursor: ReceiptReviewCursor?, scope: ReceiptSessionScope) async throws -> ReceiptReviewPage {
+        do {
+            return try await listReviewPage(cursor: cursor?.value, filter: cursor?.filter ?? .needsAction, scope: scope)
+        } catch ReceiptError.unsupportedContractVersion where cursor == nil {
+            return try await listReviewPage(cursor: nil, filter: .imported, scope: scope)
+        }
+    }
+
+    private func listReviewPage(
+        cursor: String?, filter: ReceiptReviewListFilter, scope: ReceiptSessionScope
+    ) async throws -> ReceiptReviewPage {
+        try await review(scope, listFilter: filter) { client in
+            let body: Components.Schemas.BudgetReceiptListRequest = switch filter {
+            case .needsAction:
+                .init(cursor: cursor, statuses: ["imported", "needs_review", "draft"])
+            case .imported:
+                .init(cursor: cursor, status: "imported")
+            }
+            let page = try await client.listBudgetReceipts(.init(body: .json(body))).ok.body.json
+            return ReceiptReviewPage(
+                receipts: page.receipts,
+                nextCursor: page.nextCursor.map { ReceiptReviewCursor(value: $0, filter: filter) }
             )
-            return try await client.listBudgetReceipts(.init(body: .json(body))).ok.body.json
         }
     }
 
@@ -26,10 +43,11 @@ extension APIClient: ReceiptReviewAPI {
     private func review<Value: Sendable>(
         _ scope: ReceiptSessionScope,
         requiresMatch: Bool = false,
+        listFilter: ReceiptReviewListFilter = .needsAction,
         _ operation: (Client) async throws -> Value
     ) async throws -> Value {
         guard receiptReviewEnabled() else { throw ReceiptError.forbidden }
-        let client = requestReceiptReviewClient(scope: scope, requiresMatch: requiresMatch)
+        let client = requestReceiptReviewClient(scope: scope, requiresMatch: requiresMatch, listFilter: listFilter)
         do {
             try Task.checkCancellation()
             guard await currentReceiptReviewScope(requiresMatch: requiresMatch) == scope else { throw CancellationError() }

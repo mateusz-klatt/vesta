@@ -160,6 +160,7 @@ enum ReceiptError: LocalizedError, Equatable {
     /// 409 `device_token_limit_reached`: hestia already has 5 active devices
     /// and won't evict one for a password login.
     case deviceLimit
+    case unsupportedContractVersion
     /// Other 400s (and 409 `budget_requires_sqlite_users`), with hestia's code.
     case rejected(String)
     /// 503: budget configuration unavailable on the server.
@@ -186,7 +187,7 @@ enum ReceiptError: LocalizedError, Equatable {
         case .totalMismatch: "Totals don’t add up"
         case .redactedLinesEditBlocked: "Receipt rejected"
         case .deviceLimit: "Device limit reached"
-        case .rejected: "Receipt rejected"
+        case .rejected, .unsupportedContractVersion: "Receipt rejected"
         case .unavailable: "Budget unavailable"
         case .api(let error): error.title
         }
@@ -211,7 +212,7 @@ enum ReceiptError: LocalizedError, Equatable {
         case .totalMismatch: "Fix the receipt text so the item totals add up to the total, then read it again."
         case .redactedLinesEditBlocked: "Lines with redacted content can’t be edited."
         case .deviceLimit: DevicePairingError.deviceLimit.message
-        case .rejected: "The server could not accept this receipt."
+        case .rejected, .unsupportedContractVersion: "The server could not accept this receipt."
         case .unavailable: "The server’s budget module is not available right now."
         case .api(let error): error.message
         }
@@ -220,6 +221,7 @@ enum ReceiptError: LocalizedError, Equatable {
     var technical: String? {
         switch self {
         case .rejected(let code): code
+        case .unsupportedContractVersion: "budget_receipt_contract_version_invalid"
         case .api(let error): error.technical
         default: nil
         }
@@ -255,6 +257,7 @@ enum ReceiptError: LocalizedError, Equatable {
         case (409, let code?): .rejected(code)
         case (400, "budget_receipt_total_mismatch"): .totalMismatch
         case (400, "budget_auth_ambiguous"): .ambiguousAuth
+        case (400, "budget_receipt_contract_version_invalid"): .unsupportedContractVersion
         case (400, let code?): .rejected(code)
         case (400, nil): .rejected("invalid_request")
         case (429, _): .rateLimited

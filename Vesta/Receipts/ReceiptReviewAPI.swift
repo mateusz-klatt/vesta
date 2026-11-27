@@ -39,8 +39,23 @@ enum ReceiptReviewGate {
 typealias ReceiptListPage = Components.Schemas.BudgetReceiptListResult
 typealias ReceiptDetailResult = Components.Schemas.BudgetReceiptDetailResult
 
+enum ReceiptReviewListFilter: Sendable {
+    case needsAction, imported
+}
+
+// Hestia binds the opaque cursor to the filters that produced it.
+struct ReceiptReviewCursor: Sendable {
+    let value: String
+    let filter: ReceiptReviewListFilter
+}
+
+struct ReceiptReviewPage: Sendable {
+    let receipts: [ReceiptReviewSummary]
+    var nextCursor: ReceiptReviewCursor? = nil
+}
+
 protocol ReceiptReviewAPI: Sendable {
-    func listImportedReceipts(cursor: String?, scope: ReceiptSessionScope) async throws -> ReceiptListPage
+    func listReviewReceipts(cursor: ReceiptReviewCursor?, scope: ReceiptSessionScope) async throws -> ReceiptReviewPage
     func receiptDetail(id: String, scope: ReceiptSessionScope) async throws -> ReceiptDetailResult
     func confirmImportedReceipt(_ request: ReceiptConfirmRequest, scope: ReceiptSessionScope) async throws -> ReceiptDetail
 }
@@ -51,8 +66,8 @@ struct SessionBoundReceiptReviewAPI: ReceiptReviewAPI {
     let isCurrent: @MainActor @Sendable () -> Bool
     let onDenial: @MainActor @Sendable (ReceiptError) -> Bool
 
-    func listImportedReceipts(cursor: String?, scope requested: ReceiptSessionScope) async throws -> ReceiptListPage {
-        try await run(requested) { try await api.listImportedReceipts(cursor: cursor, scope: scope) }
+    func listReviewReceipts(cursor: ReceiptReviewCursor?, scope requested: ReceiptSessionScope) async throws -> ReceiptReviewPage {
+        try await run(requested) { try await api.listReviewReceipts(cursor: cursor, scope: scope) }
     }
 
     func receiptDetail(id: String, scope requested: ReceiptSessionScope) async throws -> ReceiptDetailResult {
@@ -118,6 +133,7 @@ extension ReceiptError {
         case .totalMismatch: "budget_receipt_total_mismatch"
         case .redactedLinesEditBlocked: "budget_receipt_redacted_lines_edit_blocked"
         case .deviceLimit: "device_token_limit_reached"
+        case .unsupportedContractVersion: "budget_receipt_contract_version_invalid"
         case .rejected(let code): code
         case .unavailable: "unavailable"
         case .api(.unauthorized): "unauthorized"

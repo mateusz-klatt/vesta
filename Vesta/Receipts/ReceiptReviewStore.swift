@@ -1,39 +1,52 @@
 import Foundation
 import Observation
 
-typealias ImportedReceiptSummary = Components.Schemas.BudgetReceiptSummary
+typealias ReceiptReviewSummary = Components.Schemas.BudgetReceiptSummary
 
-private extension ImportedReceiptSummary {
+extension ReceiptReviewSummary {
+    var shopNameForDisplay: String? { displayShopName ?? rawShopName }
+}
+
+private extension ReceiptReviewSummary {
+    var normalizedRawShopName: String? {
+        guard let rawShopName else { return nil }
+        let name = ReceiptConfirmLines.normalizeConfirmName(rawShopName).trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? nil : name
+    }
+
     var hasBankLink: Bool { linked || linkedTransaction != nil }
+    // Draft and needs-review workflows need the web editor and its bank-link controls.
     var isEditableInReview: Bool { status == .imported && !hasBankLink }
     var canConfirmInReview: Bool { isEditableInReview && receiptKind.confirmValue != nil }
 }
 
 struct ReceiptMerchantGroup: Equatable, Identifiable {
     let id: String
-    let name: String?
-    var receipts: [ImportedReceiptSummary]
+    var receipts: [ReceiptReviewSummary]
+
+    var name: String? {
+        receipts.lazy.compactMap(\.displayShopName).first ?? receipts.first?.normalizedRawShopName
+    }
 
     var canConfirmWithoutLinking: Bool { id != "unknown" && receipts.contains(where: \.canConfirmInReview) }
 
-    static func group(_ receipts: [ImportedReceiptSummary]) -> [ReceiptMerchantGroup] {
+    static func group(_ receipts: [ReceiptReviewSummary]) -> [ReceiptMerchantGroup] {
         var groups: [String: ReceiptMerchantGroup] = [:]
         var order: [String] = []
         for receipt in receipts {
-            let shop = receipt.rawShopName.map(ReceiptConfirmLines.normalizeConfirmName)?.trimmingCharacters(in: .whitespacesAndNewlines)
             let chain = receipt.chainKey?.trimmingCharacters(in: .whitespacesAndNewlines)
             let id: String
             if let chain, !chain.isEmpty {
                 id = "chain:\(chain)"
             } else if let nip = receipt.rawNip, PANRedactor.validNIP(nip) {
                 id = "nip:\(nip)"
-            } else if let shop, !shop.isEmpty {
+            } else if let shop = receipt.normalizedRawShopName {
                 id = "shop:\(shop.lowercased())"
             } else {
                 id = "unknown"
             }
             if groups[id] == nil {
-                groups[id] = ReceiptMerchantGroup(id: id, name: shop?.isEmpty == false ? shop : nil, receipts: [])
+                groups[id] = ReceiptMerchantGroup(id: id, receipts: [])
                 order.append(id)
             }
             groups[id]?.receipts.append(receipt)
@@ -45,7 +58,7 @@ struct ReceiptMerchantGroup: Equatable, Identifiable {
 struct ReceiptConfirmationOutcome: Equatable, Identifiable {
     enum Status: Equatable { case confirmed, alreadySubmitted, failed }
 
-    let receipt: ImportedReceiptSummary
+    let receipt: ReceiptReviewSummary
     let status: Status
     let code: String
     let error: ReceiptError?
@@ -54,13 +67,13 @@ struct ReceiptConfirmationOutcome: Equatable, Identifiable {
     var id: String { receipt.receiptId }
 
     static func success(
-        _ receipt: ImportedReceiptSummary, alreadySubmitted: Bool = false, adjustment: ReceiptTotalAdjustment? = nil
+        _ receipt: ReceiptReviewSummary, alreadySubmitted: Bool = false, adjustment: ReceiptTotalAdjustment? = nil
     ) -> Self {
         .init(receipt: receipt, status: alreadySubmitted ? .alreadySubmitted : .confirmed,
               code: alreadySubmitted ? "already_submitted" : "confirmed", error: nil, adjustment: adjustment)
     }
 
-    static func failure(_ receipt: ImportedReceiptSummary, error: ReceiptError) -> Self {
+    static func failure(_ receipt: ReceiptReviewSummary, error: ReceiptError) -> Self {
         .init(receipt: receipt, status: .failed, code: error.reviewCode, error: error, adjustment: nil)
     }
 }
@@ -77,7 +90,7 @@ final class ReceiptReviewStore {
     private var generation = 0
     private var activeTask: Task<Void, Never>?
 
-    private(set) var receipts: [ImportedReceiptSummary] = []
+    private(set) var receipts: [ReceiptReviewSummary] = []
     private(set) var state: State = .loading
     private(set) var failure: ReceiptError?
     private(set) var isBusy = false
@@ -92,7 +105,9 @@ final class ReceiptReviewStore {
     var groups: [ReceiptMerchantGroup] { ReceiptMerchantGroup.group(receipts) }
     var isDenied: Bool { state == .unauthorized || state == .forbidden }
     var canMatchReceipts: Bool { !isCleared && isCurrent() && allowsMatching() }
-    var canEditSelectedReceipt: Bool { detail?.summary.isEditableInReview == true }
+    var canEditSelectedReceipt: Bool {
+        selectedReceipt?.isEditableInReview == true && detail?.summary.isEditableInReview == true
+    }
     var hasUnknownSelectedReceiptKind: Bool {
         detail?.summary.receiptKind == .unknown || selectedReceipt?.receiptKind == .unknown
     }
@@ -108,7 +123,7 @@ final class ReceiptReviewStore {
         return error
     }
 
-    private var selectedReceipt: ImportedReceiptSummary? {
+    private var selectedReceipt: ReceiptReviewSummary? {
         guard let detailID else { return nil }
         return receipts.first { $0.receiptId == detailID }
     }
@@ -148,7 +163,7 @@ final class ReceiptReviewStore {
         await run(request) { await self.performLoad(request) }
     }
 
-    func select(_ receipt: ImportedReceiptSummary) async {
+    func select(_ receipt: ReceiptReviewSummary) async {
         guard let request = reserve() else { return }
         detail = nil
         detailID = receipt.receiptId
@@ -163,11 +178,14 @@ final class ReceiptReviewStore {
                 guard self.isCurrent(request) else { return }
                 var detail = result.receipt
                 guard try self.canReview(detail.summary, for: receipt, selectingDetail: true) else { return }
-                if detail.summary.hasBankLink && detail.summary.version == receipt.version {
-                    detail.summary.linkedTransaction = detail.summary.linkedTransaction ?? receipt.linkedTransaction
+                if detail.summary.version == receipt.version {
+                    detail.summary.displayShopName = detail.summary.displayShopName ?? receipt.displayShopName
+                    if detail.summary.hasBankLink {
+                        detail.summary.linkedTransaction = detail.summary.linkedTransaction ?? receipt.linkedTransaction
+                    }
                 }
                 self.detail = detail
-                guard detail.summary.isEditableInReview else { return }
+                guard self.canEditSelectedReceipt else { return }
                 let payment = detail.summary.paymentMethod
                 let offered = self.canMatchReceipts && payment != "cash" && payment != "mixed" ? result.candidates ?? [] : []
                 self.candidates = offered
@@ -271,11 +289,11 @@ final class ReceiptReviewStore {
     }
 
     private func canReview(
-        _ current: ImportedReceiptSummary, for summary: ImportedReceiptSummary, selectingDetail: Bool
+        _ current: ReceiptReviewSummary, for summary: ReceiptReviewSummary, selectingDetail: Bool
     ) throws -> Bool {
-        guard current.receiptId == summary.receiptId, summary.status == .imported else {
-            throw ReceiptError.versionConflict
-        }
+        guard current.receiptId == summary.receiptId else { throw ReceiptError.versionConflict }
+        if selectingDetail && (summary.status != .imported || current.status == .unknown) { return true }
+        guard summary.status == .imported else { throw ReceiptError.versionConflict }
         if current.status == .confirmed {
             finishConfirmation(summary, alreadySubmitted: true, clearDetail: selectingDetail)
             return false
@@ -360,18 +378,18 @@ final class ReceiptReviewStore {
     }
 
     private func performLoad(_ request: Int) async {
-        var loaded: [ImportedReceiptSummary] = []
+        var loaded: [ReceiptReviewSummary] = []
         var ids: Set<String> = []
-        var cursor: String?
+        var cursor: ReceiptReviewCursor?
         var cursors: Set<String> = []
         do {
             while true {
-                let page = try await api.listImportedReceipts(cursor: cursor, scope: scope)
+                let page = try await api.listReviewReceipts(cursor: cursor, scope: scope)
                 guard isCurrent(request) else { return }
                 loaded.append(contentsOf: page.receipts.filter {
-                    $0.status == .imported && ids.insert($0.receiptId).inserted
+                    $0.status != .confirmed && ids.insert($0.receiptId).inserted
                 })
-                guard let next = page.nextCursor, !next.isEmpty, cursors.insert(next).inserted else { break }
+                guard let next = page.nextCursor, !next.value.isEmpty, cursors.insert(next.value).inserted else { break }
                 cursor = next
             }
             receipts = loaded
@@ -383,7 +401,7 @@ final class ReceiptReviewStore {
     }
 
     private func performConfirm(
-        _ confirmation: Confirmation, summary: ImportedReceiptSummary, request: Int, clearDetail: Bool
+        _ confirmation: Confirmation, summary: ReceiptReviewSummary, request: Int, clearDetail: Bool
     ) async {
         do {
             _ = try await api.confirmImportedReceipt(confirmation.request, scope: scope)
@@ -398,7 +416,7 @@ final class ReceiptReviewStore {
     }
 
     private func finishConfirmation(
-        _ summary: ImportedReceiptSummary, alreadySubmitted: Bool = false, clearDetail: Bool,
+        _ summary: ReceiptReviewSummary, alreadySubmitted: Bool = false, clearDetail: Bool,
         adjustment: ReceiptTotalAdjustment? = nil
     ) {
         record(.success(summary, alreadySubmitted: alreadySubmitted, adjustment: adjustment))
@@ -419,7 +437,7 @@ final class ReceiptReviewStore {
     }
 
     @discardableResult
-    private func recordFailure(_ error: any Error, summary: ImportedReceiptSummary, request: Int) -> Bool {
+    private func recordFailure(_ error: any Error, summary: ReceiptReviewSummary, request: Int) -> Bool {
         guard isCurrent(request), !APIError.isCancellation(error) else { return true }
         let wrapped = ReceiptError.wrap(error)
         if !wrapped.isAccessDenial { record(.failure(summary, error: wrapped)) }
