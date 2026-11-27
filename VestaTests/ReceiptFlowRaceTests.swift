@@ -161,6 +161,92 @@ final class ReceiptFlowRaceTests: XCTestCase {
         try await assertStopsReaderAfterCancellation { _, recognition in recognition.cancel() }
     }
 
+    func testAbandonStopsBeforeLoadingTheNextPhoto() async {
+        await assertStopsBeforeNextPhoto { flow, _ in await flow.abandon() }
+    }
+
+    func testCallerCancellationStopsBeforeLoadingTheNextPhoto() async {
+        await assertStopsBeforeNextPhoto { _, recognition in recognition.cancel() }
+    }
+
+    private func assertStopsBeforeNextPhoto(
+        _ cancel: (ReceiptFlow, Task<Void, Never>) async -> Void
+    ) async {
+        let recognizer = PausedRecognizer()
+        let flow = ReceiptFlow(api: MockReceiptsAPI(), recognizer: recognizer)
+        var loads: [Int] = []
+        let recognition = Task {
+            await flow.recognize(pageCount: 3) { index in
+                loads.append(index)
+                return try self.image()
+            }
+        }
+        await recognizer.gate.waitUntilPaused()
+        await cancel(flow, recognition)
+        await recognizer.gate.resume()
+        await recognition.value
+
+        XCTAssertEqual(loads, [0])
+        XCTAssertEqual(flow.step, .capture)
+        XCTAssertEqual(flow.text, "")
+        XCTAssertNil(flow.overlapReviewMessage)
+        XCTAssertNil(flow.error)
+        XCTAssertFalse(flow.isBusy)
+    }
+
+    func testIndexedLoaderReleasesFullResolutionPhotosBeforeLoadingTheNext() async {
+        let recognizer = SequentialPhotoProbe()
+        let flow = ReceiptFlow(api: MockReceiptsAPI(), recognizer: recognizer)
+        await flow.recognize(pageCount: 3) { index in
+            XCTAssertNil(recognizer.loadedPhoto, "The previous full-resolution image is still retained")
+            recognizer.events.append("load \(index)")
+            let page = try autoreleasepool { try self.image(width: 64 + index, height: 128) }
+            recognizer.loadedPhoto = page
+            return page
+        }
+
+        XCTAssertEqual(recognizer.events, ["load 0", "read 0", "load 1", "read 1", "load 2", "read 2"])
+        XCTAssertNil(recognizer.loadedPhoto)
+        XCTAssertEqual(flow.text, "Photo 0\nPhoto 1\nPhoto 2")
+    }
+
+    func testUncertainOverlapNoteAllowsOneParseAndConfirmationByTotal() async throws {
+        var parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: Data(sampleParseJSON.utf8))
+        parsed.draft.lines.removeLast()
+        let api = MockReceiptsAPI(parseResult: parsed)
+        let recognizer = SequentialPhotoProbe()
+        let flow = ReceiptFlow(api: api, recognizer: recognizer)
+
+        await flow.recognize(pageCount: 2) { index in try self.image(width: 64 + index, height: 128) }
+        XCTAssertEqual(flow.step, .edit)
+        let message = try XCTUnwrap(flow.overlapReviewMessage)
+        XCTAssertEqual(String(localized: message), "Some photos may overlap. Check the receipt lines before confirming.")
+        XCTAssertNil(flow.error)
+
+        await flow.send()
+        XCTAssertEqual(flow.step, .review)
+        XCTAssertNotNil(flow.overlapReviewMessage)
+        XCTAssertEqual(flow.form.totalAdjustment, .remainder(amount: "4.49"))
+        await flow.confirm()
+
+        XCTAssertEqual(flow.step, .done)
+        XCTAssertNil(flow.error)
+        let calls = await api.calls
+        XCTAssertEqual(calls, [.parse("Photo 0\nPhoto 1", .localOcr), .confirm("tx1")])
+    }
+
+    func testStartingOverClearsTheOverlapNoteBeforeSinglePhotoRecognition() async throws {
+        let flow = ReceiptFlow(api: MockReceiptsAPI(), recognizer: SequentialPhotoProbe())
+        await flow.recognize(pageCount: 2) { index in try self.image(width: 64 + index, height: 128) }
+        XCTAssertNotNil(flow.overlapReviewMessage)
+        flow.startOver()
+        XCTAssertNil(flow.overlapReviewMessage)
+
+        await flow.recognize([try image(width: 64, height: 128)])
+        XCTAssertEqual(flow.text, "Photo 0")
+        XCTAssertNil(flow.overlapReviewMessage)
+    }
+
     private func assertStopsReaderAfterCancellation(
         _ cancel: (ReceiptFlow, Task<Void, Never>) async -> Void
     ) async throws {
@@ -379,6 +465,18 @@ private struct PausedRecognizer: ReceiptTextRecognizing {
     func recognize(_: CGImage) async throws -> [TextFragment] {
         await gate.pause()
         return [TextFragment(text: "Old photo", box: CGRect(x: 0.1, y: 0.5, width: 0.3, height: 0.02))]
+    }
+}
+
+@MainActor
+private final class SequentialPhotoProbe: ReceiptTextRecognizing {
+    weak var loadedPhoto: CGImage?
+    var events: [String] = []
+
+    func recognize(_ image: CGImage) async throws -> [TextFragment] {
+        let index = image.width - 64
+        events.append("read \(index)")
+        return [TextFragment(text: "Photo \(index)", box: CGRect(x: 0.1, y: 0.5, width: 0.3, height: 0.02))]
     }
 }
 

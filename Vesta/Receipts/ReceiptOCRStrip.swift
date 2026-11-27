@@ -68,47 +68,62 @@ struct ReceiptOCRStrip {
             let lower = upper + 1
             let cut = normalizedY(at: strips[upper].ownedRows.upperBound)
             let halfOverlap = CGFloat(strips[upper].rows.upperBound - strips[lower].rows.lowerBound) / (2 * height)
-            let halfBand = min(halfLine, halfOverlap)
-            guard halfBand > 0 else { continue }
-            let upperFragments = fragmentsByStrip[upper]
-            let lowerFragments = fragmentsByStrip[lower]
-            let upperCandidates = candidates(in: upperFragments, cut: cut, halfBand: halfBand, halfOverlap: halfOverlap)
-            let lowerCandidates = candidates(in: lowerFragments, cut: cut, halfBand: halfBand, halfOverlap: halfOverlap)
-            let nearCut = halfBand + coordinatePrecision
-
-            // Near the cut, a single observation is useful even if its centre
-            // is on the neighbouring side. Suppress only matched observations.
-            for candidate in upperCandidates where candidate.distance <= nearCut { keep[upper][candidate.index] = true }
-            for candidate in lowerCandidates where candidate.distance <= nearCut { keep[lower][candidate.index] = true }
-            let matches = upperCandidates.flatMap { first in
-                lowerCandidates.compactMap { second -> SeamMatch? in
-                    guard min(first.distance, second.distance) <= nearCut,
-                          let score = overlapScore(upperFragments[first.index].box, lowerFragments[second.index].box)
-                    else { return nil }
-                    return SeamMatch(upper: first.index, lower: second.index, score: score)
-                }
-            }.sorted { $0.score > $1.score }
-
-            var matchedUpper: Set<Int> = []
-            var matchedLower: Set<Int> = []
-            for match in matches where !matchedUpper.contains(match.upper) && !matchedLower.contains(match.lower) {
-                matchedUpper.insert(match.upper)
-                matchedLower.insert(match.lower)
-                let upperY = upperFragments[match.upper].box.midY
-                let lowerY = lowerFragments[match.lower].box.midY
-                let difference = abs(upperY - cut) - abs(lowerY - cut)
-                // If the distances tie, both centres above the cut favour the
-                // upper strip. The lower strip breaks all remaining ties.
-                let keepUpper = difference > coordinatePrecision
-                    || (abs(difference) <= coordinatePrecision && min(upperY, lowerY) > cut + coordinatePrecision)
-                keep[upper][match.upper] = keepUpper
-                keep[lower][match.lower] = !keepUpper
-            }
+            let resolved = resolveSeam(
+                upper: fragmentsByStrip[upper], lower: fragmentsByStrip[lower],
+                cut: cut, halfOverlap: halfOverlap, halfLine: halfLine,
+                upperOwnership: keep[upper], lowerOwnership: keep[lower]
+            )
+            keep[upper] = resolved.upper
+            keep[lower] = resolved.lower
         }
 
         return zip(fragmentsByStrip, keep).flatMap { fragments, owned in
             zip(fragments, owned).compactMap { fragment, keep in keep ? fragment : nil }
         }
+    }
+
+    /// Resolves one cut in common coordinates. Each caller supplies ownership
+    /// outside the seam band, which can also include a photo or strip's other cut.
+    static func resolveSeam(
+        upper: [TextFragment], lower: [TextFragment], cut: CGFloat, halfOverlap: CGFloat, halfLine: CGFloat,
+        upperOwnership: [Bool], lowerOwnership: [Bool], score: (CGRect, CGRect) -> CGFloat? = overlapScore
+    ) -> (upper: [Bool], lower: [Bool]) {
+        let halfBand = min(halfLine, halfOverlap)
+        guard halfBand > 0 else { return (upperOwnership, lowerOwnership) }
+        let upperCandidates = candidates(in: upper, cut: cut, halfBand: halfBand, halfOverlap: halfOverlap)
+        let lowerCandidates = candidates(in: lower, cut: cut, halfBand: halfBand, halfOverlap: halfOverlap)
+        let nearCut = halfBand + coordinatePrecision
+        var keepUpper = upperOwnership
+        var keepLower = lowerOwnership
+
+        // Near the cut, a single observation is useful even if its centre
+        // is on the neighbouring side. Suppress only matched observations.
+        for candidate in upperCandidates where candidate.distance <= nearCut { keepUpper[candidate.index] = true }
+        for candidate in lowerCandidates where candidate.distance <= nearCut { keepLower[candidate.index] = true }
+        let matches = upperCandidates.flatMap { first in
+            lowerCandidates.compactMap { second -> SeamMatch? in
+                guard min(first.distance, second.distance) <= nearCut,
+                      let overlap = score(upper[first.index].box, lower[second.index].box) else { return nil }
+                return SeamMatch(upper: first.index, lower: second.index, score: overlap)
+            }
+        }.sorted { $0.score > $1.score }
+
+        var matchedUpper: Set<Int> = []
+        var matchedLower: Set<Int> = []
+        for match in matches where !matchedUpper.contains(match.upper) && !matchedLower.contains(match.lower) {
+            matchedUpper.insert(match.upper)
+            matchedLower.insert(match.lower)
+            let upperY = upper[match.upper].box.midY
+            let lowerY = lower[match.lower].box.midY
+            let difference = abs(upperY - cut) - abs(lowerY - cut)
+            // If the distances tie, both centres above the cut favour the
+            // upper image. The lower image breaks all remaining ties.
+            let preferUpper = difference > coordinatePrecision
+                || (abs(difference) <= coordinatePrecision && min(upperY, lowerY) > cut + coordinatePrecision)
+            keepUpper[match.upper] = preferUpper
+            keepLower[match.lower] = !preferUpper
+        }
+        return (keepUpper, keepLower)
     }
 
     private struct SeamMatch {
@@ -130,7 +145,7 @@ struct ReceiptOCRStrip {
         }
     }
 
-    private static func overlapScore(_ upper: CGRect, _ lower: CGRect) -> CGFloat? {
+    static func overlapScore(_ upper: CGRect, _ lower: CGRect) -> CGFloat? {
         let shared = upper.intersection(lower)
         guard !shared.isEmpty else { return nil }
         let horizontal = shared.width / max(upper.width, lower.width)

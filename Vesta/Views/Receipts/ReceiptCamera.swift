@@ -5,6 +5,8 @@ import UniformTypeIdentifiers
 struct ReceiptCamera: UIViewControllerRepresentable {
     let onComplete: @MainActor (UIImage?) -> Void
 
+    struct Presentation: Identifiable { let id = UUID() }
+
     static var isSupported: Bool { UIImagePickerController.isSourceTypeAvailable(.camera) }
 
     func makeUIViewController(context: Context) -> UIImagePickerController {
@@ -22,7 +24,8 @@ struct ReceiptCamera: UIViewControllerRepresentable {
 
     @MainActor
     final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        // Treat cancel and use-photo as terminal for this presentation.
+        // Treat cancel and use-photo as terminal for this presentation. The next
+        // photo starts a separate presentation with its own callback.
         private var onComplete: (@MainActor (UIImage?) -> Void)?
 
         init(onComplete: @escaping @MainActor (UIImage?) -> Void) { self.onComplete = onComplete }
