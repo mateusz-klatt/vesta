@@ -56,6 +56,7 @@ struct ReceiptForm: Equatable {
     private(set) var parsedNIP = ""
     private var documentKind: BudgetReceiptSummaryWire.DocumentKindPayload?
     private(set) var canConfirmStatus = true
+    private(set) var canConfirmKind = true
     private var invoiceNumber: String?
     private var parsedLines: [ReceiptLine] = []
 
@@ -74,7 +75,11 @@ struct ReceiptForm: Equatable {
         nip = summary.rawNip ?? ""
         parsedShopName = shopName
         parsedNIP = nip
-        kind = summary.receiptKind == .refund ? .refund : .purchase
+        if let confirmKind = summary.receiptKind.confirmValue {
+            kind = confirmKind
+        } else {
+            canConfirmKind = false
+        }
         day = summary.receiptDate.flatMap(ReceiptDay.init(iso:))
         time = summary.receiptTime ?? ""
         total = summary.totalAmount ?? ""
@@ -130,14 +135,14 @@ struct ReceiptForm: Equatable {
     }
 
     private var hasValidHeader: Bool {
-        guard canConfirmStatus, day != nil else { return false }
+        guard canConfirmStatus, canConfirmKind, day != nil else { return false }
         guard nip.isEmpty || PANRedactor.validNIP(nip) else { return false }
         guard time.isEmpty || Self.validTime(time) else { return false }
         return currency.wholeMatch(of: /[A-Z]{3}/) != nil
     }
 
     private var linePlan: Result<ReceiptConfirmLinePlan, ReceiptConfirmLineError>? {
-        guard let total = normalizedTotal else { return nil }
+        guard canConfirmKind, let total = normalizedTotal else { return nil }
         return linePlan(total: total)
     }
 

@@ -1432,6 +1432,17 @@ final class ReceiptFormTests: XCTestCase {
         XCTAssertNil(form.request(receiptID: p.receiptId, version: p.version, candidates: p.candidates))
     }
 
+    func testUnknownDraftReceiptKindCannotBeConfirmed() throws {
+        var p = try parsed()
+        p.draft.summary.receiptKind = .unknown
+        var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
+
+        XCTAssertFalse(form.canConfirmKind)
+        form.kind = .refund
+        XCTAssertFalse(form.isValid)
+        XCTAssertNil(form.request(receiptID: p.receiptId, version: p.version, candidates: p.candidates))
+    }
+
     func testUnknownCandidateStrengthDoesNotPreselectOnScan() throws {
         var p = try parsed()
         p.candidates[0].matchStrength = .unknown

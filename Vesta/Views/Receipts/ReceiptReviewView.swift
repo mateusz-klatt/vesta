@@ -200,7 +200,7 @@ private struct ImportedReceiptDetailView: View {
                         HStack(alignment: .top) {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(verbatim: candidate.bookingDate ?? candidate.transactionDate ?? "—")
-                                Text(verbatim: "\(candidate.amount) \(candidate.currency)")
+                                Text(verbatim: "\(candidate.displayAmount) \(candidate.currency)")
                                     .font(.caption).foregroundStyle(Theme.textSecondary)
                             }
                             Spacer()
@@ -228,7 +228,11 @@ private struct ImportedReceiptDetailView: View {
             .disabled(store.isBusy || !store.canMatchReceipts)
         }
         Section {
-            if let error = store.confirmLineError {
+            if store.hasUnknownSelectedReceiptKind {
+                LabeledContent("Type") { Text("Unknown") }
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            } else if let error = store.confirmLineError {
                 Text(error.title)
                 Text(error.message)
                     .font(.caption)

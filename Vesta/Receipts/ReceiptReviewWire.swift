@@ -98,7 +98,9 @@ struct BudgetReceiptDetailResultWire: Codable, Hashable, Sendable {
 }
 
 struct ReceiptCandidateWire: Codable, Hashable, Sendable {
-    enum CreditDebitIndicatorPayload: String, Codable, Hashable, Sendable { case DBIT, CRDT }
+    enum CreditDebitIndicatorPayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+        case DBIT, CRDT, unknown
+    }
     enum MatchStrengthPayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
         case id, nip, distinctive, generic, none, unknown
     }
@@ -115,6 +117,11 @@ struct ReceiptCandidateWire: Codable, Hashable, Sendable {
     var merchantTokenHit: Bool
     var transactionDate: String?
     var valueDate: String?
+
+    var displayAmount: String {
+        guard creditDebitIndicator == .unknown else { return amount }
+        return String(amount.drop(while: { $0 == "+" || $0 == "-" || $0 == "−" }))
+    }
 
     init(accountId: String, entryReference: String, amount: String = "12.34", currency: String = "PLN",
          creditDebitIndicator: CreditDebitIndicatorPayload = .DBIT, transactionDate: String? = "2026-11-22",
@@ -159,8 +166,12 @@ struct ReceiptCandidateWire: Codable, Hashable, Sendable {
 }
 
 struct ReceiptLineWire: Codable, Hashable, Sendable {
-    enum LineKindPayload: String, Codable, Hashable, Sendable { case item, deposit, basketDiscount = "basket_discount", other }
-    enum PtuCodePayload: String, Codable, Hashable, Sendable { case A, B, C, D, E, F, G }
+    enum LineKindPayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+        case item, deposit, basketDiscount = "basket_discount", other, unknown
+    }
+    enum PtuCodePayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+        case A, B, C, D, E, F, G, unknown
+    }
 
     var discountAmount: String
     var grossLineTotal: String
@@ -254,7 +265,17 @@ struct BudgetReceiptSummaryWire: Codable, Hashable, Sendable, Identifiable {
         status == .unknown || sourceKind == .unknown || documentKind == .unknown || gatewayStatus == .unknown
     }
 
-    enum ReceiptKindPayload: String, Codable, Hashable, Sendable { case purchase, refund }
+    enum ReceiptKindPayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+        case purchase, refund, unknown
+
+        var confirmValue: ReceiptConfirmRequestWire.ReceiptKindPayload? {
+            switch self {
+            case .purchase: .purchase
+            case .refund: .refund
+            case .unknown: nil
+            }
+        }
+    }
     enum SourceKindPayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
         case liveText = "live_text", localOcr = "local_ocr", cloudAi = "cloud_ai"
         case paste, photo, email, attachment, unknown

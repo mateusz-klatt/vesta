@@ -3,8 +3,8 @@ import Foundation
 // The generator drops the required nullable fields from the verbatim anyOf definitions.
 // ExplicitNullsMiddleware writes these keys on both confirm transports when nil.
 struct ReceiptLineInputWire: Codable, Hashable, Sendable {
-    typealias LineKindPayload = ReceiptLineWire.LineKindPayload
-    typealias PtuCodePayload = ReceiptLineWire.PtuCodePayload
+    enum LineKindPayload: String, Codable, Hashable, Sendable { case item, deposit, basketDiscount = "basket_discount", other }
+    enum PtuCodePayload: String, Codable, Hashable, Sendable { case A, B, C, D, E, F, G }
 
     var discountAmount: String
     var grossLineTotal: String
@@ -129,6 +129,10 @@ enum ReceiptConfirmLines {
     }
 
     static func cleanConfirmLine(_ input: ReceiptLine) throws(ReceiptConfirmLineError) -> Components.Schemas.BudgetReceiptLineInput {
+        let ptuCode = input.ptuCode.flatMap { LineInput.PtuCodePayload(rawValue: $0.rawValue) }
+        guard let kind = LineInput.LineKindPayload(rawValue: input.lineKind.rawValue),
+              input.ptuCode == nil || ptuCode != nil else { throw .invalidForm }
+
         let name = cleanText(input.rawName)
         let unit = input.rawUnit.map(cleanText).flatMap(nonempty)
         let unitPrice = input.unitPriceRaw.flatMap(normalizeConfirmMoney)
@@ -150,7 +154,7 @@ enum ReceiptConfirmLines {
               let netValue = decimal(net) else { throw .invalidForm }
         guard grossValue - discountValue == netValue else { throw .totalMismatch }
 
-        let validSigns = switch input.lineKind {
+        let validSigns = switch kind {
         case .item: grossValue >= 0 && discountValue >= 0 && netValue >= 0
         case .deposit: grossValue != 0 && discountValue == 0
         case .basketDiscount: grossValue < 0 && discountValue == 0
@@ -158,8 +162,8 @@ enum ReceiptConfirmLines {
         }
         guard validSigns else { throw .totalMismatch }
 
-        return .init(discountAmount: discount, grossLineTotal: gross, lineKind: input.lineKind, netLineTotal: net,
-                     ptuCode: input.ptuCode, quantity: quantity,
+        return .init(discountAmount: discount, grossLineTotal: gross, lineKind: kind, netLineTotal: net,
+                     ptuCode: ptuCode, quantity: quantity,
                      rawName: name, rawUnit: unit, unitPriceRaw: unitPrice)
     }
 

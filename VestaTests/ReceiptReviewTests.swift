@@ -393,6 +393,56 @@ final class ReceiptReviewStoreTests: XCTestCase {
         XCTAssertEqual(calls, [.list(nil), .detail(summary.receiptId), .detail(summary.receiptId)])
     }
 
+    func testCandidateWithUnknownDirectionIsUnsignedAndRequiresManualLinkChoice() async {
+        let api = MockReceiptReviewAPI()
+        let summary = ReviewFixtures.summary()
+        var candidate = ReviewFixtures.candidate(strength: .id)
+        candidate.amount = "-12.34"
+        candidate.creditDebitIndicator = .unknown
+        await api.setPage(cursor: nil, receipts: [summary], next: nil)
+        await api.setDetail(ReviewFixtures.detail(), candidates: [candidate])
+        let store = ReceiptReviewStore(api: api, scope: scope)
+        await store.load()
+        await store.select(summary)
+
+        XCTAssertEqual(store.candidates.first?.displayAmount, "12.34")
+        XCTAssertNil(store.selectedCandidate)
+        XCTAssertFalse(store.canConfirmSelected)
+        store.selectCandidate(candidate)
+        XCTAssertTrue(store.canConfirmSelected)
+    }
+
+    func testUnknownReceiptKindExplainsDisabledSaveAndPreventsConfirmation() async throws {
+        for unknownIsOnList in [true, false] {
+            let api = MockReceiptReviewAPI()
+            var summary = ReviewFixtures.summary()
+            var detail = ReviewFixtures.detail()
+            if unknownIsOnList {
+                summary.receiptKind = .unknown
+            } else {
+                detail.summary.receiptKind = .unknown
+            }
+            let candidate = ReviewFixtures.candidate(strength: .id)
+            await api.setPage(cursor: nil, receipts: [summary], next: nil)
+            await api.setDetail(detail, candidates: [candidate])
+            let store = ReceiptReviewStore(api: api, scope: scope)
+            await store.load()
+            await store.select(summary)
+
+            XCTAssertTrue(store.canEditSelectedReceipt)
+            XCTAssertTrue(store.hasUnknownSelectedReceiptKind)
+            XCTAssertNil(store.selectedCandidate)
+            XCTAssertEqual(store.confirmLineError, .rejected("incomplete_receipt"))
+            XCTAssertFalse(store.canConfirmSelected)
+            store.selectCandidate(candidate)
+            XCTAssertFalse(store.canConfirmSelected)
+            await store.confirmSelected()
+            await store.confirmMerchant(try XCTUnwrap(store.groups.first))
+            let confirms = await api.confirms
+            XCTAssertTrue(confirms.isEmpty)
+        }
+    }
+
     func testListPaginatesFiltersAndGroupsByMerchant() async {
         let api = MockReceiptReviewAPI()
         await api.setPage(cursor: nil, receipts: [
