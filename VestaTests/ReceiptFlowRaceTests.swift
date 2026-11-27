@@ -47,6 +47,51 @@ final class ReceiptFlowRaceTests: XCTestCase {
         XCTAssertNil(flow.error)
     }
 
+    func testOCRSurfacesLineLimitBeforeSending() async throws {
+        let api = MockReceiptsAPI()
+        let fragments = (0...ReceiptText.maxLines / 2).map { row in
+            TextFragment(text: "Product", box: CGRect(x: 0.1, y: 0.95 - CGFloat(row) * 0.003,
+                                                     width: 0.5, height: 0.001))
+        }
+        let flow = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: fragments))
+        let page = try image()
+
+        await flow.recognize([page, page])
+
+        XCTAssertEqual(flow.step, .edit)
+        XCTAssertEqual(flow.text.split(separator: "\n").count, ReceiptText.maxLines + 2)
+        XCTAssertEqual(flow.error, .tooLarge)
+        await flow.send()
+        XCTAssertEqual(flow.error, .tooLarge)
+        let calls = await api.calls
+        XCTAssertTrue(calls.isEmpty)
+    }
+
+    func testOCRSurfacesUTF8LimitAndAllowsShortening() async throws {
+        let api = MockReceiptsAPI()
+        let text = String(repeating: "ą", count: ReceiptText.maxBytes / 2) + "A"
+        let fragment = TextFragment(text: text, box: CGRect(x: 0.1, y: 0.5, width: 0.5, height: 0.02))
+        let flow = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: [fragment]))
+
+        await flow.recognize([try image()])
+
+        XCTAssertEqual(flow.step, .edit)
+        XCTAssertEqual(flow.text, text)
+        XCTAssertEqual(flow.error, .tooLarge)
+        XCTAssertEqual(String(localized: ReceiptError.tooLarge.title), "Receipt text is too long")
+        await flow.send()
+        XCTAssertEqual(flow.error, .tooLarge)
+        let oversizedCalls = await api.calls
+        XCTAssertTrue(oversizedCalls.isEmpty)
+
+        flow.text = "Shortened receipt"
+        await flow.send()
+        XCTAssertNil(flow.error)
+        XCTAssertEqual(flow.step, .review)
+        let shortenedCalls = await api.calls
+        XCTAssertEqual(shortenedCalls, [.parse("Shortened receipt", .localOcr)])
+    }
+
     func testLocalPhotoErrorsOfferRecoveryWithoutPairing() {
         for (error, code) in [(ReceiptError.photoUnavailable, "photo_unavailable"), (.noReadableText, "no_readable_text")] {
             XCTAssertEqual(String(localized: error.title), "Couldn’t read photo")
@@ -106,6 +151,34 @@ final class ReceiptFlowRaceTests: XCTestCase {
         XCTAssertNil(flow.error)
         XCTAssertFalse(flow.isBusy)
         XCTAssertEqual(flow.step, .capture)
+    }
+
+    func testAbandonStopsRecognitionAfterInFlightStrip() async throws {
+        try await assertStopsReaderAfterCancellation { flow, _ in await flow.abandon() }
+    }
+
+    func testCallerCancellationStopsRecognitionAfterInFlightStrip() async throws {
+        try await assertStopsReaderAfterCancellation { _, recognition in recognition.cancel() }
+    }
+
+    private func assertStopsReaderAfterCancellation(
+        _ cancel: (ReceiptFlow, Task<Void, Never>) async -> Void
+    ) async throws {
+        let recognizer = PausedStripRecognizer()
+        let flow = ReceiptFlow(api: MockReceiptsAPI(), recognizer: recognizer)
+        let photo = try image(width: 128, height: 439)
+        let recognition = Task { await flow.recognize([photo]) }
+        await recognizer.gate.waitUntilPaused()
+        await cancel(flow, recognition)
+        await recognizer.gate.resume()
+        await recognition.value
+
+        let reads = await recognizer.readCount
+        XCTAssertEqual(reads, 1)
+        XCTAssertEqual(flow.step, .capture)
+        XCTAssertEqual(flow.text, "")
+        XCTAssertNil(flow.error)
+        XCTAssertFalse(flow.isBusy)
     }
 
     func testAbandonDuringConfirmKeepsTheSavedReceipt() async {
@@ -243,9 +316,9 @@ final class ReceiptFlowRaceTests: XCTestCase {
         XCTAssertTrue(confirmScopes.allSatisfy { $0 == old })
     }
 
-    private func image() throws -> CGImage {
-        let context = try XCTUnwrap(CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8,
-                                              bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+    private func image(width: Int = 1, height: Int = 1) throws -> CGImage {
+        let context = try XCTUnwrap(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                                              bytesPerRow: 4 * width, space: CGColorSpaceCreateDeviceRGB(),
                                               bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
         return try XCTUnwrap(context.makeImage())
     }
@@ -306,5 +379,21 @@ private struct PausedRecognizer: ReceiptTextRecognizing {
     func recognize(_: CGImage) async throws -> [TextFragment] {
         await gate.pause()
         return [TextFragment(text: "Old photo", box: CGRect(x: 0.1, y: 0.5, width: 0.3, height: 0.02))]
+    }
+}
+
+private actor PausedStripRecognizer: ReceiptTextRecognizing {
+    let gate = OperationGate()
+    private(set) var readCount = 0
+
+    func recognize(_ image: CGImage) async throws -> [TextFragment] {
+        try await VisionReceiptRecognizer().recognize(image, using: read)
+    }
+
+    private func read(_: CGImage) async -> [TextFragment] {
+        readCount += 1
+        if readCount == 1 { await gate.pause() }
+        // Return normally to verify the tiled recognizer itself stops at cancellation.
+        return []
     }
 }

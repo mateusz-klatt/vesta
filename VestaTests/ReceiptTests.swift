@@ -496,6 +496,33 @@ final class ReceiptLineOrderingTests: XCTestCase {
         XCTAssertEqual(ReceiptLineOrdering.lines(from: fragments), ["CHLEB 4,99"])
     }
 
+    func testTiledBandFloorKeepsCloselySpacedRowsSeparate() {
+        let fragments = [
+            frag("FIRST", x: 0.1, y: 0.8000, h: 0.001),
+            frag("SECOND", x: 0.1, y: 0.7986, h: 0.001),
+        ]
+        let ordinary = ReceiptLineOrdering.lines(from: fragments)
+        XCTAssertEqual(ordinary.count, 1)
+        XCTAssertEqual(ReceiptLineOrdering.lines(from: fragments, imageAspectRatio: 3), ordinary)
+        XCTAssertEqual(ReceiptLineOrdering.lines(from: fragments, imageAspectRatio: 10), ["FIRST", "SECOND"])
+    }
+
+    func testTiledSlopeAlignmentUsesNearbySmallSlopes() {
+        let fragments = [
+            frag("FIRST", x: 0.1, y: 0.800, w: 0.22, h: 0.001, slope: 0.004),
+            frag("TAG ONE", x: 0.75, y: 0.80236, w: 0.10, h: 0.001),
+            frag("SECOND", x: 0.1, y: 0.797, w: 0.22, h: 0.001, slope: 0.004),
+            frag("TAG TWO", x: 0.75, y: 0.79936, w: 0.10, h: 0.001),
+            // A differently tilted part of the paper lies within the old
+            // full-height neighborhood and outside the tiled neighborhood.
+            frag("HEADING", x: 0.1, y: 0.768, w: 0.28, h: 0.001, slope: -0.009),
+            frag("FOOTER", x: 0.1, y: 0.765, w: 0.28, h: 0.001, slope: -0.009),
+        ]
+        XCTAssertEqual(ReceiptLineOrdering.lines(from: fragments, imageAspectRatio: 10), [
+            "FIRST TAG ONE", "SECOND TAG TWO", "HEADING", "FOOTER",
+        ])
+    }
+
     func testTiltedItemAmountsStayWithTheirRowsAboveAFlatFooter() {
         let fragments = [
             frag("30,00 B", x: 0.67, y: 0.666),
@@ -778,6 +805,149 @@ final class ReceiptOCRAssessmentTests: XCTestCase {
         XCTAssertTrue(ReceiptOCRAssessment(lines: lines).needsRetry)
         XCTAssertTrue(lines.contains { $0.hasPrefix("DO ZAPLATY") && $0.contains("4,00") })
         XCTAssertFalse(lines.contains { $0.contains("10,00") })
+    }
+}
+
+// MARK: - Tiled OCR
+
+@MainActor
+final class ReceiptOCRStripTests: XCTestCase {
+    private let stripRows = [0..<94, 70..<163, 139..<232, 208..<301, 277..<370, 346..<439]
+
+    func testOrdinaryReceiptReadsTheOriginalImageOnce() async throws {
+        let image = try image(height: 384)
+        let reads = ReadLog()
+        let expected = [
+            TextFragment(text: " MLEKO 2,00 A ", box: CGRect(x: 0.2, y: 0.7, width: 0.4, height: 0.05), rowSlope: 0.03)
+        ]
+        let fragments = try await VisionReceiptRecognizer().recognize(image, using: { input in
+            _ = await reads.record(input)
+            return expected
+        })
+
+        XCTAssertEqual(fragments, expected)
+        let sizes = await reads.sizes
+        XCTAssertEqual(sizes, [CGSize(width: 128, height: 384)])
+    }
+
+    func testCutOwnershipPreservesAllRowsAndIdenticalPurchases() async throws {
+        let image = try image(height: 439)
+        let reads = ReadLog()
+        let cuts = [82, 151, 220, 289, 358]
+        var rows = [(position: 8, owner: 0, text: "FIRST")]
+        for (index, cut) in cuts.enumerated() {
+            rows.append((cut - 5, index, "MLEKO 2,00 A"))
+            rows.append((cut, index + 1, "CUT \(index)"))
+            rows.append((cut + 5, index + 1, "MLEKO 2,00 A"))
+        }
+        rows.append((431, 5, "LAST"))
+        let samples = rows
+        let stripRows = self.stripRows
+
+        let merged = try await VisionReceiptRecognizer().recognize(image, using: { input in
+            let index = await reads.record(input)
+            guard stripRows.indices.contains(index) else { return [] }
+            let crop = stripRows[index]
+            return samples.reversed().filter { crop.contains($0.position) }.map { sample in
+                // Some overlap readings differ. Ownership must come from the
+                // position, even when the observation is on the cut itself.
+                let text = sample.owner == index ? sample.text : "EDGE READ"
+                return Self.fragment(text, at: sample.position, in: crop)
+            }
+        })
+
+        let sizes = await reads.sizes
+        XCTAssertEqual(sizes, stripRows.map { CGSize(width: 128, height: $0.count) })
+        XCTAssertEqual(
+            ReceiptLineOrdering.lines(from: merged, imageAspectRatio: CGFloat(image.height) / CGFloat(image.width)),
+            samples.map(\.text)
+        )
+        XCTAssertEqual(merged.count, samples.count)
+        for (fragment, sample) in zip(merged.sorted { $0.box.midY > $1.box.midY }, samples) {
+            XCTAssertEqual(fragment.box.minX, 0.125)
+            XCTAssertEqual(fragment.box.width, 0.5)
+            XCTAssertEqual(fragment.box.midY, 1 - CGFloat(sample.position) / 439, accuracy: 1e-9)
+            XCTAssertEqual(fragment.box.height, 4 / 439, accuracy: 1e-9)
+            let slope = try XCTUnwrap(fragment.rowSlope)
+            XCTAssertEqual(slope, 0.125 * CGFloat(stripRows[sample.owner].count) / 439, accuracy: 1e-9)
+        }
+    }
+
+    func testRetryCanReconcileUsingItemsAndTotalFromDifferentStrips() async throws {
+        let image = try image(height: 439)
+        let reads = ReadLog()
+        let stripRows = self.stripRows
+        let merged = try await VisionReceiptRecognizer().recognize(image, using: { input in
+            let index = await reads.record(input)
+            let isRetry = index >= stripRows.count
+            let strip = index % stripRows.count
+            let crop = stripRows[strip]
+            switch strip {
+            case 0:
+                let fuel = isRetry ? "PALIWO 2L * 5,00 10,00 B" : "PALIWO 2L * 5,00 4,00 B"
+                return [
+                    Self.fragment(fuel, at: 18, in: crop),
+                    Self.fragment("MLEKO 1 * 2,00 2,00 A", at: 35, in: crop),
+                ]
+            case stripRows.count - 1:
+                return [Self.fragment("SUMA PLN 12,00", at: 408, in: crop)]
+            default:
+                return []
+            }
+        })
+
+        let sizes = await reads.sizes
+        XCTAssertEqual(sizes.map(\.width), Array(repeating: CGFloat(128), count: stripRows.count)
+            + Array(repeating: CGFloat(192), count: stripRows.count))
+        XCTAssertEqual(ReceiptLineOrdering.lines(from: merged, imageAspectRatio: CGFloat(image.height) / CGFloat(image.width)), [
+            "PALIWO 2L * 5,00 10,00 B", "MLEKO 1 * 2,00 2,00 A", "SUMA PLN 12,00"
+        ])
+    }
+
+    func testCancellationBetweenStripsThrowsAndStopsOCR() async throws {
+        let image = try image(height: 439)
+        let reads = ReadLog()
+        let task = Task {
+            try await VisionReceiptRecognizer().recognize(image, using: { input in
+                _ = await reads.record(input)
+                withUnsafeCurrentTask { $0?.cancel() }
+                return []
+            })
+        }
+        do {
+            _ = try await task.value
+            XCTFail("Expected recognition to stop at cancellation")
+        } catch is CancellationError {
+            let sizes = await reads.sizes
+            XCTAssertEqual(sizes, [CGSize(width: 128, height: 94)])
+        }
+    }
+
+    private func image(height: Int) throws -> CGImage {
+        let context = try XCTUnwrap(CGContext(
+            data: nil, width: 128, height: height, bitsPerComponent: 8, bytesPerRow: 128,
+            space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue
+        ))
+        return try XCTUnwrap(context.makeImage())
+    }
+
+    private nonisolated static func fragment(_ text: String, at row: Int, in crop: Range<Int>) -> TextFragment {
+        let height = CGFloat(crop.count)
+        return TextFragment(
+            text: text,
+            box: CGRect(x: 0.125, y: CGFloat(crop.upperBound - row - 2) / height, width: 0.5, height: 4 / height),
+            rowSlope: 0.125
+        )
+    }
+
+    private actor ReadLog {
+        private(set) var sizes: [CGSize] = []
+
+        func record(_ image: CGImage) -> Int {
+            let index = sizes.count
+            sizes.append(CGSize(width: image.width, height: image.height))
+            return index
+        }
     }
 }
 
