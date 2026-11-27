@@ -1758,13 +1758,7 @@ final class ReceiptTests: XCTestCase {
     }
 
     func test409AlreadySubmittedAndLegacyLinkNullConfirm() async throws {
-        let origin = URL(string: "https://hestia.example")!
-        let store = MemoryDeviceTokenStore(.init(server: origin, credential: fakeDeviceToken))
-        let pairing = ReceiptPairing(store: store, serverURL: { origin })
-        let transport = AlreadySubmittedTransport()
-        let api = APIClient(transport: transport, receiptPairing: pairing)
-        let scope = ReceiptSessionScope(origin: origin, actor: nil, ownerKey: nil, credential: fakeDeviceToken)
-        let flow = ReceiptFlow(api: api, scope: scope)
+        let (flow, transport) = makeAlreadySubmittedFlow()
         flow.useText("BIEDRONKA")
         await flow.send()
         flow.form.payment = .cash
@@ -1783,6 +1777,33 @@ final class ReceiptTests: XCTestCase {
         let body = try XCTUnwrap(sent)
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
         XCTAssertTrue(object["link"] is NSNull)
+    }
+
+    func test409AlreadySubmittedWithSentLinkShowsGenericOutcome() async throws {
+        let (flow, transport) = makeAlreadySubmittedFlow()
+        flow.useText("BIEDRONKA")
+        await flow.send()
+        await flow.confirm()
+
+        XCTAssertEqual(flow.step, .done)
+        XCTAssertNil(flow.confirmed)
+        XCTAssertEqual(String(localized: try XCTUnwrap(flow.linkOutcomeMessage)), "Linked to transaction")
+        let sent = await transport.confirmBody
+        let body = try XCTUnwrap(sent)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let link = try XCTUnwrap(object["link"] as? [String: String])
+        XCTAssertEqual(link["account_id"], "acc1")
+        XCTAssertEqual(link["entry_reference"], "tx1")
+    }
+
+    private func makeAlreadySubmittedFlow() -> (ReceiptFlow, AlreadySubmittedTransport) {
+        let origin = URL(string: "https://hestia.example")!
+        let store = MemoryDeviceTokenStore(.init(server: origin, credential: fakeDeviceToken))
+        let pairing = ReceiptPairing(store: store, serverURL: { origin })
+        let transport = AlreadySubmittedTransport()
+        let api = APIClient(transport: transport, receiptPairing: pairing)
+        let scope = ReceiptSessionScope(origin: origin, actor: nil, ownerKey: nil, credential: fakeDeviceToken)
+        return (ReceiptFlow(api: api, scope: scope), transport)
     }
 
     func testMatchLossClearsOpenReviewCandidatesAndFormSelection() async throws {
@@ -1902,6 +1923,8 @@ final class ReceiptFlowTests: XCTestCase {
     func testSendThenConfirmHappyPath() async throws {
         let parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: body(sampleParseJSON))
         let candidate = try XCTUnwrap(parsed.candidates.first)
+        let display = candidate.scanDisplay
+        XCTAssertEqual(display.date, "2026-11-22")
         let api = MockReceiptsAPI(parseResult: parsed, confirmResult: confirmedReceipt(parsed.draft, linkedTo: candidate))
         let flow = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: []))
         flow.useText("BIEDRONKA\nSUMA PLN 7,98")
@@ -1913,7 +1936,35 @@ final class ReceiptFlowTests: XCTestCase {
         XCTAssertEqual(flow.step, .done)
         let calls = await api.calls
         XCTAssertEqual(calls, [.parse("BIEDRONKA\nSUMA PLN 7,98"), .confirm("tx1")])
-        XCTAssertEqual(String(localized: try XCTUnwrap(flow.linkOutcomeMessage)), "Linked to transaction: 2026-11-23 7.98 PLN")
+        XCTAssertEqual(String(localized: try XCTUnwrap(flow.linkOutcomeMessage)), "Linked to transaction: \(display.date) \(display.amount)")
+    }
+
+    func testStartingAndEditingAnotherReceiptClearsLinkOutcome() async throws {
+        let parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: body(sampleParseJSON))
+        let api = MockReceiptsAPI(parseResult: parsed, confirmResult: confirmedReceipt(parsed.draft, linkedTo: nil))
+        let flow = ReceiptFlow(api: api)
+        flow.useText("First receipt")
+        await flow.send()
+        await flow.confirm()
+        XCTAssertEqual(flow.step, .done)
+        XCTAssertNotNil(flow.linkOutcomeMessage)
+
+        flow.useText("Second receipt")
+        XCTAssertEqual(flow.step, .edit)
+        XCTAssertNil(flow.linkOutcomeMessage)
+
+        await flow.send()
+        await flow.confirm()
+        XCTAssertEqual(flow.step, .done)
+        XCTAssertNotNil(flow.linkOutcomeMessage)
+
+        await flow.backToEdit()
+        XCTAssertEqual(flow.step, .edit)
+        XCTAssertNil(flow.linkOutcomeMessage)
+
+        flow.startOver()
+        XCTAssertEqual(flow.step, .capture)
+        XCTAssertNil(flow.linkOutcomeMessage)
     }
 
     func testConfirmShowsWaitingWhenResponseRejectsSentLink() async throws {
@@ -1962,6 +2013,42 @@ final class ReceiptFlowTests: XCTestCase {
         XCTAssertEqual(String(localized: try XCTUnwrap(flow.linkOutcomeMessage)), "Linked to transaction")
     }
 
+    func testConfirmShowsGenericLinkWhenResponseIdentifiesDifferentTransaction() async throws {
+        let parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: body(sampleParseJSON))
+        let submitted = try XCTUnwrap(parsed.candidates.first)
+        for linked in [
+            ReceiptCandidate(accountId: "acc2", entryReference: submitted.entryReference),
+            ReceiptCandidate(accountId: submitted.accountId, entryReference: "tx2"),
+        ] {
+            let api = MockReceiptsAPI(parseResult: parsed, confirmResult: confirmedReceipt(parsed.draft, linkedTo: linked))
+            let flow = ReceiptFlow(api: api)
+            flow.useText("Receipt text")
+            await flow.send()
+            await flow.confirm()
+
+            XCTAssertEqual(flow.step, .done)
+            let request = await api.confirmRequest
+            XCTAssertEqual(request?.link?.accountId, submitted.accountId)
+            XCTAssertEqual(request?.link?.entryReference, submitted.entryReference)
+            XCTAssertEqual(String(localized: try XCTUnwrap(flow.linkOutcomeMessage)), "Linked to transaction")
+        }
+    }
+
+    func testConfirmShowsCandidateDetailsWhenResponseOnlyProvidesLinkedAccount() async throws {
+        let parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: body(sampleParseJSON))
+        let candidate = try XCTUnwrap(parsed.candidates.first)
+        var receipt = confirmedReceipt(parsed.draft, linkedTo: candidate)
+        receipt.summary.linkedAccountId = "acc2"
+        receipt.summary.linkedEntryRef = nil
+        let flow = ReceiptFlow(api: MockReceiptsAPI(parseResult: parsed, confirmResult: receipt))
+        flow.useText("Receipt text")
+        await flow.send()
+        await flow.confirm()
+
+        XCTAssertEqual(flow.step, .done)
+        XCTAssertEqual(String(localized: try XCTUnwrap(flow.linkOutcomeMessage)), "Linked to transaction: 2026-11-22 7.98 PLN")
+    }
+
     func testConfirmByTotalShowsSelectedLinkDetails() async throws {
         var parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: body(sampleParseJSON))
         parsed.draft.lines[0].grossLineTotal = "3"
@@ -1970,6 +2057,7 @@ final class ReceiptFlowTests: XCTestCase {
         var selected = try XCTUnwrap(parsed.candidates.first)
         selected.accountId = "acc2"
         selected.candidateToken = "tok-2345678901234567890123456789012345"
+        selected.transactionDate = "2026-11-25"
         selected.bookingDate = "2026-11-24"
         selected.amount = "−7.98"
         selected.creditDebitIndicator = .unknown
@@ -1988,7 +2076,7 @@ final class ReceiptFlowTests: XCTestCase {
         XCTAssertEqual(request?.lines?.map(\.rawName), ["Tylko suma"])
         XCTAssertEqual(request?.link?.accountId, selected.accountId)
         XCTAssertEqual(request?.link?.candidateToken, selected.candidateToken)
-        XCTAssertEqual(String(localized: try XCTUnwrap(flow.linkOutcomeMessage)), "Linked to transaction: 2026-11-24 7.98 PLN")
+        XCTAssertEqual(String(localized: try XCTUnwrap(flow.linkOutcomeMessage)), "Linked to transaction: 2026-11-25 7.98 PLN")
     }
 
     private func confirmedReceipt(_ draft: ReceiptDetail, linkedTo candidate: ReceiptCandidate?) -> ReceiptDetail {

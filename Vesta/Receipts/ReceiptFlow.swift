@@ -34,6 +34,13 @@ struct ReceiptDay: Equatable {
     }
 }
 
+extension ReceiptCandidate {
+    var scanDisplay: (date: String, amount: String) {
+        let date = transactionDate ?? bookingDate ?? valueDate ?? "—"
+        return (date, "\(displayAmount) \(currency)")
+    }
+}
+
 /// The editable header of a parsed receipt draft, plus the chosen bank match.
 /// To change the parsed items in the scan UI, edit the text and read it again.
 struct ReceiptForm: Equatable {
@@ -409,6 +416,7 @@ final class ReceiptFlow {
             error = .tooLarge
             return
         }
+        linkOutcomeMessage = nil
         text = PANRedactor.redact(raw)
         self.overlapReview = overlapReview
         self.source = source
@@ -428,6 +436,7 @@ final class ReceiptFlow {
     func startOver() {
         guard step == .edit, !isBusy, !abandoned, isCurrent else { return }
         captureGeneration += 1
+        linkOutcomeMessage = nil
         text = ""
         overlapReview = nil
         source = .paste
@@ -500,14 +509,20 @@ final class ReceiptFlow {
         guard mayPublish else { return }
         confirmed = receipt
         guard !abandoned else { return }
+        let summary = receipt?.summary
         // An already-submitted response has no receipt to inspect.
-        let isLinked = receipt?.summary.linked ?? sentLink
+        let isLinked = summary?.linked ?? sentLink
+        let hasDifferentLink = if let candidate, let accountId = summary?.linkedAccountId,
+                                  let entryRef = summary?.linkedEntryRef {
+            accountId != candidate.accountId || entryRef != candidate.entryReference
+        } else {
+            false
+        }
         if !isLinked {
             linkOutcomeMessage = "Waiting for the bank transaction"
-        } else if let candidate {
-            let day = candidate.bookingDate ?? candidate.transactionDate ?? candidate.valueDate ?? "—"
-            let amount = "\(candidate.displayAmount) \(candidate.currency)"
-            linkOutcomeMessage = "Linked to transaction: \(day) \(amount)"
+        } else if summary != nil, let candidate, !hasDifferentLink {
+            let display = candidate.scanDisplay
+            linkOutcomeMessage = "Linked to transaction: \(display.date) \(display.amount)"
         } else {
             linkOutcomeMessage = "Linked to transaction"
         }
@@ -521,6 +536,7 @@ final class ReceiptFlow {
         defer { isBusy = false }
         await deleteCurrentDraft()
         guard !abandoned, isCurrent else { return }
+        linkOutcomeMessage = nil
         step = .edit
     }
 

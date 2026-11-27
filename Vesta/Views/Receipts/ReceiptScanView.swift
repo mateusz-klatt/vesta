@@ -418,9 +418,9 @@ private struct ReceiptReviewStep: View {
     }
 
     private static func describe(_ candidate: ReceiptCandidate) -> String {
-        let day = candidate.transactionDate ?? candidate.bookingDate ?? candidate.valueDate ?? "—"
+        let display = candidate.scanDisplay
         let merchant = candidate.merchantTokenHit ? " ✓" : ""
-        return "\(day) · \(candidate.displayAmount) \(candidate.currency)\(merchant)"
+        return "\(display.date) · \(display.amount)\(merchant)"
     }
 }
 
