@@ -65354,6 +65354,1102 @@
           }
         }
       }
+    },
+    "Photo overlap was estimated. Check the receipt lines before confirming.": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "جرى تقدير التداخل بين الصور. راجع سطور الإيصال قبل التأكيد."
+          }
+        },
+        "bn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ছবিগুলোর কতটা অংশ মিলে যায়, তা অনুমান করা হয়েছে। নিশ্চিত করার আগে রসিদের লাইনগুলো যাচাই করুন।"
+          }
+        },
+        "bs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preklapanje fotografija je procijenjeno. Prije potvrde provjerite stavke računa."
+          }
+        },
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Překrytí fotek bylo odhadnuto. Před potvrzením zkontrolujte řádky účtenky."
+          }
+        },
+        "da": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Overlap mellem billederne er anslået. Kontrollér linjerne på kvitteringen, før du bekræfter."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Überlappung der Fotos wurde geschätzt. Prüfe die Belegzeilen vor dem Bestätigen."
+          }
+        },
+        "el": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Η επικάλυψη των φωτογραφιών υπολογίστηκε κατά προσέγγιση. Ελέγξτε τις γραμμές της απόδειξης πριν από την επιβεβαίωση."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Photo overlap was estimated. Check the receipt lines before confirming."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se ha estimado el solapamiento entre las fotos. Revisa las líneas del recibo antes de confirmar."
+          }
+        },
+        "fa": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "میزان هم‌پوشانی عکس‌ها برآورد شد. پیش از تأیید، سطرهای رسید را بررسی کنید."
+          }
+        },
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kuvien päällekkäisyys on arvioitu. Tarkista kuitin rivit ennen vahvistamista."
+          }
+        },
+        "fil": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tinataya kung gaano kalaki ang magkapatong na bahagi ng mga larawan. Suriin ang mga linya ng resibo bago kumpirmahin."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le chevauchement des photos a été estimé. Vérifiez les lignes du reçu avant de confirmer."
+          }
+        },
+        "ga": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rinneadh meastachán ar fhorluí na ngrianghraf. Seiceáil línte na hadmhála sula ndeimhníonn tú."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מידת החפיפה בין התמונות הוערכה. בדקו את שורות הקבלה לפני האישור."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "फ़ोटो के बीच का मिलान अनुमान के आधार पर किया गया है। पुष्टि करने से पहले रसीद की पंक्तियाँ जाँचें।"
+          }
+        },
+        "hr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preklapanje fotografija je procijenjeno. Prije potvrde provjerite stavke računa."
+          }
+        },
+        "hu": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A fotók átfedését becsléssel állapítottuk meg. A jóváhagyás előtt ellenőrizd a nyugta sorait."
+          }
+        },
+        "hy": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Լուսանկարների համընկնումը մոտավոր է հաշվարկվել։ Հաստատելուց առաջ ստուգեք կտրոնի տողերը։"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tumpang tindih antar foto telah diperkirakan. Periksa baris pada struk sebelum mengonfirmasi."
+          }
+        },
+        "is": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Áætlað var hvar myndirnar skarast. Athugaðu línurnar á kvittuninni áður en þú staðfestir."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La sovrapposizione delle foto è stata stimata. Controlla le righe dello scontrino prima di confermare."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真の重なりは推定値です。確定する前にレシートの各行を確認してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "사진의 겹치는 부분은 추정한 결과입니다. 확인하기 전에 영수증의 각 줄을 검토하세요."
+          }
+        },
+        "lt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nuotraukų persidengimas nustatytas apytiksliai. Prieš patvirtindami patikrinkite kvito eilutes."
+          }
+        },
+        "lv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fotoattēlu pārklāšanās noteikta aptuveni. Pirms apstiprināšanas pārbaudiet čeka rindas."
+          }
+        },
+        "ms": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pertindihan antara foto dianggarkan. Semak baris pada resit sebelum mengesahkan."
+          }
+        },
+        "my": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ဓာတ်ပုံများ ထပ်နေသည့် အပိုင်းကို ခန့်မှန်းထားပါသည်။ အတည်မပြုမီ ပြေစာရှိ စာကြောင်းများကို စစ်ဆေးပါ။"
+          }
+        },
+        "nb": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Overlappen mellom bildene ble anslått. Sjekk linjene på kvitteringen før du bekrefter."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De overlap tussen de foto’s is geschat. Controleer de regels op de bon voordat je bevestigt."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Oszacowano zakres nakładania się zdjęć. Sprawdź pozycje paragonu przed potwierdzeniem."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A sobreposição entre as fotos foi estimada. Confira as linhas do recibo antes de confirmar."
+          }
+        },
+        "ro": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Suprapunerea fotografiilor a fost estimată. Verifică rândurile bonului înainte de a confirma."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перекрытие фотографий определено приблизительно. Перед подтверждением проверьте строки чека."
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prekrytie fotiek bolo odhadnuté. Pred potvrdením skontrolujte riadky účtenky."
+          }
+        },
+        "sq": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mbivendosja e fotografive është vlerësuar përafërsisht. Kontrolloni rreshtat e kuponit para se të konfirmoni."
+          }
+        },
+        "sr-Latn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preklapanje fotografija je procenjeno. Proverite stavke računa pre potvrde."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Överlappningen mellan bilderna har uppskattats. Kontrollera raderna på kvittot innan du bekräftar."
+          }
+        },
+        "sw": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sehemu zinazopishana kwenye picha zimekadiriwa. Kagua mistari ya risiti kabla ya kuthibitisha."
+          }
+        },
+        "th": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ส่วนที่ซ้อนทับกันของภาพถ่ายเป็นค่าประมาณ ตรวจสอบแต่ละบรรทัดของใบเสร็จก่อนยืนยัน"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fotoğrafların ne kadar örtüştüğü tahmin edildi. Onaylamadan önce fişteki satırları kontrol edin."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перекриття фотографій визначено приблизно. Перевірте рядки чека перед підтвердженням."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Phần chồng lên nhau giữa các ảnh được ước tính. Hãy kiểm tra các dòng trên biên lai trước khi xác nhận."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "照片的重叠部分是估算得出的。确认前请检查小票上的各行。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "照片的重疊部分是估算得出的。確認前請檢查收據上的各行。"
+          }
+        }
+      }
+    },
+    "Remove photo": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "أزل الصورة"
+          }
+        },
+        "bn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ছবি সরান"
+          }
+        },
+        "bs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uklonite fotografiju"
+          }
+        },
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Odebrat fotku"
+          }
+        },
+        "da": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fjern foto"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Foto entfernen"
+          }
+        },
+        "el": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Αφαίρεση φωτογραφίας"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove photo"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitar foto"
+          }
+        },
+        "fa": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "برداشتن عکس"
+          }
+        },
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Poista kuva"
+          }
+        },
+        "fil": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alisin ang larawan"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retirer la photo"
+          }
+        },
+        "ga": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bain an grianghraf"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הסרת תמונה"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "फ़ोटो हटाएँ"
+          }
+        },
+        "hr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uklonite fotografiju"
+          }
+        },
+        "hu": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fotó eltávolítása"
+          }
+        },
+        "hy": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Հեռացնել լուսանկարը"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hapus foto"
+          }
+        },
+        "is": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fjarlægja mynd"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rimuovi foto"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真を削除"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "사진 제거"
+          }
+        },
+        "lt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pašalinti nuotrauką"
+          }
+        },
+        "lv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Noņemt fotoattēlu"
+          }
+        },
+        "ms": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alih keluar foto"
+          }
+        },
+        "my": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ဓာတ်ပုံကို ဖယ်ရှားပါ"
+          }
+        },
+        "nb": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fjern bilde"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Foto verwijderen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usuń zdjęcie"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remover foto"
+          }
+        },
+        "ro": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Elimină fotografia"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить фото"
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Odobrať fotku"
+          }
+        },
+        "sq": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hiq fotografinë"
+          }
+        },
+        "sr-Latn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uklonite fotografiju"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ta bort bild"
+          }
+        },
+        "sw": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ondoa picha"
+          }
+        },
+        "th": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "นำรูปภาพออก"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fotoğrafı kaldır"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Видалити фото"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Xóa ảnh"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除照片"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除照片"
+          }
+        }
+      }
+    },
+    "You can add up to 8 receipt photos.": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يمكنك إضافة ما يصل إلى 8 صور للإيصال."
+          }
+        },
+        "bn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "রসিদের সর্বোচ্চ ৮টি ছবি যোগ করতে পারেন।"
+          }
+        },
+        "bs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Možete dodati do 8 fotografija računa."
+          }
+        },
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Můžete přidat až 8 fotek účtenky."
+          }
+        },
+        "da": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Du kan tilføje op til 8 billeder af kvitteringen."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Du kannst bis zu 8 Belegfotos hinzufügen."
+          }
+        },
+        "el": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Μπορείτε να προσθέσετε έως 8 φωτογραφίες της απόδειξης."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You can add up to 8 receipt photos."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Puedes añadir hasta 8 fotos del recibo."
+          }
+        },
+        "fa": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "می‌توانید حداکثر ۸ عکس از رسید اضافه کنید."
+          }
+        },
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voit lisätä enintään 8 kuvaa kuitista."
+          }
+        },
+        "fil": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maaari kang magdagdag ng hanggang 8 larawan ng resibo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vous pouvez ajouter jusqu’à 8 photos du reçu."
+          }
+        },
+        "ga": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Is féidir leat suas le 8 ngrianghraf den admháil a chur leis."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "אפשר להוסיף עד 8 תמונות של הקבלה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "आप रसीद की ज़्यादा से ज़्यादा 8 फ़ोटो जोड़ सकते हैं।"
+          }
+        },
+        "hr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Možete dodati do 8 fotografija računa."
+          }
+        },
+        "hu": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A nyugtáról legfeljebb 8 fotót adhatsz hozzá."
+          }
+        },
+        "hy": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Կարող եք ավելացնել կտրոնի մինչև 8 լուսանկար։"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anda dapat menambahkan hingga 8 foto struk."
+          }
+        },
+        "is": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Þú getur bætt við allt að 8 myndum af kvittuninni."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Puoi aggiungere fino a 8 foto dello scontrino."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "レシートの写真は8枚まで追加できます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "영수증 사진은 최대 8장까지 추가할 수 있습니다."
+          }
+        },
+        "lt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Galite pridėti iki 8 kvito nuotraukų."
+          }
+        },
+        "lv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Varat pievienot līdz 8 čeka fotoattēliem."
+          }
+        },
+        "ms": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anda boleh menambah sehingga 8 foto resit."
+          }
+        },
+        "my": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ပြေစာဓာတ်ပုံ ၈ ပုံအထိ ထည့်နိုင်ပါသည်။"
+          }
+        },
+        "nb": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Du kan legge til opptil 8 bilder av kvitteringen."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Je kunt maximaal 8 foto’s van de bon toevoegen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Możesz dodać do 8 zdjęć paragonu."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Você pode adicionar até 8 fotos do recibo."
+          }
+        },
+        "ro": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Poți adăuga până la 8 fotografii ale bonului."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Можно добавить до 8 фотографий чека."
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Môžete pridať až 8 fotiek účtenky."
+          }
+        },
+        "sq": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mund të shtoni deri në 8 fotografi të kuponit."
+          }
+        },
+        "sr-Latn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Možete dodati do 8 fotografija računa."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Du kan lägga till upp till 8 bilder av kvittot."
+          }
+        },
+        "sw": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unaweza kuongeza hadi picha 8 za risiti."
+          }
+        },
+        "th": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "คุณสามารถเพิ่มรูปภาพใบเสร็จได้สูงสุด 8 รูป"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fişin en fazla 8 fotoğrafını ekleyebilirsiniz."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Можна додати до 8 фотографій чека."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bạn có thể thêm tối đa 8 ảnh biên lai."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你最多可以添加 8 张小票照片。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你最多可以加入 8 張收據照片。"
+          }
+        }
+      }
+    },
+    "Receipt photos can total up to 60 MiB. Remove a photo or choose smaller photos.": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يمكن أن يبلغ إجمالي حجم صور الإيصال 60 MiB. أزل إحدى الصور أو اختر صورًا أصغر حجمًا."
+          }
+        },
+        "bn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "রসিদের ছবিগুলোর মোট আকার সর্বোচ্চ ৬০ MiB হতে পারে। একটি ছবি সরান বা ছোট আকারের ছবি বেছে নিন।"
+          }
+        },
+        "bs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fotografije računa mogu ukupno zauzimati do 60 MiB. Uklonite fotografiju ili odaberite manje fotografije."
+          }
+        },
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fotky účtenky mohou mít celkem nejvýše 60 MiB. Odeberte fotku nebo vyberte menší fotky."
+          }
+        },
+        "da": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Billederne af kvitteringen må tilsammen fylde op til 60 MiB. Fjern et billede, eller vælg mindre billeder."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Belegfotos dürfen zusammen bis zu 60 MiB groß sein. Entferne ein Foto oder wähle kleinere Fotos aus."
+          }
+        },
+        "el": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Οι φωτογραφίες της απόδειξης μπορούν να έχουν συνολικό μέγεθος έως 60 MiB. Αφαιρέστε μια φωτογραφία ή επιλέξτε μικρότερες φωτογραφίες."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Receipt photos can total up to 60 MiB. Remove a photo or choose smaller photos."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Las fotos del recibo pueden ocupar hasta 60 MiB en total. Quita una foto o elige fotos que ocupen menos."
+          }
+        },
+        "fa": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "اندازهٔ مجموع عکس‌های رسید می‌تواند حداکثر ۶۰ MiB باشد. یک عکس را بردارید یا عکس‌های کم‌حجم‌تری انتخاب کنید."
+          }
+        },
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kuitin kuvat saavat olla yhteensä enintään 60 MiB. Poista yksi kuva tai valitse pienempiä kuvia."
+          }
+        },
+        "fil": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maaaring umabot sa kabuuang 60 MiB ang mga larawan ng resibo. Mag-alis ng isang larawan o pumili ng mga larawang mas maliit ang file."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La taille totale des photos du reçu peut atteindre 60 Mio. Retirez une photo ou choisissez des photos moins volumineuses."
+          }
+        },
+        "ga": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Is féidir le grianghraif na hadmhála suas le 60 MiB san iomlán a ghlacadh. Bain grianghraf nó roghnaigh grianghraif níos lú."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הגודל הכולל של תמונות הקבלה מוגבל ל־60 MiB. הסירו תמונה או בחרו תמונות קטנות יותר."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "रसीद की फ़ोटो का कुल आकार 60 MiB तक हो सकता है। कोई फ़ोटो हटाएँ या कम आकार की फ़ोटो चुनें।"
+          }
+        },
+        "hr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fotografije računa mogu ukupno zauzimati do 60 MiB. Uklonite fotografiju ili odaberite manje fotografije."
+          }
+        },
+        "hu": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A nyugtáról készült fotók összmérete legfeljebb 60 MiB lehet. Távolíts el egy fotót, vagy válassz kisebb méretű fotókat."
+          }
+        },
+        "hy": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Կտրոնի լուսանկարների ընդհանուր չափը կարող է լինել մինչև 60 MiB։ Հեռացրեք մեկ լուսանկար կամ ընտրեք ավելի փոքր չափի լուսանկարներ։"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Total ukuran foto struk boleh mencapai 60 MiB. Hapus satu foto atau pilih foto berukuran lebih kecil."
+          }
+        },
+        "is": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Myndirnar af kvittuninni mega samtals vera allt að 60 MiB. Fjarlægðu eina mynd eða veldu minni myndir."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le foto dello scontrino possono occupare fino a 60 MiB in totale. Rimuovi una foto o scegli foto di dimensioni inferiori."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "レシートの写真は合計60 MiBまで追加できます。写真を1枚削除するか、ファイルサイズの小さい写真を選んでください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "영수증 사진의 총용량은 최대 60 MiB입니다. 사진 한 장을 제거하거나 용량이 더 작은 사진을 선택하세요."
+          }
+        },
+        "lt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bendras kvito nuotraukų dydis gali siekti iki 60 MiB. Pašalinkite vieną nuotrauką arba pasirinkite mažesnio dydžio nuotraukas."
+          }
+        },
+        "lv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Čeka fotoattēlu kopējais lielums nedrīkst pārsniegt 60 MiB. Noņemiet vienu fotoattēlu vai izvēlieties mazākus fotoattēlus."
+          }
+        },
+        "ms": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jumlah saiz foto resit boleh mencapai 60 MiB. Alih keluar satu foto atau pilih foto bersaiz lebih kecil."
+          }
+        },
+        "my": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ပြေစာဓာတ်ပုံများ၏ စုစုပေါင်းအရွယ်အစားသည် ၆၀ MiB အထိ ရှိနိုင်ပါသည်။ ဓာတ်ပုံတစ်ပုံကို ဖယ်ရှားပါ သို့မဟုတ် ဖိုင်အရွယ်အစား ပိုသေးသော ဓာတ်ပုံများကို ရွေးပါ။"
+          }
+        },
+        "nb": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bildene av kvitteringen kan til sammen være på opptil 60 MiB. Fjern et bilde eller velg mindre bilder."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De foto’s van de bon mogen samen maximaal 60 MiB groot zijn. Verwijder een foto of kies kleinere foto’s."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Łączny rozmiar zdjęć paragonu może wynosić do 60 MiB. Usuń zdjęcie lub wybierz zdjęcia o mniejszym rozmiarze."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "As fotos do recibo podem ocupar até 60 MiB no total. Remova uma foto ou escolha fotos menores."
+          }
+        },
+        "ro": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fotografiile bonului pot ocupa în total până la 60 MiB. Elimină o fotografie sau alege fotografii de dimensiuni mai mici."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Общий размер фотографий чека может составлять до 60 МиБ. Удалите одну фотографию или выберите фотографии меньшего размера."
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fotky účtenky môžu mať spolu najviac 60 MiB. Odoberte fotku alebo vyberte menšie fotky."
+          }
+        },
+        "sq": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fotografitë e kuponit mund të zënë gjithsej deri në 60 MiB. Hiqni një fotografi ose zgjidhni fotografi me madhësi më të vogël."
+          }
+        },
+        "sr-Latn": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fotografije računa mogu ukupno zauzimati do 60 MiB. Uklonite fotografiju ili izaberite manje fotografije."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bilderna av kvittot kan tillsammans vara högst 60 MiB. Ta bort en bild eller välj bilder med mindre filstorlek."
+          }
+        },
+        "sw": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ukubwa wa jumla wa picha za risiti unaweza kuwa hadi MiB 60. Ondoa picha moja au chagua picha zenye faili ndogo."
+          }
+        },
+        "th": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "รูปภาพใบเสร็จมีขนาดรวมได้สูงสุด 60 MiB ให้นำรูปภาพออกหนึ่งรูปหรือเลือกรูปภาพที่มีขนาดไฟล์เล็กลง"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fiş fotoğraflarının toplam boyutu en fazla 60 MiB olabilir. Bir fotoğrafı kaldırın veya daha küçük fotoğraflar seçin."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Загальний розмір фотографій чека може становити до 60 МіБ. Видаліть одну фотографію або виберіть фотографії меншого розміру."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tổng dung lượng ảnh biên lai có thể lên đến 60 MiB. Hãy xóa một ảnh hoặc chọn ảnh có dung lượng nhỏ hơn."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "小票照片的总大小不能超过 60 MiB。请移除一张照片，或选择文件较小的照片。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "收據照片的總大小不能超過 60 MiB。請移除一張照片，或選擇檔案較小的照片。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

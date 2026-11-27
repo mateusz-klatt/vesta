@@ -1,3 +1,4 @@
+import CryptoKit
 import ImageIO
 import PhotosUI
 import SwiftUI
@@ -8,31 +9,48 @@ import UIKit
 struct ReceiptCapturePhoto: Identifiable {
     let id = UUID()
     let thumbnail: UIImage
+    let encodedByteCount: Int
+    let libraryIdentity: LibraryIdentity?
     private let source: Source
+
+    struct LibraryIdentity {
+        let identifier: String?
+        private let digest: SHA256.Digest
+
+        init(identifier: String?, data: Data) {
+            self.identifier = identifier
+            digest = SHA256.hash(data: data)
+        }
+
+        func matches(_ other: Self) -> Bool {
+            if let identifier, let otherIdentifier = other.identifier {
+                return identifier == otherIdentifier
+            }
+            return digest == other.digest
+        }
+    }
 
     private enum Source {
         case camera(Data)
         case library(PhotosPickerItem)
     }
 
-    var libraryIdentifier: String? {
-        guard case .library(let item) = source else { return nil }
-        return item.itemIdentifier
-    }
-
-    init(camera image: UIImage) throws {
+    init(camera image: UIImage, remainingBytes: Int = ReceiptPhotoOrder.maxBytes) throws {
         guard let upright = image.uprightReceiptImage,
               let data = UIImage(cgImage: upright).jpegData(compressionQuality: 0.95) else {
             throw ReceiptError.photoUnavailable
         }
+        guard data.count <= remainingBytes else { throw ReceiptPhotoOrder.Limit.bytes }
         thumbnail = try Self.thumbnail(from: data)
+        encodedByteCount = data.count
+        libraryIdentity = nil
         source = .camera(data)
     }
 
-    @MainActor
-    init(library item: PhotosPickerItem) async throws {
-        let data = try await Self.data(from: item)
+    fileprivate init(library item: PhotosPickerItem, data: Data, identity: LibraryIdentity) throws {
         thumbnail = try Self.thumbnail(from: data)
+        encodedByteCount = data.count
+        libraryIdentity = identity
         source = .library(item)
     }
 
@@ -50,7 +68,7 @@ struct ReceiptCapturePhoto: Identifiable {
         return try image(from: data)
     }
 
-    private static func data(from item: PhotosPickerItem) async throws -> Data {
+    fileprivate static func data(from item: PhotosPickerItem) async throws -> Data {
         guard let data = try await item.loadTransferable(type: Data.self) else { throw ReceiptError.photoUnavailable }
         try Task.checkCancellation()
         return data
@@ -82,11 +100,63 @@ struct ReceiptCapturePhoto: Identifiable {
 }
 
 struct ReceiptPhotoOrder {
+    static let maxPhotos = 8
+    // Budget the combined encoded sizes, including assets held by reference.
+    // Full-resolution pixels are still loaded one at a time for recognition.
+    static let maxBytes = 60 * 1024 * 1024
+
+    enum Limit: Error, Equatable {
+        case count, bytes
+
+        var message: LocalizedStringResource {
+            switch self {
+            case .count: "You can add up to 8 receipt photos."
+            case .bytes: "Receipt photos can total up to 60 MiB. Remove a photo or choose smaller photos."
+            }
+        }
+    }
+
+    private let byteBudget: Int
     private(set) var photos: [ReceiptCapturePhoto] = []
 
-    mutating func append(_ newPhotos: [ReceiptCapturePhoto]) { photos.append(contentsOf: newPhotos) }
+    init(byteBudget: Int = Self.maxBytes) {
+        self.byteBudget = byteBudget
+    }
 
-    mutating func removeLast() { _ = photos.popLast() }
+    var remainingSlots: Int { Self.maxPhotos - photos.count }
+    var remainingBytes: Int { byteBudget - photos.reduce(0) { $0 + $1.encodedByteCount } }
+
+    var limit: Limit? {
+        if remainingSlots == 0 { return .count }
+        if remainingBytes == 0 { return .bytes }
+        return nil
+    }
+
+    mutating func append(_ photo: ReceiptCapturePhoto) throws(Limit) {
+        if let limit { throw limit }
+        guard photo.encodedByteCount <= remainingBytes else { throw .bytes }
+        photos.append(photo)
+    }
+
+    @MainActor
+    mutating func append(library item: PhotosPickerItem) async throws {
+        let identifier = item.itemIdentifier
+        if let identifier, photos.contains(where: { $0.libraryIdentity?.identifier == identifier }) {
+            return
+        }
+        if let limit { throw limit }
+        let data = try await ReceiptCapturePhoto.data(from: item)
+        // An asset larger than the entire budget cannot already be staged.
+        guard data.count <= byteBudget else { throw Limit.bytes }
+        let identity = ReceiptCapturePhoto.LibraryIdentity(identifier: identifier, data: data)
+        guard !photos.contains(where: { $0.libraryIdentity?.matches(identity) == true }) else { return }
+        guard data.count <= remainingBytes else { throw Limit.bytes }
+        try append(ReceiptCapturePhoto(library: item, data: data, identity: identity))
+    }
+
+    mutating func remove(_ id: ReceiptCapturePhoto.ID) {
+        photos.removeAll { $0.id == id }
+    }
 
     mutating func move(_ id: ReceiptCapturePhoto.ID, by offset: Int) {
         guard let index = photos.firstIndex(where: { $0.id == id }),

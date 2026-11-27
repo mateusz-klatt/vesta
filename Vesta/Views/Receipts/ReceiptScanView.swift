@@ -62,6 +62,7 @@ private struct ReceiptCaptureStep: View {
     @State private var pickerSelection: [PhotosPickerItem] = []
     @State private var isStaging = false
     @State private var photoOrder = ReceiptPhotoOrder()
+    @State private var stagingLimit: ReceiptPhotoOrder.Limit?
 
     var body: some View {
         let selectedPhotos = pickerSelection
@@ -93,7 +94,8 @@ private struct ReceiptCaptureStep: View {
             }
         }
         .photosPicker(isPresented: $showPhotoPicker, selection: $pickerSelection,
-                      maxSelectionCount: nil, selectionBehavior: .ordered, matching: .images,
+                      maxSelectionCount: max(1, photoOrder.remainingSlots),
+                      selectionBehavior: .ordered, matching: .images,
                       photoLibrary: .shared())
         .task(id: selectedPhotos) { await acceptGalleryBatch(selectedPhotos) }
     }
@@ -133,18 +135,19 @@ private struct ReceiptCaptureStep: View {
                 } label: {
                     Label("Add another photo", systemImage: "plus")
                 }
-                Button("Remove last photo", role: .destructive) {
-                    photoOrder.removeLast()
-                    flow.error = nil
-                }
+                .disabled(photoOrder.limit != nil)
             }
         } footer: {
             Text("Photograph the receipt from top to bottom. Overlap each photo with the previous one by about 20–30%.")
+            if let limit = stagingLimit ?? photoOrder.limit {
+                Text(limit.message)
+            }
         }
         Section {
             if photoOrder.photos.isEmpty {
                 Button("Start over") {
                     flow.error = nil
+                    stagingLimit = nil
                     isStaging = false
                 }
             } else {
@@ -157,7 +160,9 @@ private struct ReceiptCaptureStep: View {
     private var cameraButton: some View {
         if ReceiptCamera.isSupported {
             Button {
-                if cameraPresentation == nil { cameraPresentation = .init() }
+                if cameraPresentation == nil, !isStaging || photoOrder.limit == nil {
+                    cameraPresentation = .init()
+                }
             } label: {
                 Label("Scan receipt", systemImage: "doc.viewfinder")
             }
@@ -165,9 +170,12 @@ private struct ReceiptCaptureStep: View {
     }
 
     private var choosePhotosButton: some View {
-        Button { showPhotoPicker = true } label: {
+        Button {
+            if photoOrder.limit == nil { showPhotoPicker = true }
+        } label: {
             Label("Choose photos", systemImage: "photo.on.rectangle")
         }
+        .disabled(photoOrder.limit != nil)
     }
 
     private func photoRow(_ photo: ReceiptCapturePhoto, at index: Int) -> some View {
@@ -197,6 +205,15 @@ private struct ReceiptCaptureStep: View {
                 }
                 .disabled(index == photoOrder.photos.count - 1)
             }
+            Button(role: .destructive) {
+                photoOrder.remove(photo.id)
+                stagingLimit = nil
+                flow.error = nil
+            } label: {
+                Label("Remove photo", systemImage: "trash")
+                    .labelStyle(.iconOnly)
+                    .frame(minWidth: 44, minHeight: 44)
+            }
         }
         .buttonStyle(.borderless)
     }
@@ -205,10 +222,15 @@ private struct ReceiptCaptureStep: View {
         guard let photo = capturedPhoto else { return }
         capturedPhoto = nil
         if isStaging {
+            flow.error = nil
+            stagingLimit = nil
             do {
-                let staged = try autoreleasepool { try ReceiptCapturePhoto(camera: photo) }
-                photoOrder.append([staged])
-                flow.error = nil
+                let staged = try autoreleasepool {
+                    try ReceiptCapturePhoto(camera: photo, remainingBytes: photoOrder.remainingBytes)
+                }
+                try photoOrder.append(staged)
+            } catch let limit as ReceiptPhotoOrder.Limit {
+                stagingLimit = limit
             } catch {
                 flow.error = .photoUnavailable
             }
@@ -226,16 +248,19 @@ private struct ReceiptCaptureStep: View {
         guard !items.isEmpty, !Task.isCancelled else { return }
         defer { if !Task.isCancelled { pickerSelection = [] } }
         flow.error = nil
+        stagingLimit = nil
+        var staged = photoOrder
         do {
-            var identifiers = Set(photoOrder.photos.compactMap(\.libraryIdentifier))
-            var staged: [ReceiptCapturePhoto] = []
             for item in items {
                 try Task.checkCancellation()
-                if let id = item.itemIdentifier, !identifiers.insert(id).inserted { continue }
-                staged.append(try await ReceiptCapturePhoto(library: item))
+                try await staged.append(library: item)
             }
             try Task.checkCancellation()
-            photoOrder.append(staged)
+            photoOrder = staged
+        } catch let limit as ReceiptPhotoOrder.Limit {
+            guard !Task.isCancelled else { return }
+            photoOrder = staged
+            stagingLimit = limit
         } catch {
             guard !Task.isCancelled, !APIError.isCancellation(error),
                   (error as? CocoaError)?.code != .userCancelled else { return }

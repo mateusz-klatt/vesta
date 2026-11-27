@@ -262,7 +262,7 @@ final class ReceiptFlow {
     private(set) var isBusy = false
     private(set) var parsed: ReceiptParseResult?
     private(set) var confirmed: ReceiptDetail?
-    private var needsOverlapReview = false
+    private var overlapReview: ReceiptPhotoRecognition.OverlapReview?
     let scope: ReceiptSessionScope
 
     private let api: any ReceiptsAPI
@@ -295,8 +295,14 @@ final class ReceiptFlow {
     var canMatchReceipts: Bool { isScopeCurrent(scope) && allowsMatching() }
     var candidates: [ReceiptCandidate] { canMatchReceipts ? parsed?.candidates ?? [] : [] }
     var overlapReviewMessage: LocalizedStringResource? {
-        guard needsOverlapReview else { return nil }
-        return "Some photos may overlap. Check the receipt lines before confirming."
+        switch overlapReview {
+        case .textAlignment:
+            "Photo overlap was estimated. Check the receipt lines before confirming."
+        case .uncertain:
+            "Some photos may overlap. Check the receipt lines before confirming."
+        case nil:
+            nil
+        }
     }
 
     func updateMatchAccess() {
@@ -368,7 +374,7 @@ final class ReceiptFlow {
                 error = .noReadableText
                 return
             }
-            useText(result.text, source: .localOcr, needsOverlapReview: result.needsOverlapReview)
+            useText(result.text, source: .localOcr, overlapReview: result.overlapReview)
         } catch {
             guard isCurrentCapture(generation), !APIError.isCancellation(error),
                   (error as? CocoaError)?.code != .userCancelled else { return }
@@ -385,7 +391,8 @@ final class ReceiptFlow {
     /// Text from Live Text / the clipboard, or OCR output. An absurdly large
     /// paste is refused before redaction (which is linear, but no reason to
     /// spend it on something hestia will reject anyway).
-    func useText(_ raw: String, source: ReceiptSourceKind = .paste, needsOverlapReview: Bool = false) {
+    func useText(_ raw: String, source: ReceiptSourceKind = .paste,
+                 overlapReview: ReceiptPhotoRecognition.OverlapReview? = nil) {
         guard !abandoned, isCurrent else { return }
         captureGeneration += 1
         guard raw.utf8.count <= ReceiptText.maxBytes * 2 else {
@@ -393,7 +400,7 @@ final class ReceiptFlow {
             return
         }
         text = PANRedactor.redact(raw)
-        self.needsOverlapReview = needsOverlapReview
+        self.overlapReview = overlapReview
         self.source = source
         error = nil
         if source == .localOcr {
@@ -412,7 +419,7 @@ final class ReceiptFlow {
         guard step == .edit, !isBusy, !abandoned, isCurrent else { return }
         captureGeneration += 1
         text = ""
-        needsOverlapReview = false
+        overlapReview = nil
         source = .paste
         step = .capture
     }

@@ -82,11 +82,10 @@ struct ReceiptOCRStrip {
         }
     }
 
-    /// Resolves one cut in common coordinates. Each caller supplies ownership
-    /// outside the seam band, which can also include a photo or strip's other cut.
-    static func resolveSeam(
+    /// Resolves one cut while retaining ownership set by adjacent strip cuts.
+    private static func resolveSeam(
         upper: [TextFragment], lower: [TextFragment], cut: CGFloat, halfOverlap: CGFloat, halfLine: CGFloat,
-        upperOwnership: [Bool], lowerOwnership: [Bool], score: (CGRect, CGRect) -> CGFloat? = overlapScore
+        upperOwnership: [Bool], lowerOwnership: [Bool]
     ) -> (upper: [Bool], lower: [Bool]) {
         let halfBand = min(halfLine, halfOverlap)
         guard halfBand > 0 else { return (upperOwnership, lowerOwnership) }
@@ -103,7 +102,7 @@ struct ReceiptOCRStrip {
         let matches = upperCandidates.flatMap { first in
             lowerCandidates.compactMap { second -> SeamMatch? in
                 guard min(first.distance, second.distance) <= nearCut,
-                      let overlap = score(upper[first.index].box, lower[second.index].box) else { return nil }
+                      let overlap = overlapScore(upper[first.index].box, lower[second.index].box) else { return nil }
                 return SeamMatch(upper: first.index, lower: second.index, score: overlap)
             }
         }.sorted { $0.score > $1.score }

@@ -3,52 +3,66 @@ import Foundation
 import Vision
 
 enum ReceiptPhotoRecognition {
+    enum OverlapReview: Equatable, Sendable {
+        case textAlignment
+        case uncertain
+    }
+
     struct Result {
         let text: String
-        let needsOverlapReview: Bool
+        let overlapReview: OverlapReview?
     }
+
+    typealias Translation = @Sendable (CGImage, CGImage) -> CGAffineTransform?
 
     static func read(
         pageCount: Int, loadPage: @MainActor (Int) async throws -> CGImage,
-        recognizer: any ReceiptTextRecognizing
+        recognizer: any ReceiptTextRecognizing, translate: Translation = visionTranslation
     ) async throws -> Result {
-        guard pageCount > 0 else { return Result(text: "", needsOverlapReview: false) }
+        guard pageCount > 0 else { return Result(text: "", overlapReview: nil) }
         var previous = try await readPage(0, loadPage: loadPage, recognizer: recognizer, register: pageCount > 1)
-        var pending = previous.lines
+        var pending = Array(previous.lines.indices)
         var completed: [String] = []
         var consumedPrefixBottom: CGFloat?
-        var needsOverlapReview = false
+        var review: OverlapReview?
 
         for index in 1..<pageCount {
             let current = try await readPage(index, loadPage: loadPage, recognizer: recognizer, register: true)
             try Task.checkCancellation()
-            if let registration = Registration.between(previous, and: current),
-               registration.overlap / 2 < (consumedPrefixBottom ?? 1) {
-                let seam = registration.stitch(upper: pending, lower: current.lines, upperReadings: previous.lines)
-                completed += seam.completed.map(\.text)
+            if let registration = Registration.between(previous, and: current, translate: translate),
+               let seam = registration.stitch(
+                   upper: previous.lines, pendingUpper: pending, lower: current.lines,
+                   consumedPrefixBottom: consumedPrefixBottom
+               ) {
+                completed += seam.completed
                 pending = seam.pending
-                consumedPrefixBottom = nil
+                consumedPrefixBottom = seam.consumedPrefixBottom
+                if seam.keptUnmatchedRows { review = .uncertain }
             } else {
-                // Compare the actual neighboring photos. An earlier seam may
-                // already have emitted some of the prior photo's lines.
+                // An earlier seam may have published part of the previous photo.
+                // Match the actual neighboring photos so that prefix still counts.
                 let overlap = alignedOverlap(upper: previous.lines, lower: current.lines)
-                needsOverlapReview = needsOverlapReview || overlap == 0
-                completed += pending.map(\.text)
-                pending = Array(current.lines.dropFirst(overlap))
-                consumedPrefixBottom = current.lines.prefix(overlap).last?.box.minY
+                if overlap == 0 {
+                    review = .uncertain
+                } else if review == nil {
+                    review = .textAlignment
+                }
+                completed += pending.map { previous.lines[$0].text }
+                pending = Array(current.lines.indices.dropFirst(overlap))
+                consumedPrefixBottom = current.lines.prefix(overlap).map(\.box.midY).min()
             }
             previous = current
         }
 
         try Task.checkCancellation()
-        return Result(text: (completed + pending.map(\.text)).joined(separator: "\n"),
-                      needsOverlapReview: needsOverlapReview)
+        return Result(text: (completed + pending.map { previous.lines[$0].text }).joined(separator: "\n"),
+                      overlapReview: review)
     }
 
     private struct Page {
         let lines: [TextFragment]
         let fragments: [TextFragment]
-        let preview: CGImage?
+        let preview: Preview?
     }
 
     private static func readPage(
@@ -63,77 +77,139 @@ enum ReceiptPhotoRecognition {
         let lines = ReceiptLineOrdering.positionedLines(
             from: fragments, imageAspectRatio: CGFloat(image.height) / CGFloat(image.width)
         )
-        // The full-resolution image stays in this call. At most two independent,
-        // grayscale registration previews survive while a seam is evaluated.
-        let preview = register ? autoreleasepool { registrationPreview(image) } : nil
+        // Only compact, independent grayscale previews outlive a full photo.
+        let preview = register ? autoreleasepool { Preview(image) } : nil
         return Page(lines: lines, fragments: fragments, preview: preview)
     }
 
-    private static func registrationPreview(_ image: CGImage) -> CGImage? {
-        let scale = min(1, 640 / CGFloat(image.width), 1_600 / CGFloat(image.height))
-        let width = max(1, Int((CGFloat(image.width) * scale).rounded()))
-        let height = max(1, Int((CGFloat(image.height) * scale).rounded()))
-        guard let context = CGContext(
-            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue
-        ) else { return nil }
-        let bounds = CGRect(x: 0, y: 0, width: width, height: height)
-        context.setFillColor(gray: 1, alpha: 1)
-        context.fill(bounds)
-        context.interpolationQuality = .high
-        context.draw(image, in: bounds)
-        return context.makeImage()
+    private struct Preview {
+        let image: CGImage
+        let sourceSize: CGSize
+
+        init?(_ image: CGImage) {
+            let size = CGSize(width: image.width, height: image.height)
+            let scaled = Self.scaled(size, by: Self.scale(for: size))
+            guard let rendered = Self.render(image, content: scaled, canvas: scaled) else { return nil }
+            self.image = rendered
+            sourceSize = size
+        }
+
+        struct Grid {
+            let upper: CGImage
+            let lower: CGImage
+            let upperContent: CGSize
+            let lowerContent: CGSize
+        }
+
+        static func commonGrid(_ upper: Self, _ lower: Self) -> Grid? {
+            let scale = min(scale(for: upper.sourceSize), scale(for: lower.sourceSize))
+            let upperSize = scaled(upper.sourceSize, by: scale)
+            let lowerSize = scaled(lower.sourceSize, by: scale)
+            let canvas = CGSize(width: max(upperSize.width, lowerSize.width), height: max(upperSize.height, lowerSize.height))
+            guard let first = upper.placed(content: upperSize, canvas: canvas),
+                  let second = lower.placed(content: lowerSize, canvas: canvas) else { return nil }
+            return Grid(upper: first, lower: second, upperContent: upperSize, lowerContent: lowerSize)
+        }
+
+        private static func scale(for size: CGSize) -> CGFloat {
+            min(1, 640 / size.width, 1_600 / size.height)
+        }
+
+        private static func scaled(_ size: CGSize, by scale: CGFloat) -> CGSize {
+            CGSize(width: max(1, (size.width * scale).rounded()), height: max(1, (size.height * scale).rounded()))
+        }
+
+        private func placed(content: CGSize, canvas: CGSize) -> CGImage? {
+            if content == canvas, image.width == Int(canvas.width), image.height == Int(canvas.height) { return image }
+            return Self.render(image, content: content, canvas: canvas)
+        }
+
+        private static func render(_ image: CGImage, content: CGSize, canvas: CGSize) -> CGImage? {
+            guard let context = CGContext(
+                data: nil, width: Int(canvas.width), height: Int(canvas.height), bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue
+            ) else { return nil }
+            context.setFillColor(gray: 1, alpha: 1)
+            context.fill(CGRect(origin: .zero, size: canvas))
+            context.interpolationQuality = .high
+            // Shared top-left origin keeps Vision's shift tied to the photo
+            // tops, even when one image is padded more than the other.
+            context.draw(image, in: CGRect(x: 0, y: canvas.height - content.height,
+                                           width: content.width, height: content.height))
+            return context.makeImage()
+        }
+    }
+
+    private static func visionTranslation(upper: CGImage, lower: CGImage) -> CGAffineTransform? {
+        let request = VNTranslationalImageRegistrationRequest(targetedCGImage: lower, options: [:])
+        let handler = VNImageRequestHandler(cgImage: upper)
+        do {
+            try handler.perform([request])
+            return request.results?.first?.alignmentTransform
+        } catch {
+            return nil
+        }
     }
 
     private struct Registration {
+        // The same center expressed in two normalized frames can differ by
+        // rounding. Keep ties in photo order.
+        private static let coordinatePrecision: CGFloat = 1e-12
+
         let transform: CGAffineTransform
-        let overlap: CGFloat
+        private let visible: CGRect
 
-        static func between(_ upper: Page, and lower: Page) -> Self? {
-            guard let first = upper.preview, let second = lower.preview,
-                  upper.lines.count >= 3, lower.lines.count >= 3,
-                  let shift = translation(upper: first, lower: second) else { return nil }
-            let width = CGFloat(first.width), height = CGFloat(first.height)
-            let scaleX = CGFloat(second.width) / width, scaleY = CGFloat(second.height) / height
-            let overlap = 1 + shift.ty / height
-            guard (0.1...0.6).contains(overlap), (0.1...0.6).contains(overlap / scaleY),
-                  abs(shift.tx) <= 0.15 * min(width, CGFloat(second.width)) else { return nil }
-
-            // Vision's pixel displacement measures the distance between the
-            // image tops. Convert it to the upper photo's bottom-left frame.
-            let transform = CGAffineTransform(a: scaleX, b: 0, c: 0, d: scaleY,
-                                              tx: shift.tx / width, ty: overlap - scaleY)
-            let registration = Self(transform: transform, overlap: overlap)
-            guard let rowAgreement = registration.agreement(upper.lines, lower.lines),
-                  registration.agreement(upper.fragments, lower.fragments) != nil,
-                  !registration.hasSimilarNeighbor(
-                    upper: upper.lines, lower: lower.lines, score: rowAgreement
-                  ) else { return nil }
-            return registration
+        private init(transform: CGAffineTransform) {
+            self.transform = transform
+            let page = CGRect(x: 0, y: 0, width: 1, height: 1)
+            visible = page.intersection(page.applying(transform))
         }
 
-        private static func translation(upper: CGImage, lower: CGImage) -> CGAffineTransform? {
+        static func between(_ upper: Page, and lower: Page, translate: Translation) -> Self? {
             autoreleasepool {
-                let request = VNTranslationalImageRegistrationRequest(targetedCGImage: lower, options: [:])
-                let handler = VNImageRequestHandler(cgImage: upper)
-                do {
-                    try handler.perform([request])
-                    return request.results?.first?.alignmentTransform
-                } catch {
-                    return nil
-                }
+                guard let first = upper.preview, let second = lower.preview,
+                      upper.lines.count >= 3, lower.lines.count >= 3,
+                      let grid = Preview.commonGrid(first, second),
+                      let shift = translate(grid.upper, grid.lower),
+                      shift.tx.isFinite, shift.ty.isFinite else { return nil }
+                let width = grid.upperContent.width, height = grid.upperContent.height
+                let lowerWidth = grid.lowerContent.width, lowerHeight = grid.lowerContent.height
+                let downward = -shift.ty
+                guard downward > 0, downward + lowerHeight > height,
+                      abs(shift.tx) <= 0.15 * min(width, lowerWidth) else { return nil }
+
+                // Use content sizes rather than the padded canvas when mapping
+                // lower-photo boxes from their normalized bottom-left origin.
+                let transform = CGAffineTransform(a: lowerWidth / width, b: 0, c: 0, d: lowerHeight / height,
+                                                  tx: shift.tx / width, ty: (height - downward - lowerHeight) / height)
+                let registration = Self(transform: transform)
+                let overlap = registration.visible.height
+                guard (0.1...0.6).contains(overlap), (0.1...0.6).contains(overlap / transform.d),
+                      let rows = registration.agreement(upper.lines, lower.lines), rows.supportsRegistration,
+                      let fragments = registration.agreement(upper.fragments, lower.fragments), fragments.supportsRegistration,
+                      !registration.hasSimilarNeighbor(upper: upper.lines, lower: lower.lines, score: rows.score)
+                else { return nil }
+                return registration
             }
         }
 
-        private func agreement(_ upper: [TextFragment], _ lower: [TextFragment]) -> CGFloat? {
-            let visible = CGRect(x: 0, y: 0, width: 1, height: overlap)
-                .intersection(CGRect(x: transform.tx, y: 0, width: transform.a, height: overlap))
-            // At a crop edge one reading can be clipped. Use interior boxes to
-            // judge whether this is the same printed region in both photos.
+        private struct Agreement {
+            let score: CGFloat
+            let matches: Int
+            let sampleCount: Int
+            let relativeHeight: CGFloat
+
+            var supportsRegistration: Bool {
+                matches >= 3 && matches * 10 >= sampleCount * 7 && relativeHeight >= 0.85
+            }
+        }
+
+        private func agreement(_ upper: [TextFragment], _ lower: [TextFragment]) -> Agreement? {
+            guard !visible.isEmpty else { return nil }
+            // Clipped crop-edge observations are less reliable for confidence.
             let upperBoxes = upper.map(\.box).filter(visible.contains)
             let lowerBoxes = lower.map { $0.box.applying(transform) }.filter(visible.contains)
             let sampleCount = max(upperBoxes.count, lowerBoxes.count)
-            guard min(upperBoxes.count, lowerBoxes.count) >= 3 else { return nil }
             let matches = upperBoxes.enumerated().flatMap { first, upperBox in
                 lowerBoxes.enumerated().compactMap { second, lowerBox in
                     ReceiptOCRStrip.overlapScore(upperBox, lowerBox).map { (first, second, $0) }
@@ -142,136 +218,176 @@ enum ReceiptPhotoRecognition {
 
             var usedUpper: Set<Int> = []
             var usedLower: Set<Int> = []
+            var relativeHeights: [CGFloat] = []
             var score: CGFloat = 0
             for (first, second, confidence) in matches where !usedUpper.contains(first) && !usedLower.contains(second) {
                 usedUpper.insert(first)
                 usedLower.insert(second)
                 score += confidence
+                let a = upperBoxes[first].height, b = lowerBoxes[second].height
+                relativeHeights.append(min(a, b) / max(a, b))
             }
-            guard usedUpper.count >= 3, usedUpper.count * 10 >= sampleCount * 7 else { return nil }
-            return score / CGFloat(sampleCount)
+            guard let relativeHeight = ReceiptPhotoRecognition.median(relativeHeights) else { return nil }
+            return Agreement(score: score / CGFloat(sampleCount), matches: usedUpper.count,
+                             sampleCount: sampleCount, relativeHeight: relativeHeight)
         }
 
         private func hasSimilarNeighbor(upper: [TextFragment], lower: [TextFragment], score: CGFloat) -> Bool {
-            // Vision can land a few rows away on a regular, repetitive pattern.
-            // Refuse a result if a nearby row offset explains the boxes
-            // nearly as well. Every candidate here uses geometry only.
-            let centers = upper.map(\.box.midY).filter { $0 >= 0 && $0 <= overlap }.sorted()
-            let pitches = zip(centers, centers.dropFirst()).map { $1 - $0 }.filter { $0 > 0 }.sorted()
-            guard !pitches.isEmpty else { return true }
-            let pitch = pitches[pitches.count / 2]
+            guard let pitch = ReceiptPhotoRecognition.rowPitch(upper) else { return true }
             for step in [-3, -2, -1, 1, 2, 3] {
-                let shift = CGFloat(step) * pitch
                 var neighbor = transform
-                neighbor.ty += shift
-                let neighboringOverlap = overlap + shift
-                guard (0.1...0.6).contains(neighboringOverlap),
-                      (0.1...0.6).contains(neighboringOverlap / neighbor.d) else { continue }
-                let alternate = Self(transform: neighbor, overlap: neighboringOverlap)
-                if let alternateScore = alternate.agreement(upper, lower), alternateScore >= score - 0.04 {
+                neighbor.ty += CGFloat(step) * pitch
+                // Only the requested translation must satisfy overlap bounds.
+                // A similar out-of-range offset can still explain the geometry.
+                let alternate = Self(transform: neighbor)
+                if let agreement = alternate.agreement(upper, lower), agreement.matches >= 2,
+                   agreement.score >= score - 0.04 {
                     return true
                 }
             }
             return false
         }
 
+        struct Seam {
+            let completed: [String]
+            let pending: [Int]
+            let consumedPrefixBottom: CGFloat?
+            let keptUnmatchedRows: Bool
+        }
+
         func stitch(
-            upper: [TextFragment], lower: [TextFragment], upperReadings: [TextFragment]
-        ) -> (completed: [TextFragment], pending: [TextFragment]) {
-            let mapped = lower.map { TextFragment(text: $0.text, box: $0.box.applying(transform)) }
-            let heights = (upper + mapped).map(\.box.height).sorted()
-            let halfOverlap = overlap / 2
-            let ownership = ReceiptOCRStrip.resolveSeam(
-                upper: upper, lower: mapped, cut: halfOverlap, halfOverlap: halfOverlap,
-                halfLine: heights[heights.count / 2] / 2,
-                upperOwnership: upper.map { $0.box.midY > halfOverlap },
-                lowerOwnership: mapped.map { $0.box.midY <= halfOverlap },
-                score: Self.rowOverlapScore
-            )
-            // Earlier seams may already have emitted the upper photo's prefix.
-            // Those readings still show which lower-photo rows are duplicates.
-            let upperBoxes = upperReadings.map(\.box)
-            let ownedLower = zip(mapped, ownership.lower).compactMap { $1 ? $0.box : nil }
-            let keptUpper = zip(upper, ownership.upper).compactMap { line, owns in
-                owns || isUnilateral(line.box, comparedWith: ownedLower) ? line : nil
+            upper: [TextFragment], pendingUpper: [Int], lower: [TextFragment], consumedPrefixBottom: CGFloat?
+        ) -> Seam? {
+            let mapped = lower.map { $0.box.applying(transform) }
+            let upperText = upper.map(NormalizedLine.init)
+            let lowerText = lower.map(NormalizedLine.init)
+            let upperInOverlap = upper.indices.filter { intersectsVerticalBand(upper[$0].box) }
+            let lowerInOverlap = lower.indices.filter { intersectsVerticalBand(mapped[$0]) }
+            // A row is a duplicate only when its text and box both match and
+            // there is no ambiguous match on either side.
+            let candidates = upperInOverlap.map { first in
+                (first, lowerInOverlap.filter { second in
+                    upperText[first] == lowerText[second] && Self.rowsOverlap(upper[first].box, mapped[second])
+                })
             }
-            let keptLower = lower.indices.compactMap { index in
-                ownership.lower[index] || isUnilateral(mapped[index].box, comparedWith: upperBoxes) ? lower[index] : nil
+            var lowerCandidateCounts: [Int: Int] = [:]
+            for (_, matches) in candidates {
+                for match in matches { lowerCandidateCounts[match, default: 0] += 1 }
+            }
+            let matches: [(Int, Int)] = candidates.compactMap { first, matches in
+                guard matches.count == 1, let second = matches.first, lowerCandidateCounts[second] == 1 else { return nil }
+                return (first, second)
+            }
+            let matchedUpper = Set(matches.map(\.0)), matchedLower = Set(matches.map(\.1))
+            let available = Set(pendingUpper)
+            let unmatchedUpper = upperInOverlap.contains { !matchedUpper.contains($0) }
+            let unmatchedLower = lowerInOverlap.filter { !matchedLower.contains($0) }
+            if let consumedPrefixBottom,
+               unmatchedLower.contains(where: { mapped[$0].midY - consumedPrefixBottom > Self.coordinatePrecision }) {
+                // The previous seam already emitted this portion of the page.
+                // Falling back keeps the new row without inserting it out of order.
+                return nil
             }
 
-            // Seam-band recovery can leave a lower-photo row above the final
-            // kept upper-photo row. Merge only those interleaved rows; preserve
-            // each photo's own curved-row ordering otherwise.
-            var remainingUpper = keptUpper[...]
-            var completed: [TextFragment] = []
-            var remainingLower = keptLower[...]
-            while let upperLine = remainingUpper.first, let lowerLine = remainingLower.first {
-                if upperLine.box.midY > lowerLine.box.applying(transform).midY {
-                    completed.append(upperLine)
+            var keptUpper = available
+            var keptLower = Set(lower.indices)
+            for (first, second) in matches {
+                if available.contains(first), upper[first].box.midY < visible.midY {
+                    keptUpper.remove(first)
+                } else {
+                    keptLower.remove(second)
+                }
+            }
+
+            // Merge only the interleaved rows, preserving each photo's local
+            // reading order. The un-emitted suffix stays in the lower frame.
+            var remainingUpper = pendingUpper.filter(keptUpper.contains)[...]
+            var remainingLower = lower.indices.filter(keptLower.contains)[...]
+            var completed: [String] = []
+            while let first = remainingUpper.first, let second = remainingLower.first {
+                if mapped[second].midY - upper[first].box.midY <= Self.coordinatePrecision {
+                    completed.append(upper[first].text)
                     remainingUpper = remainingUpper.dropFirst()
                 } else {
-                    completed.append(lowerLine)
+                    completed.append(lower[second].text)
                     remainingLower = remainingLower.dropFirst()
                 }
             }
-            completed += remainingUpper
-            return (completed, Array(remainingLower))
+            completed += remainingUpper.map { upper[$0].text }
+            let stillPending = Set(remainingLower)
+            let settledBottom = lower.indices.filter { !stillPending.contains($0) }.map { lower[$0].box.midY }.min()
+            return Seam(completed: completed, pending: Array(remainingLower), consumedPrefixBottom: settledBottom,
+                        keptUnmatchedRows: unmatchedUpper || !unmatchedLower.isEmpty)
         }
 
-        private func isUnilateral(_ box: CGRect, comparedWith ownedBoxes: [CGRect]) -> Bool {
-            // Inside the shared area each complete row has two opportunities
-            // to be read. Preserve a usable row if its owning photo missed it.
-            // Leave clipped rows at the crop edges to their assigned owner.
-            box.minY > 0 && box.maxY < overlap && ownedBoxes.allSatisfy {
-                Self.verticalCoverage(box, $0) < 0.55
-            }
+        private func intersectsVerticalBand(_ box: CGRect) -> Bool {
+            box.minY < visible.maxY && box.maxY > visible.minY
         }
 
-        private static func rowOverlapScore(_ first: CGRect, _ second: CGRect) -> CGFloat? {
-            // One photo can read the label and price in a single box while
-            // the other splits them. The narrower left anchor can still
-            // describe the same row when its horizontal span is shared.
+        private static func rowsOverlap(_ first: CGRect, _ second: CGRect) -> Bool {
             let shared = first.intersection(second)
-            guard !shared.isEmpty else { return nil }
-            let horizontal = shared.width / min(first.width, second.width)
-            let vertical = verticalCoverage(first, second)
-            guard horizontal >= 0.6, vertical >= 0.55 else { return nil }
-            return horizontal * vertical
-        }
-
-        private static func verticalCoverage(_ first: CGRect, _ second: CGRect) -> CGFloat {
-            let shared = min(first.maxY, second.maxY) - max(first.minY, second.minY)
-            return shared / max(first.height, second.height)
+            // A combined name/price box can cover a narrower label anchor.
+            return !shared.isEmpty && shared.width >= 0.6 * min(first.width, second.width)
+                && shared.height >= 0.55 * max(first.height, second.height)
         }
     }
 
-    private struct PricedLine: Hashable {
-        let text: String
-        let amount: String
+    static func rowPitch(_ lines: [TextFragment]) -> CGFloat? {
+        let boxes = lines.map(\.box).filter { $0.height > 0 }
+        guard let lineHeight = median(boxes.map(\.height)) else { return nil }
+        // OCR boxes from neighboring rows can overlap slightly on a curved receipt.
+        let minimumGap = lineHeight * 0.9
+        let centers = boxes.map(\.midY).sorted(by: >)
+        var last: CGFloat?
+        var gaps: [CGFloat] = []
+        for center in centers {
+            if let last {
+                let gap = last - center
+                guard gap >= minimumGap else { continue }
+                gaps.append(gap)
+            }
+            last = center
+        }
+        return median(gaps)
+    }
 
-        init?(_ line: TextFragment) {
+    private static func median(_ values: [CGFloat]) -> CGFloat? {
+        let sorted = values.sorted()
+        return sorted.isEmpty ? nil : sorted[sorted.count / 2]
+    }
+
+    private struct NormalizedLine: Hashable {
+        let text: String
+        let amount: String?
+
+        init(_ line: TextFragment) {
             let normalized = line.text.uppercased().replacingOccurrences(of: "−", with: "-")
                 .split(whereSeparator: \.isWhitespace).joined(separator: " ")
             let priceTail = #/(?:^|\s)([+-]?[0-9]{1,9}[.,][0-9]{2})(?:\s*PLN)?(?:\s*[A-G])?$/#
-            guard let price = normalized.firstMatch(of: priceTail) else { return nil }
-            let amount = price.1.replacingOccurrences(of: ",", with: ".")
-            self.amount = amount
-            text = normalized.replacingCharacters(in: price.1.startIndex..<price.1.endIndex, with: amount)
+            if let price = normalized.firstMatch(of: priceTail) {
+                let canonical = price.1.replacingOccurrences(of: ",", with: ".")
+                amount = canonical
+                text = normalized.replacingCharacters(in: price.1.startIndex..<price.1.endIndex, with: canonical)
+            } else {
+                amount = nil
+                text = normalized
+            }
         }
     }
 
     private static func alignedOverlap(upper: [TextFragment], lower: [TextFragment]) -> Int {
         let maximum = min(upper.count, lower.count)
         guard maximum >= 3 else { return 0 }
-        let upperTail = upper.suffix(maximum).map(PricedLine.init)
-        let lowerHead = lower.prefix(maximum).map(PricedLine.init)
+        let first = upper.map(NormalizedLine.init)
+        let second = lower.map(NormalizedLine.init)
         var overlap = 0
         for count in stride(from: maximum, through: 3, by: -1) {
-            let prefix = lowerHead.prefix(count)
-            guard zip(upperTail.suffix(count), prefix).allSatisfy({ $0 != nil && $0 == $1 }) else { continue }
-            // Repeated patterns can support two different seams. Keep both
-            // readings when the longest run has no distinctive evidence.
-            guard overlap == 0, Set(prefix).count >= 2 else { return 0 }
+            let run = second.prefix(count)
+            guard first.suffix(count).elementsEqual(run), run.allSatisfy({ $0.amount != nil }) else { continue }
+            guard overlap == 0, Set(run).count == count else { return 0 }
+            let repeatsInUpper = (0..<(first.count - count)).contains { first[$0..<($0 + count)].elementsEqual(run) }
+            let repeatsInLower = (1..<(second.count - count + 1)).contains { second[$0..<($0 + count)].elementsEqual(run) }
+            guard !repeatsInUpper, !repeatsInLower else { return 0 }
             overlap = count
         }
         return overlap

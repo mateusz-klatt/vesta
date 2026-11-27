@@ -235,6 +235,25 @@ final class ReceiptFlowRaceTests: XCTestCase {
         XCTAssertEqual(calls, [.parse("Photo 0\nPhoto 1", .localOcr), .confirm("tx1")])
     }
 
+    func testEstimatedOverlapNotePersistsThroughReview() async throws {
+        let api = MockReceiptsAPI()
+        let flow = ReceiptFlow(api: api, recognizer: OverlappingPagesRecognizer())
+        let expected = "SHOP\nAPPLE 1.20\nBREAD 2.30\nMILK 3.40\nTOTAL 6.90"
+        let note = "Photo overlap was estimated. Check the receipt lines before confirming."
+
+        await flow.recognize(pageCount: 2) { index in try self.image(width: 64 + index, height: 128) }
+        XCTAssertEqual(flow.step, .edit)
+        XCTAssertEqual(flow.text, expected)
+        XCTAssertEqual(String(localized: try XCTUnwrap(flow.overlapReviewMessage)), note)
+        XCTAssertNil(flow.error)
+
+        await flow.send()
+        XCTAssertEqual(flow.step, .review)
+        XCTAssertEqual(String(localized: try XCTUnwrap(flow.overlapReviewMessage)), note)
+        let calls = await api.calls
+        XCTAssertEqual(calls, [.parse(expected, .localOcr)])
+    }
+
     func testStartingOverClearsTheOverlapNoteBeforeSinglePhotoRecognition() async throws {
         let flow = ReceiptFlow(api: MockReceiptsAPI(), recognizer: SequentialPhotoProbe())
         await flow.recognize(pageCount: 2) { index in try self.image(width: 64 + index, height: 128) }
@@ -477,6 +496,16 @@ private final class SequentialPhotoProbe: ReceiptTextRecognizing {
         let index = image.width - 64
         events.append("read \(index)")
         return [TextFragment(text: "Photo \(index)", box: CGRect(x: 0.1, y: 0.5, width: 0.3, height: 0.02))]
+    }
+}
+
+private struct OverlappingPagesRecognizer: ReceiptTextRecognizing {
+    func recognize(_ image: CGImage) async throws -> [TextFragment] {
+        let shared = ["APPLE 1.20", "BREAD 2.30", "MILK 3.40"]
+        let rows = image.width == 64 ? ["SHOP"] + shared : shared + ["TOTAL 6.90"]
+        return rows.enumerated().map { index, row in
+            TextFragment(text: row, box: CGRect(x: 0.1, y: 0.9 - CGFloat(index) / 10, width: 0.45, height: 0.03))
+        }
     }
 }
 
