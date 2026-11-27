@@ -243,9 +243,8 @@ actor ReceiptDraftJanitor {
     }
 }
 
-/// Capture → edit text → review the parsed draft → confirm. The photo only
-/// lives for the duration of ``recognize(_:)``; hestia receives the redacted
-/// text and nothing else.
+/// Capture → edit text → review the parsed draft → confirm. Decoded photos
+/// live only during recognition. Hestia receives the redacted text.
 ///
 /// One request at a time (``isBusy`` guards every network step). Leaving the
 /// flow (``abandon()``) cancels OCR and deletes the open draft, including one
@@ -263,6 +262,7 @@ final class ReceiptFlow {
     private(set) var isBusy = false
     private(set) var parsed: ReceiptParseResult?
     private(set) var confirmed: ReceiptDetail?
+    private var overlapReview: ReceiptPhotoRecognition.OverlapReview?
     let scope: ReceiptSessionScope
 
     private let api: any ReceiptsAPI
@@ -294,6 +294,16 @@ final class ReceiptFlow {
 
     var canMatchReceipts: Bool { isScopeCurrent(scope) && allowsMatching() }
     var candidates: [ReceiptCandidate] { canMatchReceipts ? parsed?.candidates ?? [] : [] }
+    var overlapReviewMessage: LocalizedStringResource? {
+        switch overlapReview {
+        case .textAlignment:
+            "Photo overlap was estimated. Check the receipt lines before confirming."
+        case .uncertain:
+            "Some photos may overlap. Check the receipt lines before confirming."
+        case nil:
+            nil
+        }
+    }
 
     func updateMatchAccess() {
         guard !canMatchReceipts else { return }
@@ -303,16 +313,32 @@ final class ReceiptFlow {
 
     /// OCR the images in order, then redact card data before showing the text.
     func recognize(_ pages: [CGImage]) async {
-        await recognize(loading: { pages })
+        await recognize(pageCount: pages.count) { pages[$0] }
     }
 
-    /// Photo loading and recognition share one busy interval and capture generation.
+    /// Load and read each photo before loading the next, under one capture generation.
+    func recognize(pageCount: Int, loading loadPage: @escaping @MainActor (Int) async throws -> CGImage) async {
+        await recognize { generation in
+            try await self.readPhotos(pageCount: pageCount, generation: generation, loading: loadPage)
+        }
+    }
+
+    /// Keep the batch loader used by existing callers within the same busy interval.
     func recognize(loading loadPages: @escaping @MainActor () async throws -> [CGImage]) async {
+        await recognize { generation in
+            let pages = try await loadPages()
+            return try await self.readPhotos(pageCount: pages.count, generation: generation) { pages[$0] }
+        }
+    }
+
+    private func recognize(
+        reading read: @escaping @MainActor (Int) async throws -> ReceiptPhotoRecognition.Result
+    ) async {
         guard step == .capture, !isBusy, !abandoned, isCurrent else { return }
         let generation = captureGeneration
         isBusy = true
         error = nil
-        let task = Task { await performRecognition(loading: loadPages, generation: generation) }
+        let task = Task { await performRecognition(reading: read, generation: generation) }
         recognitionTask = task
         defer {
             recognitionTask = nil
@@ -325,30 +351,30 @@ final class ReceiptFlow {
         }
     }
 
+    private func readPhotos(
+        pageCount: Int, generation: Int, loading loadPage: @MainActor (Int) async throws -> CGImage
+    ) async throws -> ReceiptPhotoRecognition.Result {
+        guard pageCount > 0 else { throw ReceiptError.photoUnavailable }
+        return try await ReceiptPhotoRecognition.read(pageCount: pageCount, loadPage: { index in
+            guard isCurrentCapture(generation) else { throw CancellationError() }
+            let page = try await loadPage(index)
+            guard isCurrentCapture(generation) else { throw CancellationError() }
+            return page
+        }, recognizer: recognizer)
+    }
+
     private func performRecognition(
-        loading loadPages: @MainActor () async throws -> [CGImage], generation: Int
+        reading read: @MainActor (Int) async throws -> ReceiptPhotoRecognition.Result, generation: Int
     ) async {
         guard isCurrentCapture(generation) else { return }
         do {
-            let pages = try await loadPages()
+            let result = try await read(generation)
             guard isCurrentCapture(generation) else { return }
-            guard !pages.isEmpty else {
-                error = .photoUnavailable
-                return
-            }
-            var lines: [String] = []
-            for page in pages {
-                let fragments = try await recognizer.recognize(page)
-                guard isCurrentCapture(generation) else { return }
-                let aspectRatio = CGFloat(page.height) / CGFloat(page.width)
-                lines += ReceiptLineOrdering.lines(from: fragments, imageAspectRatio: aspectRatio)
-            }
-            let recognizedText = lines.joined(separator: "\n")
-            guard !recognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            guard !result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 error = .noReadableText
                 return
             }
-            useText(recognizedText, source: .localOcr)
+            useText(result.text, source: .localOcr, overlapReview: result.overlapReview)
         } catch {
             guard isCurrentCapture(generation), !APIError.isCancellation(error),
                   (error as? CocoaError)?.code != .userCancelled else { return }
@@ -365,7 +391,8 @@ final class ReceiptFlow {
     /// Text from Live Text / the clipboard, or OCR output. An absurdly large
     /// paste is refused before redaction (which is linear, but no reason to
     /// spend it on something hestia will reject anyway).
-    func useText(_ raw: String, source: ReceiptSourceKind = .paste) {
+    func useText(_ raw: String, source: ReceiptSourceKind = .paste,
+                 overlapReview: ReceiptPhotoRecognition.OverlapReview? = nil) {
         guard !abandoned, isCurrent else { return }
         captureGeneration += 1
         guard raw.utf8.count <= ReceiptText.maxBytes * 2 else {
@@ -373,6 +400,7 @@ final class ReceiptFlow {
             return
         }
         text = PANRedactor.redact(raw)
+        self.overlapReview = overlapReview
         self.source = source
         error = nil
         if source == .localOcr {
@@ -391,6 +419,7 @@ final class ReceiptFlow {
         guard step == .edit, !isBusy, !abandoned, isCurrent else { return }
         captureGeneration += 1
         text = ""
+        overlapReview = nil
         source = .paste
         step = .capture
     }

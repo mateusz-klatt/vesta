@@ -1,3 +1,4 @@
+import Photos
 import PhotosUI
 import SwiftUI
 
@@ -54,59 +55,224 @@ struct ReceiptScanView: View {
 
 private struct ReceiptCaptureStep: View {
     @Bindable var flow: ReceiptFlow
-    @State private var showCamera = false
+    @State private var cameraPresentation: ReceiptCamera.Presentation?
     @State private var capturedPhoto: UIImage?
-    @State private var photo: PhotosPickerItem?
+    @State private var singlePhoto: PhotosPickerItem?
+    @State private var showPhotoPicker = false
+    @State private var pickerSelection: [PhotosPickerItem] = []
+    @State private var isStaging = false
+    @State private var photoOrder = ReceiptPhotoOrder()
+    @State private var stagingLimit: ReceiptPhotoOrder.Limit?
 
     var body: some View {
+        let selectedPhotos = pickerSelection
         Form {
-            Section {
-                if ReceiptCamera.isSupported {
-                    Button { showCamera = true } label: {
-                        Label("Scan receipt", systemImage: "doc.viewfinder")
-                    }
-                }
-                PhotosPicker(selection: $photo, matching: .images) {
-                    Label("Choose a photo", systemImage: "photo")
-                }
-                Button {
-                    flow.useText(UIPasteboard.general.string ?? "")
-                } label: {
-                    Label("Paste text", systemImage: "doc.on.clipboard")
-                }
-            } footer: {
-                Text("Text is read on this iPhone. Only the text is sent to your server, with card numbers removed. The photo is not saved or uploaded.")
+            if isStaging {
+                stagedPhotos
+            } else {
+                captureOptions
             }
             ReceiptErrorSection(error: flow.error)
         }
-        .fullScreenCover(isPresented: $showCamera, onDismiss: recognizeCapturedPhoto) {
+        .disabled(!selectedPhotos.isEmpty)
+        .overlay {
+            if !selectedPhotos.isEmpty { ProgressView().controlSize(.large) }
+        }
+        .fullScreenCover(item: $cameraPresentation, onDismiss: acceptCapturedPhoto) { presentation in
             ReceiptCamera { image in
-                guard showCamera else { return }
+                guard cameraPresentation?.id == presentation.id else { return }
                 capturedPhoto = image
-                showCamera = false
+                cameraPresentation = nil
             }
             .ignoresSafeArea()
         }
-        .onChange(of: photo) { _, item in
+        .onChange(of: singlePhoto) { _, item in
             guard let item else { return }
-            photo = nil
+            singlePhoto = nil
             Task {
-                await flow.recognize {
-                    guard let data = try await item.loadTransferable(type: Data.self),
-                          let image = UIImage(data: data)?.uprightReceiptImage else { throw ReceiptError.photoUnavailable }
-                    return [image]
+                await flow.recognize(pageCount: 1) { _ in try await ReceiptCapturePhoto.loadImage(from: item) }
+            }
+        }
+        .photosPicker(isPresented: $showPhotoPicker, selection: $pickerSelection,
+                      maxSelectionCount: max(1, photoOrder.remainingSlots),
+                      selectionBehavior: .ordered, matching: .images,
+                      photoLibrary: .shared())
+        .task(id: selectedPhotos) { await acceptGalleryBatch(selectedPhotos) }
+    }
+
+    private var captureOptions: some View {
+        Section {
+            cameraButton
+            PhotosPicker(selection: $singlePhoto, matching: .images) {
+                Label("Choose a photo", systemImage: "photo")
+            }
+            Button {
+                flow.useText(UIPasteboard.general.string ?? "")
+            } label: {
+                Label("Paste text", systemImage: "doc.on.clipboard")
+            }
+            Button { isStaging = true } label: {
+                Label("Scan a long receipt", systemImage: "square.stack")
+            }
+        } footer: {
+            Text("Text is read on this iPhone. Only the text is sent to your server, with card numbers removed. The photo is not saved or uploaded.")
+        }
+    }
+
+    @ViewBuilder
+    private var stagedPhotos: some View {
+        Section {
+            if photoOrder.photos.isEmpty {
+                cameraButton
+                choosePhotosButton
+            } else {
+                ForEach(Array(photoOrder.photos.enumerated()), id: \.element.id) { index, photo in
+                    photoRow(photo, at: index)
                 }
+                Menu {
+                    cameraButton
+                    choosePhotosButton
+                } label: {
+                    Label("Add another photo", systemImage: "plus")
+                }
+                .disabled(photoOrder.limit != nil)
+            }
+        } footer: {
+            Text("Photograph the receipt from top to bottom. Overlap each photo with the previous one by about 20–30%.")
+            if let limit = stagingLimit ?? photoOrder.limit {
+                Text(limit.message)
+            }
+        }
+        Section {
+            if photoOrder.photos.isEmpty {
+                Button("Start over") {
+                    flow.error = nil
+                    stagingLimit = nil
+                    isStaging = false
+                }
+            } else {
+                Button("Done", action: recognizeStagedPhotos)
             }
         }
     }
 
-    private func recognizeCapturedPhoto() {
+    @ViewBuilder
+    private var cameraButton: some View {
+        if ReceiptCamera.isSupported {
+            Button {
+                if cameraPresentation == nil, !isStaging || photoOrder.limit == nil {
+                    cameraPresentation = .init()
+                }
+            } label: {
+                Label("Scan receipt", systemImage: "doc.viewfinder")
+            }
+        }
+    }
+
+    private var choosePhotosButton: some View {
+        Button {
+            if photoOrder.limit == nil { showPhotoPicker = true }
+        } label: {
+            Label("Choose photos", systemImage: "photo.on.rectangle")
+        }
+        .disabled(photoOrder.limit != nil)
+    }
+
+    private func photoRow(_ photo: ReceiptCapturePhoto, at index: Int) -> some View {
+        HStack {
+            Image(uiImage: photo.thumbnail)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 48, height: 60)
+                .accessibilityHidden(true)
+            Text("Photo \(index + 1)")
+            Spacer()
+            if photoOrder.photos.count > 1 {
+                Button {
+                    photoOrder.move(photo.id, by: -1)
+                } label: {
+                    Label("Move photo up", systemImage: "chevron.up")
+                        .labelStyle(.iconOnly)
+                        .frame(minWidth: 44, minHeight: 44)
+                }
+                .disabled(index == 0)
+                Button {
+                    photoOrder.move(photo.id, by: 1)
+                } label: {
+                    Label("Move photo down", systemImage: "chevron.down")
+                        .labelStyle(.iconOnly)
+                        .frame(minWidth: 44, minHeight: 44)
+                }
+                .disabled(index == photoOrder.photos.count - 1)
+            }
+            Button(role: .destructive) {
+                photoOrder.remove(photo.id)
+                stagingLimit = nil
+                flow.error = nil
+            } label: {
+                Label("Remove photo", systemImage: "trash")
+                    .labelStyle(.iconOnly)
+                    .frame(minWidth: 44, minHeight: 44)
+            }
+        }
+        .buttonStyle(.borderless)
+    }
+
+    private func acceptCapturedPhoto() {
         guard let photo = capturedPhoto else { return }
         capturedPhoto = nil
+        if isStaging {
+            flow.error = nil
+            stagingLimit = nil
+            do {
+                let staged = try autoreleasepool {
+                    try ReceiptCapturePhoto(camera: photo, remainingBytes: photoOrder.remainingBytes)
+                }
+                try photoOrder.append(staged)
+            } catch let limit as ReceiptPhotoOrder.Limit {
+                stagingLimit = limit
+            } catch {
+                flow.error = .photoUnavailable
+            }
+            return
+        }
         Task {
-            await flow.recognize {
+            await flow.recognize(pageCount: 1) { _ in
                 guard let image = photo.uprightReceiptImage else { throw ReceiptError.photoUnavailable }
-                return [image]
+                return image
+            }
+        }
+    }
+
+    private func acceptGalleryBatch(_ items: [PhotosPickerItem]) async {
+        guard !items.isEmpty, !Task.isCancelled else { return }
+        defer { if !Task.isCancelled { pickerSelection = [] } }
+        flow.error = nil
+        stagingLimit = nil
+        var staged = photoOrder
+        do {
+            for item in items {
+                try Task.checkCancellation()
+                try await staged.append(library: item)
+            }
+            try Task.checkCancellation()
+            photoOrder = staged
+        } catch let limit as ReceiptPhotoOrder.Limit {
+            guard !Task.isCancelled else { return }
+            photoOrder = staged
+            stagingLimit = limit
+        } catch {
+            guard !Task.isCancelled, !APIError.isCancellation(error),
+                  (error as? CocoaError)?.code != .userCancelled else { return }
+            flow.error = .photoUnavailable
+        }
+    }
+
+    private func recognizeStagedPhotos() {
+        let pages = photoOrder.photos
+        Task {
+            await flow.recognize(pageCount: pages.count) { index in
+                try await pages[index].loadImage()
             }
         }
     }
@@ -130,6 +296,9 @@ private struct ReceiptEditStep: View {
                     Text("This iPhone can’t read Polish characters yet — check ą, ę, ł, ż in product names.")
                 } else {
                     Text("Fix anything misread, then send it to your server to read the receipt.")
+                }
+                if let message = flow.overlapReviewMessage {
+                    Text(message).foregroundStyle(Theme.textSecondary)
                 }
             }
             ReceiptErrorSection(error: flow.error)
@@ -192,6 +361,9 @@ private struct ReceiptReviewStep: View {
             } header: {
                 Text("Items (\(flow.form.lines.count))")
             } footer: {
+                if let message = flow.overlapReviewMessage {
+                    Text(message).foregroundStyle(Theme.textSecondary)
+                }
                 if let adjustment = flow.form.totalAdjustment {
                     Text(adjustment.message).foregroundStyle(Theme.textSecondary)
                 }

@@ -32,6 +32,13 @@ enum ReceiptLineOrdering {
     private static let priceColumnTolerance: CGFloat = 0.03
 
     static func lines(from fragments: [TextFragment], imageAspectRatio: CGFloat = 1) -> [String] {
+        positionedLines(from: fragments, imageAspectRatio: imageAspectRatio).map(\.text)
+    }
+
+    /// The line's leftmost box anchors its row at a photo seam. A price on a
+    /// curved receipt can sit a row lower, so the union of the boxes is not a
+    /// reliable estimate of the printed row's height.
+    static func positionedLines(from fragments: [TextFragment], imageAspectRatio: CGFloat) -> [TextFragment] {
         let usable = fragments.filter { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty }
         guard !usable.isEmpty else { return [] }
         let heights = usable.map(\.box.height).sorted()
@@ -45,9 +52,8 @@ enum ReceiptLineOrdering {
             in: usable, text: text, bands: discountOrdering.rows, tolerance: tolerance, verticalScale: verticalScale
         )
         return rows.map { row in
-            row.sorted { usable[$0].box.minX < usable[$1].box.minX }
-                .map { text[$0] }
-                .joined(separator: " ")
+            let ordered = row.sorted { usable[$0].box.minX < usable[$1].box.minX }
+            return TextFragment(text: ordered.map { text[$0] }.joined(separator: " "), box: usable[ordered[0]].box)
         }
     }
 
