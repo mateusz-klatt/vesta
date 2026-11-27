@@ -676,6 +676,18 @@
             ],
             "title": "Currency"
           },
+          "display_shop_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Canonical OCR issuer name when available. Emitted on list, search and detail from 0.61.0.",
+            "title": "Display Shop Name"
+          },
           "document_kind": {
             "anyOf": [
               {
@@ -6090,6 +6102,21 @@
             ],
             "default": null,
             "title": "Status"
+          },
+          "statuses": {
+            "description": "Filter by any of these statuses (duplicates ignored). Available from 0.65.0. Omit status when using this field.",
+            "items": {
+              "enum": [
+                "draft",
+                "confirmed",
+                "needs_review",
+                "imported"
+              ],
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Statuses",
+            "type": "array"
           }
         },
         "title": "BudgetReceiptListRequest",
@@ -6150,6 +6177,18 @@
               }
             ],
             "title": "Currency"
+          },
+          "display_shop_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Canonical OCR issuer name when available. Emitted on list, search and detail from 0.61.0.",
+            "title": "Display Shop Name"
           },
           "document_kind": {
             "anyOf": [

@@ -15,6 +15,7 @@ struct BearerAuthMiddleware: ClientMiddleware {
     private let receiptReviewEnabled: @Sendable () -> Bool
     private let reviewScoped: Bool
     private let reviewRequiresMatch: Bool
+    private let reviewListFilter: ReceiptReviewListFilter?
 
     init(session: BoundSession? = nil,
          receiptPairing: ReceiptPairing? = nil,
@@ -23,7 +24,8 @@ struct BearerAuthMiddleware: ClientMiddleware {
          budgetEnabled: @escaping @Sendable () -> Bool = { AppConfig.nativeBudgetEnabledForBuild },
          receiptReviewEnabled: @escaping @Sendable () -> Bool = { AppConfig.receiptReviewEnabledForBuild },
          reviewScoped: Bool = false,
-         reviewRequiresMatch: Bool = false) {
+         reviewRequiresMatch: Bool = false,
+         reviewListFilter: ReceiptReviewListFilter? = nil) {
         self.session = session
         self.receiptPairing = receiptPairing
         self.receiptScope = receiptScope
@@ -32,6 +34,7 @@ struct BearerAuthMiddleware: ClientMiddleware {
         self.receiptReviewEnabled = receiptReviewEnabled
         self.reviewScoped = reviewScoped
         self.reviewRequiresMatch = reviewRequiresMatch
+        self.reviewListFilter = reviewListFilter
     }
 
     private static let receiptOperations: Set<String> = [
@@ -46,6 +49,7 @@ struct BearerAuthMiddleware: ClientMiddleware {
     ]
     private static let contractHeader = HTTPField.Name("X-Hestia-Contract-Version")!
     private static let receiptLinkContractVersion = "0.60.0"
+    private static let receiptMultiStatusContractVersion = "0.65.0"
     private static let budgetReadPaths = [
         Operations.GetBudgetAnalyticsMonthlyBudget.id: "/api/budget/analytics/monthly-budget",
         Operations.GetBudgetAnalyticsTransactions.id: "/api/budget/analytics/transactions",
@@ -68,8 +72,9 @@ struct BearerAuthMiddleware: ClientMiddleware {
             || (reviewScoped && operationID == Operations.ConfirmBudgetReceipt.id)
         if reviewOperation {
             guard reviewScoped, receiptScope != nil, receiptReviewEnabled() else { throw ReceiptError.forbidden }
-            // V6 needs 0.60.0 for linked transactions. Keep scan unversioned for older servers.
-            request.headerFields[Self.contractHeader] = Self.receiptLinkContractVersion
+            let usesMultiStatus = operationID == Operations.ListBudgetReceipts.id && reviewListFilter == .needsAction
+            request.headerFields[Self.contractHeader] = usesMultiStatus
+                ? Self.receiptMultiStatusContractVersion : Self.receiptLinkContractVersion
         }
         let issuesDeviceToken = operationID == Operations.RedeemBudgetReceiptDevice.id
             || operationID == Operations.LoginBudgetReceiptDevice.id

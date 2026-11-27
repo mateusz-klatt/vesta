@@ -44,9 +44,10 @@ struct BudgetReceiptListRequestWire: Codable, Hashable, Sendable {
     var linked: Bool?
     var month: String?
     var status: String?
+    var statuses: [String]?
 
     init(cursor: String? = nil, documentKind: String? = nil, evidence: String = "exclude", limit: Int = 200,
-         linked: Bool? = nil, month: String? = nil, status: String? = "imported") {
+         linked: Bool? = nil, month: String? = nil, status: String? = nil, statuses: [String]? = nil) {
         self.cursor = cursor
         self.documentKind = documentKind
         self.evidence = evidence
@@ -54,10 +55,11 @@ struct BudgetReceiptListRequestWire: Codable, Hashable, Sendable {
         self.linked = linked
         self.month = month
         self.status = status
+        self.statuses = statuses
     }
 
     private enum CodingKeys: String, CodingKey {
-        case cursor, documentKind = "document_kind", evidence, limit, linked, month, status
+        case cursor, documentKind = "document_kind", evidence, limit, linked, month, status, statuses
     }
 }
 
@@ -327,6 +329,7 @@ struct BudgetReceiptSummaryWire: Codable, Hashable, Sendable, Identifiable {
     var chainKey: String?
     var createdAt: Double
     var currency: String?
+    var displayShopName: String?
     var documentKind: DocumentKindPayload?
     var dueDate: String?
     var evidenceForReceiptId: String?
@@ -373,10 +376,11 @@ struct BudgetReceiptSummaryWire: Codable, Hashable, Sendable, Identifiable {
          forwardedManually: Bool = false, forwardedSenderDomain: String? = nil, gateway: String? = nil,
          gatewayStatus: GatewayStatusPayload? = nil, hasDocument: Bool? = nil, importExpiresAt: Double? = nil,
          invoiceNumber: String? = nil, payeeHost: String? = nil,
-         linkedTransaction: Components.Schemas.BudgetReceiptLinkedTransaction? = nil) {
+         linkedTransaction: Components.Schemas.BudgetReceiptLinkedTransaction? = nil, displayShopName: String? = nil) {
         self.chainKey = chainKey
         self.createdAt = createdAt
         self.currency = currency
+        self.displayShopName = displayShopName
         self.documentKind = documentKind
         self.dueDate = dueDate
         self.evidenceForReceiptId = evidenceForReceiptId
@@ -413,7 +417,8 @@ struct BudgetReceiptSummaryWire: Codable, Hashable, Sendable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case chainKey = "chain_key", createdAt = "created_at", currency, documentKind = "document_kind"
+        case chainKey = "chain_key", createdAt = "created_at", currency, displayShopName = "display_shop_name"
+        case documentKind = "document_kind"
         case dueDate = "due_date", evidenceForReceiptId = "evidence_for_receipt_id", feeAmount = "fee_amount"
         case forwardedManually = "forwarded_manually", forwardedSenderDomain = "forwarded_sender_domain"
         case gateway, gatewayStatus = "gateway_status", hasDocument = "has_document", imageAvailable = "image_available"
@@ -441,6 +446,7 @@ struct BudgetReceiptSummaryWire: Codable, Hashable, Sendable, Identifiable {
         chainKey = try nullable(String.self, .chainKey)
         createdAt = try values.decode(Double.self, forKey: .createdAt)
         currency = try nullable(String.self, .currency)
+        displayShopName = try values.decodeIfPresent(String.self, forKey: .displayShopName)
         documentKind = try values.decodeIfPresent(DocumentKindPayload.self, forKey: .documentKind)
         dueDate = try values.decodeIfPresent(String.self, forKey: .dueDate)
         evidenceForReceiptId = try values.decodeIfPresent(String.self, forKey: .evidenceForReceiptId)

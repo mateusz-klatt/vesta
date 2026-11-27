@@ -4,7 +4,7 @@ struct ReceiptReviewView: View {
     @Environment(\.dismiss) private var dismiss
     let store: ReceiptReviewStore
     var onClose: () -> Void = {}
-    @State private var shownReceipt: ImportedReceiptSummary?
+    @State private var shownReceipt: ReceiptReviewSummary?
 
     var body: some View {
         NavigationStack {
@@ -26,7 +26,7 @@ struct ReceiptReviewView: View {
                 }
                 .task { await store.load() }
                 .navigationDestination(item: $shownReceipt) { receipt in
-                    ImportedReceiptDetailView(store: store, summary: receipt)
+                    ReceiptReviewDetailView(store: store, summary: receipt)
                 }
         }
         .privacySensitive()
@@ -57,7 +57,7 @@ struct ReceiptReviewView: View {
                 }
             }
             if store.receipts.isEmpty, !store.isBusy {
-                ContentUnavailableView("No imported receipts", systemImage: "tray")
+                ContentUnavailableView("No receipts to review", systemImage: "tray")
                     .listRowBackground(Color.clear)
             }
             ForEach(store.groups) { group in
@@ -67,7 +67,7 @@ struct ReceiptReviewView: View {
                             shownReceipt = receipt
                             Task { await store.select(receipt) }
                         } label: {
-                            ImportedReceiptRow(receipt: receipt)
+                            ReceiptReviewRow(receipt: receipt)
                         }
                         .buttonStyle(.plain)
                         .disabled(store.isBusy)
@@ -77,9 +77,11 @@ struct ReceiptReviewView: View {
                         if let name = group.name { Text(verbatim: name) }
                         else { Text("Unknown merchant") }
                         Spacer()
-                        if group.canConfirmWithoutLinking {
-                            Button("Confirm all without linking") {
+                        if let title = group.bulkConfirmationTitle {
+                            Button {
                                 Task { await store.confirmMerchant(group) }
+                            } label: {
+                                Text(title)
                             }
                             .font(.caption)
                             .disabled(store.isBusy)
@@ -99,13 +101,41 @@ struct ReceiptReviewView: View {
     }
 }
 
-private struct ImportedReceiptRow: View {
+extension ReceiptReviewSummary.StatusPayload {
+    var reviewBadge: LocalizedStringResource {
+        switch self {
+        case .imported: "Imported"
+        case .needsReview: "Needs review"
+        case .draft: "Draft"
+        case .confirmed: "Receipt saved"
+        case .unknown: "Unknown"
+        }
+    }
+
+    var requiresWebReview: Bool { self == .draft || self == .needsReview }
+}
+
+private struct ReceiptReviewStatusBadge: View {
+    let status: ReceiptReviewSummary.StatusPayload
+
+    var body: some View {
+        Text(status.reviewBadge)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(.thinMaterial, in: Capsule())
+    }
+}
+
+private struct ReceiptReviewRow: View {
     @Environment(\.locale) private var locale
-    let receipt: ImportedReceiptSummary
+    let receipt: ReceiptReviewSummary
 
     var body: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 4) {
+                ReceiptReviewStatusBadge(status: receipt.status)
                 if let date = receipt.receiptDate ?? receipt.dueDate {
                     Text(verbatim: date).font(.caption).foregroundStyle(Theme.textSecondary)
                 }
@@ -152,16 +182,22 @@ struct ReceiptLinkIndicator: View {
     }
 }
 
-private struct ImportedReceiptDetailView: View {
+private struct ReceiptReviewDetailView: View {
     @Environment(\.dismiss) private var dismiss
     let store: ReceiptReviewStore
-    let summary: ImportedReceiptSummary
+    let summary: ReceiptReviewSummary
+
+    private var currentSummary: ReceiptReviewSummary? {
+        guard let detail = store.detail?.summary, detail.receiptId == summary.receiptId else { return nil }
+        return detail
+    }
 
     var body: some View {
         List {
-            if let detail = store.detail?.summary, detail.receiptId == summary.receiptId {
+            if let detail = currentSummary {
                 Section("Receipt") {
-                    if let shop = detail.rawShopName { LabeledContent("Shop", value: shop) }
+                    ReceiptReviewStatusBadge(status: detail.status)
+                    if let shop = detail.shopNameForDisplay { LabeledContent("Shop", value: shop) }
                     if let date = detail.receiptDate ?? detail.dueDate { LabeledContent("Date", value: date) }
                     if let total = detail.totalAmount {
                         LabeledContent("Total", value: [total, detail.currency].compactMap { $0 }.joined(separator: " "))
@@ -173,6 +209,9 @@ private struct ImportedReceiptDetailView: View {
                 }
                 if store.canEditSelectedReceipt {
                     confirmationSections
+                } else if detail.status.requiresWebReview || (summary.status.requiresWebReview && detail.status == .imported) {
+                    Text("Finish this receipt on the web.")
+                        .foregroundStyle(Theme.textSecondary)
                 }
             } else if store.isBusy {
                 ProgressView().frame(maxWidth: .infinity)
@@ -184,7 +223,7 @@ private struct ImportedReceiptDetailView: View {
                 }
             }
         }
-        .navigationTitle(summary.rawShopName.map { Text(verbatim: $0) } ?? Text("Receipt"))
+        .navigationTitle((currentSummary ?? summary).shopNameForDisplay.map { Text(verbatim: $0) } ?? Text("Receipt"))
         .navigationBarTitleDisplayMode(.inline)
         .privacySensitive()
         .onChange(of: store.confirmedReceiptID) { _, confirmed in
@@ -251,7 +290,7 @@ private struct ImportedReceiptDetailView: View {
 }
 
 private struct ReceiptHints: View {
-    let gatewayStatus: ImportedReceiptSummary.GatewayStatusPayload?
+    let gatewayStatus: ReceiptReviewSummary.GatewayStatusPayload?
     let payeeHost: String?
     let hasDocument: Bool?
 
@@ -278,7 +317,7 @@ private struct ReceiptConfirmationOutcomeRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if let name = outcome.receipt.rawShopName { Text(verbatim: name) }
+            if let name = outcome.receipt.shopNameForDisplay { Text(verbatim: name) }
             else { Text("Receipt") }
             if let error = outcome.error {
                 Text(error.message).font(.caption).foregroundStyle(Theme.textSecondary)

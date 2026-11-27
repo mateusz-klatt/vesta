@@ -213,9 +213,11 @@ actor MockHestiaAPI: HestiaAPI, ReceiptsAPI, ReceiptReviewAPI {
         throw ReceiptError.forbidden
     }
 
-    func listImportedReceipts(cursor: String?, scope: ReceiptSessionScope) async throws -> ReceiptListPage {
+    func listReviewReceipts(
+        cursor: ReceiptReviewCursor?, firstPageFilter: ReceiptReviewListFilter, scope: ReceiptSessionScope
+    ) async throws -> ReceiptReviewPage {
         guard let receiptReviewStub else { throw ReceiptError.forbidden }
-        return try await receiptReviewStub.listImportedReceipts(cursor: cursor, scope: scope)
+        return try await receiptReviewStub.listReviewReceipts(cursor: cursor, firstPageFilter: firstPageFilter, scope: scope)
     }
 
     func receiptDetail(id: String, scope: ReceiptSessionScope) async throws -> ReceiptDetailResult {

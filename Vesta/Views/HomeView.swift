@@ -49,7 +49,7 @@ struct HomeView: View {
                         Button { reviewStore = app.makeReceiptReviewStore() } label: {
                             Image(systemName: "doc.text.magnifyingglass")
                         }
-                        .accessibilityLabel("Review imported receipts")
+                        .accessibilityLabel("Review receipts")
                     }
                 }
                 if app.budgetAPI != nil {

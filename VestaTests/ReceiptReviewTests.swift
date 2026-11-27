@@ -17,7 +17,7 @@ private enum ReviewFixtures {
         accountLabel: "Test account", bookingDate: "2026-11-23", amount: "-12.34", currency: "PLN"
     )
 
-    static func summary(_ index: Int = 0, shop: String? = "Shop", chain: String? = nil, version: Int = 1) -> ImportedReceiptSummary {
+    static func summary(_ index: Int = 0, shop: String? = "Shop", chain: String? = nil, version: Int = 1) -> ReceiptReviewSummary {
         .init(receiptId: ids[index], rawShopName: shop, chainKey: chain, version: version)
     }
 
@@ -128,15 +128,18 @@ private actor MockReceiptReviewAPI: ReceiptReviewAPI {
 
     private(set) var calls: [Call] = []
     private(set) var confirms: [ReceiptConfirmRequest] = []
-    private var pages: [String: ReceiptListPage] = [:]
+    private var pages: [String: ReceiptReviewPage] = [:]
     private var details: [String: Result<ReceiptDetailResult, ReceiptError>] = [:]
     private var confirmErrors: [String: ReceiptError] = [:]
     private var detailGates: [String: ReviewResponseGate] = [:]
     private var confirmGates: [String: ReviewResponseGate] = [:]
-    var listError: ReceiptError?
+    private var supportsMultiStatus = true
+    private(set) var listFilters: [ReceiptReviewListFilter] = []
 
-    func setPage(cursor: String?, receipts: [ImportedReceiptSummary], next: String?) {
-        pages[cursor ?? "first"] = .init(receipts: receipts, nextCursor: next)
+    func setPage(cursor: String?, receipts: [ReceiptReviewSummary], next: String?) {
+        pages[cursor ?? "first"] = .init(
+            receipts: receipts, nextCursor: next.map { ReceiptReviewCursor(value: $0, filter: .needsAction) }
+        )
     }
 
     func setDetail(_ receipt: ReceiptDetail, candidates: [ReceiptCandidate]? = nil) {
@@ -147,11 +150,16 @@ private actor MockReceiptReviewAPI: ReceiptReviewAPI {
     func setConfirmError(_ id: String, _ error: ReceiptError?) { confirmErrors[id] = error }
     func holdDetail(_ id: String, gate: ReviewResponseGate) { detailGates[id] = gate }
     func holdConfirm(_ id: String, gate: ReviewResponseGate) { confirmGates[id] = gate }
+    func rejectMultiStatusLists() { supportsMultiStatus = false }
 
-    func listImportedReceipts(cursor: String?, scope: ReceiptSessionScope) async throws -> ReceiptListPage {
-        calls.append(.list(cursor))
-        if let listError { throw listError }
-        return pages[cursor ?? "first"] ?? .init(receipts: [])
+    func listReviewReceipts(
+        cursor: ReceiptReviewCursor?, firstPageFilter: ReceiptReviewListFilter, scope: ReceiptSessionScope
+    ) async throws -> ReceiptReviewPage {
+        calls.append(.list(cursor?.value))
+        let filter = cursor?.filter ?? firstPageFilter
+        listFilters.append(filter)
+        if filter == .needsAction && !supportsMultiStatus { throw ReceiptError.unsupportedContractVersion }
+        return pages[cursor?.value ?? "first"] ?? .init(receipts: [])
     }
 
     func receiptDetail(id: String, scope: ReceiptSessionScope) async throws -> ReceiptDetailResult {
@@ -176,9 +184,28 @@ private actor MockReceiptReviewAPI: ReceiptReviewAPI {
 }
 
 final class ReceiptReviewMappingTests: XCTestCase {
+    func testDisplayShopNameInListAndDetailWhenPresentBlankNullOrAbsent() throws {
+        let names: [(Any?, String)] = [("Issuer", "Issuer"), ("", "Shop"), (" \t\n", "Shop"), (NSNull(), "Shop"), (nil, "Shop")]
+        for (name, expected) in names {
+            var summaryObject = ReviewFixtures.summaryObject()
+            var detailObject = ReviewFixtures.detailObject()
+            summaryObject["display_shop_name"] = name
+            detailObject["display_shop_name"] = name
+
+            let summary = try JSONDecoder().decode(ReceiptReviewSummary.self, from: ReviewFixtures.data(summaryObject))
+            let detail = try JSONDecoder().decode(ReceiptDetail.self, from: ReviewFixtures.data(detailObject))
+            XCTAssertEqual(summary.displayShopName, name as? String)
+            XCTAssertEqual(detail.summary.displayShopName, name as? String)
+            XCTAssertEqual(summary.shopNameForDisplay, expected)
+            XCTAssertEqual(detail.summary.shopNameForDisplay, expected)
+            XCTAssertEqual(ReceiptMerchantGroup.group([summary]).first?.name, expected)
+            XCTAssertEqual(detail.summary.rawShopName, "Shop")
+        }
+    }
+
     func testOptionalHintsMayBeAbsentOrPresent() throws {
         let absent = try JSONDecoder().decode(
-            ImportedReceiptSummary.self, from: ReviewFixtures.data(ReviewFixtures.summaryObject())
+            ReceiptReviewSummary.self, from: ReviewFixtures.data(ReviewFixtures.summaryObject())
         )
         XCTAssertNil(absent.gatewayStatus)
         XCTAssertNil(absent.payeeHost)
@@ -198,7 +225,7 @@ final class ReceiptReviewMappingTests: XCTestCase {
         var summary = ReviewFixtures.summaryObject()
         summary.removeValue(forKey: "raw_nip")
         XCTAssertThrowsError(try JSONDecoder().decode(
-            ImportedReceiptSummary.self, from: ReviewFixtures.data(summary)
+            ReceiptReviewSummary.self, from: ReviewFixtures.data(summary)
         ))
 
         var list = try XCTUnwrap(JSONSerialization.jsonObject(with: ReviewFixtures.data([
@@ -385,6 +412,8 @@ final class ReceiptReviewStoreTests: XCTestCase {
         await store.load()
         await store.select(summary)
 
+        XCTAssertEqual(store.detail?.summary.status, .unknown)
+        XCTAssertNil(store.failure)
         XCTAssertNil(store.selectedCandidate)
         XCTAssertFalse(store.canConfirmSelected)
         await store.confirmSelected()
@@ -443,7 +472,7 @@ final class ReceiptReviewStoreTests: XCTestCase {
         }
     }
 
-    func testListPaginatesFiltersAndGroupsByMerchant() async {
+    func testListPaginatesDeduplicatesAndGroupsByMerchant() async {
         let api = MockReceiptReviewAPI()
         await api.setPage(cursor: nil, receipts: [
             ReviewFixtures.summary(0, shop: "Biedronka"),
@@ -451,8 +480,10 @@ final class ReceiptReviewStoreTests: XCTestCase {
         ], next: "next")
         await api.setPage(cursor: "next", receipts: [
             ReviewFixtures.summary(2, shop: "biedronka"),
-            ReviewFixtures.summary(3, shop: "Other", chain: "chain"),
             ReviewFixtures.summary(0, shop: "Duplicate"),
+        ], next: "third")
+        await api.setPage(cursor: "third", receipts: [
+            ReviewFixtures.summary(3, shop: "Other", chain: "chain"),
         ], next: nil)
         let store = ReceiptReviewStore(api: api, scope: scope)
 
@@ -464,7 +495,82 @@ final class ReceiptReviewStoreTests: XCTestCase {
         XCTAssertEqual(store.groups.map(\.name), ["Biedronka", "Variant"])
         XCTAssertEqual(store.groups.map { $0.receipts.count }, [2, 2])
         let calls = await api.calls
-        XCTAssertEqual(calls, [.list(nil), .list("next")])
+        XCTAssertEqual(calls, [.list(nil), .list("next"), .list("third")])
+    }
+
+    func testMixedStatusesHaveBadgesAndOnlyUnlinkedImportsCanConfirm() async throws {
+        let api = MockReceiptReviewAPI()
+        let statuses = ["imported", "needs_review", "draft", "future-status"]
+        let receipts = try statuses.enumerated().map { index, status in
+            var object = ReviewFixtures.summaryObject(index)
+            object["status"] = status
+            if status == "draft" { object["source_kind"] = "local_ocr" }
+            return try JSONDecoder().decode(ReceiptReviewSummary.self, from: ReviewFixtures.data(object))
+        }
+        await api.setPage(cursor: nil, receipts: receipts, next: nil)
+        for receipt in receipts {
+            await api.setDetail(.init(summary: receipt, lines: [.init()]), candidates: [ReviewFixtures.candidate()])
+        }
+        let store = ReceiptReviewStore(api: api, scope: scope)
+        await store.load()
+
+        XCTAssertEqual(store.receipts, receipts)
+        XCTAssertEqual(store.receipts.map { $0.status.reviewBadge.key }, ["Imported", "Needs review", "Draft", "Unknown"])
+        XCTAssertEqual(store.receipts.map { $0.status.requiresWebReview }, [false, true, true, false])
+        XCTAssertFalse(ReceiptMerchantGroup.group(Array(receipts.dropFirst()))[0].canConfirmWithoutLinking)
+        for receipt in store.receipts {
+            await store.select(receipt)
+            XCTAssertEqual(store.detail?.summary, receipt)
+            XCTAssertNil(store.failure)
+            XCTAssertEqual(store.canEditSelectedReceipt, receipt.status == .imported)
+            XCTAssertEqual(store.canConfirmSelected, receipt.status == .imported)
+            if receipt.status != .imported {
+                XCTAssertTrue(store.candidates.isEmpty)
+                store.selectCandidate(nil)
+                XCTAssertFalse(store.hasLinkChoice)
+                await store.confirmSelected()
+            }
+        }
+        let confirms = await api.confirms
+        XCTAssertTrue(confirms.isEmpty)
+    }
+
+    func testCanonicalGroupLabelKeepsRawMerchantKeys() {
+        var first = ReviewFixtures.summary(0, shop: "Original")
+        var second = ReviewFixtures.summary(1, shop: "original")
+        var third = ReviewFixtures.summary(2, shop: "Different")
+        first.displayShopName = " \t\n"
+        second.displayShopName = "Canonical"
+        third.displayShopName = "Canonical"
+
+        var groups = ReceiptMerchantGroup.group([first, second, third])
+        XCTAssertEqual(groups.map(\.id), ["shop:original", "shop:different"])
+        XCTAssertEqual(groups.map(\.name), ["Canonical", "Canonical"])
+        XCTAssertEqual(groups.map { $0.receipts.count }, [2, 1])
+
+        first.rawNip = "0000000023"
+        second.rawNip = first.rawNip
+        third.rawNip = first.rawNip
+        third.chainKey = "chain"
+        groups = ReceiptMerchantGroup.group([first, second, third])
+        XCTAssertEqual(groups.map(\.id), ["nip:0000000023", "chain:chain"])
+        XCTAssertEqual(groups.map(\.name), ["Canonical", "Canonical"])
+    }
+
+    func testDetailUsesListIssuerOnlyForTheSameVersion() async {
+        let api = MockReceiptReviewAPI()
+        var summary = ReviewFixtures.summary()
+        summary.displayShopName = "Canonical"
+        await api.setPage(cursor: nil, receipts: [summary], next: nil)
+        await api.setDetail(ReviewFixtures.detail())
+        let store = ReceiptReviewStore(api: api, scope: scope)
+        await store.load()
+
+        await store.select(summary)
+        XCTAssertEqual(store.detail?.summary.shopNameForDisplay, "Canonical")
+        await api.setDetail(ReviewFixtures.detail(shop: "Changed", version: 2))
+        await store.select(summary)
+        XCTAssertEqual(store.detail?.summary.shopNameForDisplay, "Changed")
     }
 
     func testSingleConfirmUsesPreselectedLinkAndExpectedVersion() async throws {
@@ -675,6 +781,48 @@ final class ReceiptReviewStoreTests: XCTestCase {
         XCTAssertEqual(store.outcomes[2].code, "budget_receipt_conflict")
     }
 
+    func testBulkMerchantConfirmsOnlyUnlinkedImportedRowsFromMixedGroup() async throws {
+        let api = MockReceiptReviewAPI()
+        var receipts = (0...3).map { ReviewFixtures.summary($0) }
+        receipts[1].status = .needsReview
+        receipts[2].status = .draft
+        receipts[3].linked = true
+        await api.setPage(cursor: nil, receipts: receipts, next: nil)
+        await api.setDetail(ReviewFixtures.detail(), candidates: [ReviewFixtures.candidate()])
+        let store = ReceiptReviewStore(api: api, scope: scope)
+        await store.load()
+
+        let group = try XCTUnwrap(store.groups.first)
+        XCTAssertEqual(group.receipts, receipts)
+        XCTAssertTrue(group.canConfirmWithoutLinking)
+        await store.confirmMerchant(group)
+
+        let calls = await api.calls
+        XCTAssertEqual(calls, [.list(nil), .detail(receipts[0].receiptId), .confirm(receipts[0].receiptId, 1, nil)])
+        XCTAssertEqual(store.receipts, Array(receipts.dropFirst()))
+        XCTAssertEqual(store.groups.first?.canConfirmWithoutLinking, false)
+    }
+
+    func testBulkConfirmationTitleMatchesEligibleRows() {
+        let imported = ReviewFixtures.summary(0)
+        let anotherImport = ReviewFixtures.summary(1)
+        let allImported = ReceiptMerchantGroup(id: "shop", receipts: [imported, anotherImport])
+        XCTAssertEqual(allImported.bulkConfirmationTitle?.key, "Confirm all without linking")
+
+        var draft = anotherImport
+        draft.status = .draft
+        var needsReview = anotherImport
+        needsReview.status = .needsReview
+        var linked = anotherImport
+        linked.linked = true
+        for excluded in [draft, needsReview, linked] {
+            XCTAssertEqual(ReceiptMerchantGroup(id: "shop", receipts: [imported, excluded]).bulkConfirmationTitle?.key,
+                           "Confirm imported without linking")
+            XCTAssertNil(ReceiptMerchantGroup(id: "shop", receipts: [excluded]).bulkConfirmationTitle)
+        }
+        XCTAssertNil(ReceiptMerchantGroup(id: "unknown", receipts: [imported]).bulkConfirmationTitle)
+    }
+
     func testInvoiceWithNoLinesSendsInvoiceNumberLineAndHidesNote() async throws {
         let api = MockReceiptReviewAPI()
         let summary = ReviewFixtures.summary()
@@ -872,7 +1020,7 @@ final class ReceiptReviewGateTests: XCTestCase {
         }
     }
 
-    func testSessionSwitchesDropLateResponses() async throws {
+    func testSessionSwitchesClearDowngradedStoreAndDropLateResponses() async throws {
         for scenario in ["sign out", "account", "origin"] {
             let fixture = try ReviewAppFixture()
             await fixture.connect()
@@ -880,8 +1028,11 @@ final class ReceiptReviewGateTests: XCTestCase {
             await fixture.review.setDetail(ReviewFixtures.detail(), candidates: [ReviewFixtures.candidate()])
             let gate = ReviewResponseGate()
             await fixture.review.holdDetail(summary.receiptId, gate: gate)
+            await fixture.review.rejectMultiStatusLists()
             let store = try XCTUnwrap(fixture.app.makeReceiptReviewStore())
             await store.load()
+            let listFilters = await fixture.review.listFilters
+            XCTAssertEqual(listFilters, [.needsAction, .imported])
             let selection = Task { await store.select(summary) }
             try await waitUntil("held review response before \(scenario)") { await gate.isWaiting }
 
@@ -900,7 +1051,32 @@ final class ReceiptReviewGateTests: XCTestCase {
             XCTAssertNil(store.detail, scenario)
             XCTAssertTrue(store.receipts.isEmpty, scenario)
             XCTAssertTrue(store.candidates.isEmpty, scenario)
+            await store.load()
+            let filtersAfterSwitch = await fixture.review.listFilters
+            XCTAssertEqual(filtersAfterSwitch, listFilters, scenario)
         }
+    }
+}
+
+private actor ReviewTransport: ClientTransport {
+    let responses: [(status: Int, body: Data)]
+    private(set) var requests: [(request: HTTPRequest, body: Data)] = []
+
+    init(_ responses: [(Int, Data)]) {
+        self.responses = responses
+    }
+
+    func send(
+        _ request: HTTPRequest, body: HTTPBody?, baseURL: URL, operationID: String
+    ) async throws -> (HTTPResponse, HTTPBody?) {
+        let data = if let body { try await Data(collecting: body, upTo: 16 * 1024) } else { Data() }
+        let index = requests.count
+        requests.append((request, data))
+        guard responses.indices.contains(index) else { throw URLError(.badServerResponse) }
+        let reply = responses[index]
+        var response = HTTPResponse(status: .init(code: reply.status))
+        response.headerFields[.contentType] = "application/json"
+        return (response, HTTPBody([UInt8](reply.body)))
     }
 }
 
@@ -928,16 +1104,17 @@ final class ReceiptReviewClientTests: XCTestCase {
             "receipts": [ReviewFixtures.summaryObject(hints: true)], "next_cursor": NSNull(),
         ]), as: UTF8.self))
         let api = try client(listTransport)
-        let page = try await api.listImportedReceipts(cursor: nil, scope: ReviewFixtures.scope)
+        let page = try await api.listReviewReceipts(cursor: nil, firstPageFilter: .needsAction, scope: ReviewFixtures.scope)
         XCTAssertEqual(page.receipts.first?.payeeHost, "hestia.example")
         var sent = try XCTUnwrap(listTransport.last)
         XCTAssertEqual(sent.request.method, .post)
         XCTAssertEqual(sent.request.path, "/api/budget/receipts/list")
         XCTAssertEqual(sent.request.headerFields[.authorization], "Bearer \(fakeDeviceToken.token)")
         XCTAssertNil(sent.request.headerFields[.cookie])
-        XCTAssertEqual(sent.request.headerFields[HTTPField.Name("X-Hestia-Contract-Version")!], "0.60.0")
+        XCTAssertEqual(sent.request.headerFields[HTTPField.Name("X-Hestia-Contract-Version")!], "0.65.0")
         let listBody = try XCTUnwrap(JSONSerialization.jsonObject(with: sent.body) as? [String: Any])
-        XCTAssertEqual(listBody["status"] as? String, "imported")
+        XCTAssertEqual(listBody["statuses"] as? [String], ["imported", "needs_review", "draft"])
+        XCTAssertNil(listBody["status"])
         XCTAssertEqual(listBody["evidence"] as? String, "exclude")
         XCTAssertEqual(listBody["limit"] as? Int, 200)
 
@@ -953,6 +1130,128 @@ final class ReceiptReviewClientTests: XCTestCase {
         XCTAssertEqual(sent.request.headerFields[.authorization], "Bearer \(fakeDeviceToken.token)")
         XCTAssertNil(sent.request.headerFields[.cookie])
         XCTAssertEqual(sent.request.headerFields[HTTPField.Name("X-Hestia-Contract-Version")!], "0.60.0")
+    }
+
+    func testListPaginatesWithFilterThatIssuedEachCursor() async throws {
+        let expectedCursors: [String?] = [nil, "page-two", "page-three"]
+        let responseCursors: [Any] = ["page-two", "page-three", NSNull()]
+        for olderServer in [false, true] {
+            var responses: [(Int, Data)] = []
+            if olderServer {
+                responses.append((400, Data(#"{"ok":false,"error":"budget_receipt_contract_version_invalid"}"#.utf8)))
+            }
+            for (index, cursor) in responseCursors.enumerated() {
+                responses.append((200, try ReviewFixtures.data([
+                    "receipts": [ReviewFixtures.summaryObject(index)], "next_cursor": cursor,
+                ])))
+            }
+            let transport = ReviewTransport(responses)
+            let api = try client(transport)
+            let store = ReceiptReviewStore(api: api, scope: ReviewFixtures.scope)
+            await store.load()
+            XCTAssertNil(store.failure)
+            XCTAssertEqual(store.receipts.map(\.receiptId), Array(ReviewFixtures.ids.prefix(3)))
+
+            let requests = await transport.requests
+            XCTAssertEqual(requests.count, responses.count)
+            let cursors = olderServer ? [nil] + expectedCursors : expectedCursors
+            for (index, sent) in requests.prefix(cursors.count).enumerated() {
+                let legacyRequest = olderServer && index > 0
+                XCTAssertEqual(sent.request.headerFields[HTTPField.Name("X-Hestia-Contract-Version")!],
+                               legacyRequest ? "0.60.0" : "0.65.0")
+                XCTAssertEqual(sent.request.headerFields[.authorization], "Bearer \(fakeDeviceToken.token)")
+                XCTAssertNil(sent.request.headerFields[.cookie])
+                let body = try XCTUnwrap(JSONSerialization.jsonObject(with: sent.body) as? [String: Any])
+                XCTAssertEqual(body["cursor"] as? String, cursors[index])
+                if legacyRequest {
+                    XCTAssertNil(body["statuses"])
+                    XCTAssertEqual(body["status"] as? String, "imported")
+                } else {
+                    XCTAssertNil(body["status"])
+                    XCTAssertEqual(body["statuses"] as? [String], ["imported", "needs_review", "draft"])
+                }
+            }
+        }
+    }
+
+    func testListDoesNotRetryUnrelatedErrorsOrSwitchFilterMidPagination() async throws {
+        for (status, code, onNextPage, expected) in [
+            (400, "budget_receipt_invalid_request", false, ReceiptError.rejected("budget_receipt_invalid_request")),
+            (403, "budget_receipt_contract_version_invalid", false, .forbidden),
+            (409, "budget_receipt_contract_version_invalid", false, .rejected("budget_receipt_contract_version_invalid")),
+            (400, "budget_receipt_contract_version_invalid", true, .unsupportedContractVersion),
+        ] {
+            var responses: [(Int, Data)] = []
+            if onNextPage {
+                responses.append((200, try ReviewFixtures.data(["receipts": [], "next_cursor": "next"])))
+            }
+            responses.append((status, try ReviewFixtures.data(["error": ["code": code]])))
+            let transport = ReviewTransport(responses)
+            let store = ReceiptReviewStore(api: try client(transport), scope: ReviewFixtures.scope)
+            await store.load()
+            XCTAssertEqual(store.failure, expected)
+            let requests = await transport.requests
+            XCTAssertEqual(requests.count, responses.count)
+        }
+    }
+
+    func testListDowngradePersistsAcrossRefreshAndResetsWithStore() async throws {
+        let versionError = try ReviewFixtures.data(["error": "budget_receipt_contract_version_invalid"])
+        let list = try ReviewFixtures.data(["receipts": [ReviewFixtures.summaryObject()], "next_cursor": NSNull()])
+        let transport = ReviewTransport([(400, versionError), (503, Data()), (200, list), (200, list)])
+        let api = try client(transport)
+        let store = ReceiptReviewStore(api: api, scope: ReviewFixtures.scope)
+        await store.load()
+        XCTAssertEqual(store.failure, .unavailable)
+
+        await store.load()
+        XCTAssertNil(store.failure)
+        XCTAssertEqual(store.receipts.map(\.receiptId), [ReviewFixtures.ids[0]])
+        store.clear()
+        await store.load()
+        XCTAssertTrue(store.isCleared)
+
+        let newStore = ReceiptReviewStore(api: api, scope: ReviewFixtures.scope)
+        await newStore.load()
+        XCTAssertNil(newStore.failure)
+        XCTAssertEqual(newStore.receipts.map(\.receiptId), [ReviewFixtures.ids[0]])
+
+        let requests = await transport.requests
+        let contractHeader = HTTPField.Name("X-Hestia-Contract-Version")!
+        XCTAssertEqual(requests.map { $0.request.headerFields[contractHeader] }, ["0.65.0", "0.60.0", "0.60.0", "0.65.0"])
+        let filters = try requests.map { try XCTUnwrap(JSONSerialization.jsonObject(with: $0.body) as? [String: Any]) }
+        XCTAssertEqual(filters.map { $0["status"] as? String }, [nil, "imported", "imported", nil])
+        XCTAssertEqual(filters.map { $0["statuses"] as? [String] }, [
+            ["imported", "needs_review", "draft"], nil, nil, ["imported", "needs_review", "draft"],
+        ])
+    }
+
+    func testDetailAndConfirmSendExactly060WithEitherListFilter() async throws {
+        let list = try ReviewFixtures.data(["receipts": [ReviewFixtures.summaryObject()], "next_cursor": NSNull()])
+        let detail = try ReviewFixtures.data(["receipt": ReviewFixtures.detailObject()])
+        var confirmedReceipt = ReviewFixtures.detailObject()
+        confirmedReceipt["status"] = "confirmed"
+        let confirmed = try ReviewFixtures.data(["ok": true, "receipt": confirmedReceipt])
+        let versionError = try ReviewFixtures.data(["error": "budget_receipt_contract_version_invalid"])
+        for olderServer in [false, true] {
+            var responses: [(Int, Data)] = [(200, list), (200, detail), (200, confirmed)]
+            if olderServer { responses.insert((400, versionError), at: 0) }
+            let transport = ReviewTransport(responses)
+            let store = ReceiptReviewStore(api: try client(transport), scope: ReviewFixtures.scope)
+            await store.load()
+            await store.select(try XCTUnwrap(store.receipts.first))
+            await store.confirmSelected()
+            XCTAssertEqual(store.confirmedReceiptID, ReviewFixtures.ids[0])
+            XCTAssertNil(store.failure)
+
+            let requests = await transport.requests
+            let contractHeader = HTTPField.Name("X-Hestia-Contract-Version")!
+            XCTAssertEqual(requests.map { $0.request.headerFields[contractHeader] },
+                           olderServer ? ["0.65.0", "0.60.0", "0.60.0", "0.60.0"] : ["0.65.0", "0.60.0", "0.60.0"])
+            XCTAssertEqual(requests.suffix(2).map { $0.request.path }, [
+                "/api/budget/receipts/detail?receipt_id=\(ReviewFixtures.ids[0])", "/api/budget/receipts/confirm",
+            ])
+        }
     }
 
     func testSingleConfirmWireHasAdjustmentWithLinkOrOmitsLinesWithExplicitUnlink() async throws {
@@ -1033,7 +1332,7 @@ final class ReceiptReviewClientTests: XCTestCase {
             let enabled = provenance == .exchanged ? false : true
             let api = try client(transport, enabled: { enabled }, provenance: provenance)
             for call in [
-                { _ = try await api.listImportedReceipts(cursor: nil, scope: ReviewFixtures.scope) },
+                { _ = try await api.listReviewReceipts(cursor: nil, firstPageFilter: .needsAction, scope: ReviewFixtures.scope) },
                 { _ = try await api.receiptDetail(id: detail.summary.receiptId, scope: ReviewFixtures.scope) },
                 { _ = try await api.confirmImportedReceipt(request, scope: ReviewFixtures.scope) },
             ] {
