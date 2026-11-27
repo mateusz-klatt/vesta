@@ -557,6 +557,9 @@ private struct BudgetTransactionRow: View {
                 if let date = transaction.bookingDate {
                     Text(verbatim: date).font(.caption).foregroundStyle(Theme.textSecondary)
                 }
+                if let chip = BudgetTransactionReceiptChip(receipt: transaction.receipt, locale: locale) {
+                    chip
+                }
             }
             Spacer()
             Text(verbatim: amount)
@@ -568,5 +571,42 @@ private struct BudgetTransactionRow: View {
     private var amount: String {
         let value = transaction.signedAmount.formatted(.currency(code: transaction.currency).locale(locale))
         return transaction.isCredit ? "+\(value)" : value
+    }
+}
+
+struct BudgetTransactionReceiptChip: View {
+    private let details: String
+    private let locale: Locale
+    let needsReview: Bool
+
+    init?(receipt: BudgetTransactionReceipt?, locale: Locale) {
+        guard let receipt else { return nil }
+        self.locale = locale
+        needsReview = receipt.status == .needsReview
+        let amount: String? = if let total = receipt.total, let currency = receipt.currency {
+            total.formatted(.currency(code: currency).locale(locale))
+        } else {
+            nil
+        }
+        details = [receipt.shopName, amount].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    var text: String { details.isEmpty ? "🧾" : "🧾 \(details)" }
+
+    var body: some View {
+        Text(verbatim: text)
+            .font(.caption)
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background((needsReview ? Color.orange : Theme.textSecondary).opacity(0.12), in: Capsule())
+            .accessibilityLabel(Text("Receipt"))
+            .accessibilityValue(Text(verbatim: accessibilityDetails))
+    }
+
+    private var accessibilityDetails: String {
+        guard needsReview else { return details }
+        let status = String(localized: "Needs review", locale: locale)
+        return details.isEmpty ? status : "\(details) · \(status)"
     }
 }

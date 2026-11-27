@@ -127,6 +127,30 @@ final class ReceiptContract060Tests: XCTestCase {
         }
     }
 
+    func testTransactionReceiptRequiresKeysAndPreservesExplicitNulls() throws {
+        var object = BudgetMappingTests.transactionReceiptObject()
+        let nullable = ["shop_name", "total", "currency"]
+        for key in nullable { object[key] = NSNull() }
+        let data = try JSONSerialization.data(withJSONObject: object)
+        let receipt = try JSONDecoder().decode(Components.Schemas.BudgetAnalyticsTransactionReceipt.self, from: data)
+        let encoded = try JSONEncoder().encode(receipt)
+        let roundTrip = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        for key in nullable { XCTAssertTrue(roundTrip[key] is NSNull, key) }
+
+        for key in object.keys {
+            var incomplete = object
+            incomplete.removeValue(forKey: key)
+            let data = try JSONSerialization.data(withJSONObject: incomplete)
+            XCTAssertThrowsError(try JSONDecoder().decode(Components.Schemas.BudgetAnalyticsTransactionReceipt.self, from: data)) {
+                guard case DecodingError.keyNotFound(let missingKey, _) = $0 else {
+                    return XCTFail("Expected a missing key error for \(key), got \($0)")
+                }
+                XCTAssertEqual(missingKey.stringValue, key)
+            }
+        }
+    }
+
+    @MainActor
     func testUnknownFutureEnumValuesDegradeInsteadOfFailing() throws {
         var receipt = summaryObject()
         receipt["status"] = "future-status"
@@ -179,6 +203,14 @@ final class ReceiptContract060Tests: XCTestCase {
         let form = ReceiptForm(draft: result.receipt, candidates: [candidate])
         XCTAssertNil(form.candidate)
         XCTAssertNil(form.request(receiptID: summary.receiptId, version: summary.version, candidates: [candidate]))
+
+        let transaction = try BudgetMappingTests.decodeTransaction(
+            receipt: BudgetMappingTests.transactionReceiptObject(status: "future-status")
+        )
+        XCTAssertEqual(transaction.receipt?.status, .unknown)
+        let chip = try XCTUnwrap(BudgetTransactionReceiptChip(receipt: transaction.receipt, locale: Locale(identifier: "en_US")))
+        XCTAssertEqual(chip.text, "🧾 Test issuer · $74.50")
+        XCTAssertFalse(chip.needsReview)
     }
 
     private func listPage(_ rows: [String: Any]...) throws -> ReceiptListPage {

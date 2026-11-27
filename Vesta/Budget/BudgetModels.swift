@@ -120,8 +120,23 @@ struct BudgetTransaction: Identifiable, Equatable, Sendable {
     let details: String?
     let categoryID: String?
     let kind: String
+    let receipt: BudgetTransactionReceipt?
 
     var signedAmount: Decimal { isCredit ? amount : -amount }
+}
+
+struct BudgetTransactionReceipt: Equatable, Sendable {
+    let shopName: String?
+    let total: Decimal?
+    let currency: String?
+    let status: BudgetAnalyticsTransactionReceiptWire.Status
+
+    init(wire: Components.Schemas.BudgetAnalyticsTransactionReceipt) {
+        shopName = wire.shopName
+        total = wire.total.flatMap { try? BudgetWire.decimal($0) }
+        currency = wire.currency
+        status = wire.status
+    }
 }
 
 struct BudgetTransactionPage: Equatable, Sendable {
@@ -292,6 +307,50 @@ extension BudgetTransaction {
         self.details = details.isEmpty ? nil : details
         categoryID = wire.effective.categoryId
         kind = wire.effective.kind
+        receipt = wire.receipt.map(BudgetTransactionReceipt.init(wire:))
+    }
+}
+
+// Keep the optional anyOf-null receipt alongside the existing generated field types.
+struct BudgetAnalyticsTransactionWire: Codable, Hashable, Sendable {
+    enum CreditDebitIndicatorPayload: String, Codable, Hashable, Sendable, CaseIterable {
+        case crdt = "CRDT", dbit = "DBIT"
+    }
+
+    enum StatusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+        case book = "BOOK"
+    }
+
+    let accountId: String
+    let amount: String
+    let annotation: Components.Schemas.BudgetAnalyticsAnnotation
+    let apiObservedAt: Double?
+    let bookingDate: String?
+    let counterpartyAccount: String?
+    let counterpartyAccountKey: String?
+    let creditDebitIndicator: CreditDebitIndicatorPayload
+    let currency: String
+    let effective: Components.Schemas.BudgetAnalyticsEffective
+    let entryReference: String
+    let fingerprint: String
+    let metadata: Components.Schemas.BudgetAnalyticsMetadata?
+    let observedAt: Double
+    let receipt: Components.Schemas.BudgetAnalyticsTransactionReceipt?
+    let remittanceInformation: [String]
+    let source: String
+    let status: StatusPayload
+    let transactionDate: String?
+    let transfer: Components.Schemas.BudgetAnalyticsTransactionTransfer
+    let transferFingerprint: String
+    let valueDate: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case accountId = "account_id", amount, annotation, apiObservedAt = "api_observed_at"
+        case bookingDate = "booking_date", counterpartyAccount = "counterparty_account"
+        case counterpartyAccountKey = "counterparty_account_key", creditDebitIndicator = "credit_debit_indicator"
+        case currency, effective, entryReference = "entry_reference", fingerprint, metadata, observedAt = "observed_at"
+        case receipt, remittanceInformation = "remittance_information", source, status
+        case transactionDate = "transaction_date", transfer, transferFingerprint = "transfer_fingerprint", valueDate = "value_date"
     }
 }
 

@@ -63,7 +63,7 @@ private enum BudgetFixtures {
         BudgetTransaction(
             id: "acc\u{1f}\(id)", accountID: "acc", entryReference: id,
             amount: amount, isCredit: false, currency: "PLN", bookingDate: nil,
-            payee: nil, details: nil, categoryID: nil, kind: "purchase"
+            payee: nil, details: nil, categoryID: nil, kind: "purchase", receipt: nil
         )
     }
 
@@ -209,6 +209,75 @@ final class BudgetMappingTests: XCTestCase {
         XCTAssertEqual(transaction.details, "Groceries · Card purchase")
         XCTAssertEqual(transaction.categoryID, "groceries")
         XCTAssertEqual(transaction.id, "acc\u{1f}tx-1")
+        XCTAssertNil(transaction.receipt)
+    }
+
+    @MainActor
+    func testTransactionReceiptChipShowsIssuerAndFormattedReceiptAmount() throws {
+        let data = try Self.transactionsData(receipt: Self.transactionReceiptObject())
+        let page = try JSONDecoder().decode(Components.Schemas.BudgetAnalyticsTransactions.self, from: data)
+        XCTAssertEqual(page.transactions.first?.receipt?.receiptId, Self.transactionReceiptObject()["receipt_id"] as? String)
+        let transaction = try XCTUnwrap(BudgetTransactionPage(wire: page).transactions.first)
+        let receipt = try XCTUnwrap(transaction.receipt)
+        XCTAssertEqual(receipt.shopName, "Test issuer")
+        XCTAssertEqual(receipt.total, Decimal(string: "74.50"))
+        XCTAssertEqual(receipt.currency, "USD")
+        XCTAssertEqual(receipt.status, .confirmed)
+
+        let chip = try XCTUnwrap(BudgetTransactionReceiptChip(receipt: receipt, locale: Locale(identifier: "en_US")))
+        XCTAssertEqual(chip.text, "🧾 Test issuer · $74.50")
+        XCTAssertFalse(chip.needsReview)
+    }
+
+    @MainActor
+    func testTransactionReceiptChipWithNullDetailsShowsOnlyIcon() throws {
+        var receipt = Self.transactionReceiptObject()
+        for key in ["shop_name", "total", "currency"] { receipt[key] = NSNull() }
+        let transaction = try Self.decodeTransaction(receipt: receipt)
+        let chip = try XCTUnwrap(BudgetTransactionReceiptChip(receipt: transaction.receipt, locale: Locale(identifier: "en_US")))
+        XCTAssertEqual(chip.text, "🧾")
+        XCTAssertFalse(chip.needsReview)
+    }
+
+    @MainActor
+    func testTransactionReceiptChipShowsAmountWithoutIssuerAndUsesReviewVariant() throws {
+        var receipt = Self.transactionReceiptObject(status: "needs_review")
+        receipt["shop_name"] = NSNull()
+        let transaction = try Self.decodeTransaction(receipt: receipt)
+        XCTAssertEqual(transaction.receipt?.status, .needsReview)
+        let chip = try XCTUnwrap(BudgetTransactionReceiptChip(receipt: transaction.receipt, locale: Locale(identifier: "en_US")))
+        XCTAssertEqual(chip.text, "🧾 $74.50")
+        XCTAssertTrue(chip.needsReview)
+    }
+
+    @MainActor
+    func testTransactionReceiptChipIsAbsentWhenReceiptIsOmittedOrNull() throws {
+        for receipt: Any? in [nil, NSNull()] {
+            let transaction = try Self.decodeTransaction(receipt: receipt)
+            XCTAssertNil(transaction.receipt)
+            XCTAssertNil(BudgetTransactionReceiptChip(receipt: transaction.receipt, locale: Locale(identifier: "en_US")))
+        }
+    }
+
+    static func transactionReceiptObject(status: String = "confirmed") -> [String: Any] {
+        [
+            "receipt_id": "00000000-0000-0000-0000-000000000001", "shop_name": "Test issuer",
+            "total": "74.50", "currency": "USD", "status": status,
+        ]
+    }
+
+    static func decodeTransaction(receipt: Any?) throws -> BudgetTransaction {
+        let data = try transactionsData(receipt: receipt)
+        let page = try JSONDecoder().decode(Components.Schemas.BudgetAnalyticsTransactions.self, from: data)
+        return try XCTUnwrap(BudgetTransactionPage(wire: page).transactions.first)
+    }
+
+    static func transactionsData(receipt: Any?) throws -> Data {
+        var page = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(transactionsJSON.utf8)) as? [String: Any])
+        var transactions = try XCTUnwrap(page["transactions"] as? [[String: Any]])
+        transactions[0]["receipt"] = receipt
+        page["transactions"] = transactions
+        return try JSONSerialization.data(withJSONObject: page)
     }
 
     func testStatusMappingUsesLatestSuccessfulComponentUpdate() throws {
@@ -516,7 +585,8 @@ final class BudgetMappingTests: XCTestCase {
         }
       ],
       "pass_through":null,
-      "card_exposure":{"status":"unavailable","amount":null,"as_of_date":null}
+      "card_exposure":{"status":"unavailable","amount":null,"as_of_date":null},
+      "card_debt":{"status":"partial","amount":"10.00","currency":"PLN","as_of_date":"2026-11-24"}
     }
     """#
 
@@ -1495,7 +1565,7 @@ final class BudgetClientTests: XCTestCase {
         let transport = CapturingTransport(status: 200, body: BudgetMappingTests.transactionsJSON)
         let api = try pairedClient(transport)
 
-        _ = try await api.transactions(
+        let page = try await api.transactions(
             period: "2026-10", currency: "PLN", categoryID: "uncategorised",
             cursor: "cursor value", limit: 50
         )
@@ -1512,6 +1582,19 @@ final class BudgetClientTests: XCTestCase {
         XCTAssertNil(items["kind"])
         XCTAssertNil(items["query"])
         XCTAssertEqual(request.headerFields[.authorization], "Bearer \(fakeDeviceToken.token)")
+        XCTAssertEqual(request.headerFields[HTTPField.Name("X-Hestia-Contract-Version")!], "0.60.0")
+        XCTAssertEqual(page.transactions.first?.payee, "Shop")
+        XCTAssertNil(page.transactions.first?.receipt)
+    }
+
+    func testTransactionsWireResponseDecodesNegotiatedReceipt() async throws {
+        let response = try BudgetMappingTests.transactionsData(receipt: BudgetMappingTests.transactionReceiptObject())
+        let api = try pairedClient(StubTransport { request in
+            XCTAssertEqual(request.headerFields[HTTPField.Name("X-Hestia-Contract-Version")!], "0.60.0")
+            return (200, response)
+        })
+        let page = try await api.transactions(period: "2026-11", currency: nil, categoryID: nil, cursor: nil, limit: 50)
+        XCTAssertEqual(page.transactions.first?.receipt?.shopName, "Test issuer")
     }
 
     func testStatusWireRequestAndErrorMapping() async throws {
@@ -2353,6 +2436,8 @@ final class BudgetAuthTests: XCTestCase {
             let sent = try XCTUnwrap(transport.last?.request)
             XCTAssertEqual(sent.headerFields[.authorization], "Bearer fake-device-token", path)
             XCTAssertNil(sent.headerFields[.cookie], path)
+            let expectedVersion = operation == Operations.GetBudgetAnalyticsTransactions.id ? "0.60.0" : nil
+            XCTAssertEqual(sent.headerFields[HTTPField.Name("X-Hestia-Contract-Version")!], expectedVersion, path)
         }
     }
 

@@ -24,6 +24,9 @@ typeOverrides:
     BudgetAnalyticsMonthlyBudgetCategorySpend: BudgetAnalyticsMonthlyBudgetCategorySpendWire
     BudgetAnalyticsMonthlyBudgetCharts: BudgetAnalyticsMonthlyBudgetChartsWire
     BudgetAnalyticsMonthlyBudgetSeriesCategory: BudgetAnalyticsMonthlyBudgetSeriesCategoryWire
+    # Preserve the optional receipt and its required nullable fields from 0.60.0.
+    BudgetAnalyticsTransaction: BudgetAnalyticsTransactionWire
+    BudgetAnalyticsTransactionReceipt: BudgetAnalyticsTransactionReceiptWire
     # Preserve required nullable fields and optional metadata in receipt schemas.
     BudgetReceiptListRequest: BudgetReceiptListRequestWire
     BudgetReceiptListResult: BudgetReceiptListResultWire

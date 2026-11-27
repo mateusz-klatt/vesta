@@ -259,6 +259,40 @@ struct BudgetReceiptLinkedTransactionWire: Codable, Hashable, Sendable {
     }
 }
 
+struct BudgetAnalyticsTransactionReceiptWire: Codable, Hashable, Sendable {
+    enum Status: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+        case confirmed, needsReview = "needs_review", unknown
+    }
+
+    let receiptId: String
+    let shopName: String?
+    let total: String?
+    let currency: String?
+    let status: Status
+
+    private enum CodingKeys: String, CodingKey {
+        case receiptId = "receipt_id", shopName = "shop_name", total, currency, status
+    }
+
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        receiptId = try values.decode(String.self, forKey: .receiptId)
+        shopName = try values.decode(String?.self, forKey: .shopName)
+        total = try values.decode(String?.self, forKey: .total)
+        currency = try values.decode(String?.self, forKey: .currency)
+        status = try values.decode(Status.self, forKey: .status)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(receiptId, forKey: .receiptId)
+        try values.encode(shopName, forKey: .shopName)
+        try values.encode(total, forKey: .total)
+        try values.encode(currency, forKey: .currency)
+        try values.encode(status, forKey: .status)
+    }
+}
+
 struct BudgetReceiptSummaryWire: Codable, Hashable, Sendable, Identifiable {
     var id: String { receiptId }
     var hasUnknownReviewMetadata: Bool {

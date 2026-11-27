@@ -4786,6 +4786,16 @@
             "title": "Observed At",
             "type": "number"
           },
+          "receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BudgetAnalyticsTransactionReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "remittance_information": {
             "items": {
               "type": "string"
@@ -4842,6 +4852,66 @@
           "transfer"
         ],
         "title": "BudgetAnalyticsTransaction",
+        "type": "object"
+      },
+      "BudgetAnalyticsTransactionReceipt": {
+        "properties": {
+          "currency": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Z]{3}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
+          "receipt_id": {
+            "pattern": "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+            "title": "Receipt Id",
+            "type": "string"
+          },
+          "shop_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shop Name"
+          },
+          "status": {
+            "enum": [
+              "confirmed",
+              "needs_review"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          }
+        },
+        "required": [
+          "receipt_id",
+          "shop_name",
+          "total",
+          "currency",
+          "status"
+        ],
+        "title": "BudgetAnalyticsTransactionReceipt",
         "type": "object"
       },
       "BudgetAnalyticsTransactionTransfer": {
