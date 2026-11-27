@@ -1023,6 +1023,16 @@
           "version": {
             "title": "Version",
             "type": "integer"
+          },
+          "link_group": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BudgetReceiptLinkGroupRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -6354,6 +6364,16 @@
           "version": {
             "title": "Version",
             "type": "integer"
+          },
+          "link_group": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BudgetReceiptLinkGroupRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -6486,6 +6506,125 @@
           "receipt_date"
         ],
         "title": "BudgetReceiptPaymentEvidence",
+        "type": "object"
+      },
+      "BudgetReceiptGroupDetailResult": {
+        "properties": {
+          "evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BudgetReceiptSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "group": {
+            "$ref": "#/components/schemas/BudgetReceiptLinkGroupRef"
+          },
+          "linked_account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linked Account Id"
+          },
+          "linked_entry_ref": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linked Entry Ref"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/BudgetReceiptSummary"
+            },
+            "title": "Members",
+            "type": "array"
+          }
+        },
+        "required": [
+          "group",
+          "members",
+          "evidence",
+          "linked_account_id",
+          "linked_entry_ref"
+        ],
+        "title": "BudgetReceiptGroupDetailResult",
+        "type": "object"
+      },
+      "BudgetReceiptLinkGroupRef": {
+        "properties": {
+          "evidence_receipt_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Receipt Id"
+          },
+          "fee_amount": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "minLength": 1,
+                "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fee Amount"
+          },
+          "group_id": {
+            "pattern": "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+            "title": "Group Id",
+            "type": "string"
+          },
+          "group_status": {
+            "enum": [
+              "confirmed",
+              "needs_review"
+            ],
+            "title": "Group Status",
+            "type": "string"
+          },
+          "group_version": {
+            "minimum": 1,
+            "title": "Group Version",
+            "type": "integer"
+          },
+          "member_count": {
+            "minimum": 0,
+            "title": "Member Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "group_id",
+          "group_status",
+          "group_version",
+          "member_count",
+          "fee_amount",
+          "evidence_receipt_id"
+        ],
+        "title": "BudgetReceiptLinkGroupRef",
         "type": "object"
       }
     }
@@ -9692,6 +9831,119 @@
           }
         },
         "summary": "Read one owned receipt and its structured lines.",
+        "x-required-permission": "legacy_receipts",
+        "x-required-role": "admin"
+      }
+    },
+    "/api/budget/receipts/group/detail": {
+      "get": {
+        "description": "Browser session and budget.receipts.view required. Transaction account and reference digest also require budget.receipts.match. Requires contract version 0.59.0 or later.",
+        "operationId": "getBudgetReceiptGroupDetail",
+        "parameters": [
+          {
+            "description": "Opaque owned receipt group UUID.",
+            "in": "query",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Receipt group detail is available from 0.59.0.",
+            "in": "header",
+            "name": "X-Hestia-Contract-Version",
+            "required": true,
+            "schema": {
+              "pattern": "^0\\.(0|[1-9][0-9]{0,2})\\.(0|[1-9][0-9]{0,2})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetReceiptGroupDetailResult"
+                }
+              }
+            },
+            "description": "owner-scoped stored state; no bank request"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "session required; middleware may return an empty body"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "admin owner or browser-origin requirement failed; middleware may return an empty body"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "Unknown or foreign group, or contract version below 0.59.0."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "SQLite users backend is required (budget_requires_sqlite_users)."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "internal error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetError"
+                }
+              }
+            },
+            "description": "budget configuration unavailable"
+          }
+        },
+        "summary": "Read an owned receipt link group, its member receipts and optional gateway evidence.",
         "x-required-permission": "legacy_receipts",
         "x-required-role": "admin"
       }

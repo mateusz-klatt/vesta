@@ -34,3 +34,6 @@ typeOverrides:
     BudgetReceiptCandidate: ReceiptCandidateWire
     BudgetReceiptLine: ReceiptLineWire
     BudgetReceiptPaymentEvidence: ReceiptPaymentEvidenceWire
+    # Preserve required nullable fields in the receipt groups read contract.
+    BudgetReceiptGroupDetailResult: BudgetReceiptGroupDetailResultWire
+    BudgetReceiptLinkGroupRef: ReceiptLinkGroupRefWire

@@ -1,6 +1,8 @@
 import OpenAPIRuntime
 
 extension APIClient: ReceiptReviewAPI {
+    private static let receiptGroupContract = "0.59.0"
+
     func listImportedReceipts(cursor: String?, scope: ReceiptSessionScope) async throws -> ReceiptListPage {
         try await review(scope) { client in
             let body = Components.Schemas.BudgetReceiptListRequest(
@@ -10,10 +12,39 @@ extension APIClient: ReceiptReviewAPI {
         }
     }
 
-    func receiptDetail(id: String, scope: ReceiptSessionScope) async throws -> ReceiptDetailResult {
+    func listLinkedReceipts(cursor: String?, scope: ReceiptSessionScope) async throws -> ReceiptListPage {
+        do {
+            return try await review(scope) { client in
+                let body = Components.Schemas.BudgetReceiptListRequest(
+                    cursor: cursor, linked: true, status: nil
+                )
+                let headers = Operations.ListBudgetReceipts.Input.Headers(
+                    xHestiaContractVersion: Self.receiptGroupContract
+                )
+                return try await client.listBudgetReceipts(.init(headers: headers, body: .json(body))).ok.body.json
+            }
+        } catch ReceiptError.rejected("budget_receipt_contract_version_invalid") {
+            // Older servers reject a newer contract before listing receipts.
+            return .init(receipts: [])
+        }
+    }
+
+    func receiptDetail(id: String, scope: ReceiptSessionScope, includeGroup: Bool) async throws -> ReceiptDetailResult {
         try await review(scope) { client in
-            let input = Operations.GetBudgetReceiptDetail.Input(query: .init(receiptId: id))
+            let input = Operations.GetBudgetReceiptDetail.Input(
+                query: .init(receiptId: id),
+                headers: .init(xHestiaContractVersion: includeGroup ? Self.receiptGroupContract : nil)
+            )
             return try await client.getBudgetReceiptDetail(input).ok.body.json
+        }
+    }
+
+    func receiptGroupDetail(id: String, scope: ReceiptSessionScope) async throws -> BudgetReceiptGroupDetailResultWire {
+        try await review(scope) { client in
+            let input = Operations.GetBudgetReceiptGroupDetail.Input(
+                query: .init(groupId: id), headers: .init(xHestiaContractVersion: Self.receiptGroupContract)
+            )
+            return try await client.getBudgetReceiptGroupDetail(input).ok.body.json
         }
     }
 
@@ -39,6 +70,7 @@ extension APIClient: ReceiptReviewAPI {
             return value
         } catch {
             if APIError.isCancellation(error) { throw CancellationError() }
+            try Task.checkCancellation()
             guard await currentReceiptReviewScope(requiresMatch: requiresMatch) == scope else { throw CancellationError() }
             throw ReceiptError.wrap(error)
         }

@@ -37,12 +37,12 @@ struct BearerAuthMiddleware: ClientMiddleware {
     private static let receiptOperations: Set<String> = [
         Operations.ParseBudgetReceiptText.id, Operations.ConfirmBudgetReceipt.id,
         Operations.DeleteBudgetReceipt.id, Operations.RevokeBudgetReceiptDevice.id,
-        Operations.ListBudgetReceipts.id, Operations.GetBudgetReceiptDetail.id,
+        Operations.ListBudgetReceipts.id, Operations.GetBudgetReceiptDetail.id, Operations.GetBudgetReceiptGroupDetail.id,
         // The phone does not pin the OpenAPI paths for these read operations.
         "searchBudgetReceipts", "getBudgetReceiptImage",
     ]
     private static let receiptReviewOperations: Set<String> = [
-        Operations.ListBudgetReceipts.id, Operations.GetBudgetReceiptDetail.id,
+        Operations.ListBudgetReceipts.id, Operations.GetBudgetReceiptDetail.id, Operations.GetBudgetReceiptGroupDetail.id,
     ]
     private static let receiptContractHeader = HTTPField.Name("X-Hestia-Contract-Version")!
     private static let budgetReadPaths = [
@@ -67,8 +67,10 @@ struct BearerAuthMiddleware: ClientMiddleware {
             || (reviewScoped && operationID == Operations.ConfirmBudgetReceipt.id)
         if reviewOperation {
             guard reviewScoped, receiptScope != nil, receiptReviewEnabled() else { throw ReceiptError.forbidden }
-            // Since 0.52.0 the server exposes imported status and gateway evidence.
-            request.headerFields[Self.receiptContractHeader] = "0.52.0"
+            if request.headerFields[Self.receiptContractHeader] == nil {
+                // The original V6 reads and confirm request the gateway evidence contract.
+                request.headerFields[Self.receiptContractHeader] = "0.52.0"
+            }
         }
         let issuesDeviceToken = operationID == Operations.RedeemBudgetReceiptDevice.id
             || operationID == Operations.LoginBudgetReceiptDevice.id

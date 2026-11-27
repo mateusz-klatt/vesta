@@ -86,6 +86,92 @@ struct BudgetReceiptDetailResultWire: Codable, Hashable, Sendable {
     }
 }
 
+// Preserve required nullable group data from the verbatim 0.59.0 schemas.
+struct BudgetReceiptGroupDetailResultWire: Codable, Hashable, Sendable {
+    let group: ReceiptLinkGroupRefWire
+    let members: [BudgetReceiptSummaryWire]
+    let evidence: BudgetReceiptSummaryWire?
+    let linkedAccountId: String?
+    let linkedEntryRef: String?
+
+    init(group: ReceiptLinkGroupRefWire, members: [BudgetReceiptSummaryWire], evidence: BudgetReceiptSummaryWire? = nil,
+         linkedAccountId: String? = nil, linkedEntryRef: String? = nil) {
+        self.group = group
+        self.members = members
+        self.evidence = evidence
+        self.linkedAccountId = linkedAccountId
+        self.linkedEntryRef = linkedEntryRef
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case group, members, evidence, linkedAccountId = "linked_account_id", linkedEntryRef = "linked_entry_ref"
+    }
+
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        group = try values.decode(ReceiptLinkGroupRefWire.self, forKey: .group)
+        members = try values.decode([BudgetReceiptSummaryWire].self, forKey: .members)
+        evidence = try values.decode(BudgetReceiptSummaryWire?.self, forKey: .evidence)
+        linkedAccountId = try values.decode(String?.self, forKey: .linkedAccountId)
+        linkedEntryRef = try values.decode(String?.self, forKey: .linkedEntryRef)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(group, forKey: .group)
+        try values.encode(members, forKey: .members)
+        try values.encode(evidence, forKey: .evidence)
+        try values.encode(linkedAccountId, forKey: .linkedAccountId)
+        try values.encode(linkedEntryRef, forKey: .linkedEntryRef)
+    }
+}
+
+struct ReceiptLinkGroupRefWire: Codable, Hashable, Sendable {
+    enum GroupStatusPayload: String, Codable, Hashable, Sendable { case confirmed, needsReview = "needs_review" }
+
+    let groupId: String
+    let groupStatus: GroupStatusPayload
+    let groupVersion: Int
+    let memberCount: Int
+    let feeAmount: String?
+    let evidenceReceiptId: String?
+
+    init(groupId: String, groupStatus: GroupStatusPayload = .confirmed, groupVersion: Int = 1,
+         memberCount: Int, feeAmount: String? = nil, evidenceReceiptId: String? = nil) {
+        self.groupId = groupId
+        self.groupStatus = groupStatus
+        self.groupVersion = groupVersion
+        self.memberCount = memberCount
+        self.feeAmount = feeAmount
+        self.evidenceReceiptId = evidenceReceiptId
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case groupId = "group_id", groupStatus = "group_status", groupVersion = "group_version"
+        case memberCount = "member_count", feeAmount = "fee_amount", evidenceReceiptId = "evidence_receipt_id"
+    }
+
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        groupId = try values.decode(String.self, forKey: .groupId)
+        groupStatus = try values.decode(GroupStatusPayload.self, forKey: .groupStatus)
+        groupVersion = try values.decode(Int.self, forKey: .groupVersion)
+        memberCount = try values.decode(Int.self, forKey: .memberCount)
+        feeAmount = try values.decode(String?.self, forKey: .feeAmount)
+        evidenceReceiptId = try values.decode(String?.self, forKey: .evidenceReceiptId)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(groupId, forKey: .groupId)
+        try values.encode(groupStatus, forKey: .groupStatus)
+        try values.encode(groupVersion, forKey: .groupVersion)
+        try values.encode(memberCount, forKey: .memberCount)
+        try values.encode(feeAmount, forKey: .feeAmount)
+        try values.encode(evidenceReceiptId, forKey: .evidenceReceiptId)
+    }
+}
+
 struct ReceiptCandidateWire: Codable, Hashable, Sendable {
     enum CreditDebitIndicatorPayload: String, Codable, Hashable, Sendable { case DBIT, CRDT }
     enum MatchStrengthPayload: String, Codable, Hashable, Sendable { case nip, distinctive, generic, none }
@@ -227,6 +313,7 @@ struct BudgetReceiptSummaryWire: Codable, Hashable, Sendable, Identifiable {
     var imageExpiresAt: Double?
     var importExpiresAt: Double?
     var invoiceNumber: String?
+    var linkGroup: ReceiptLinkGroupRefWire?
     var linked: Bool
     var linkedAccountId: String?
     var linkedEntryRef: String?
@@ -258,7 +345,7 @@ struct BudgetReceiptSummaryWire: Codable, Hashable, Sendable, Identifiable {
          dueDate: String? = nil, evidenceForReceiptId: String? = nil, feeAmount: String? = nil,
          forwardedManually: Bool = false, forwardedSenderDomain: String? = nil, gateway: String? = nil,
          gatewayStatus: GatewayStatusPayload? = nil, hasDocument: Bool? = nil, importExpiresAt: Double? = nil,
-         invoiceNumber: String? = nil, payeeHost: String? = nil) {
+         invoiceNumber: String? = nil, payeeHost: String? = nil, linkGroup: ReceiptLinkGroupRefWire? = nil) {
         self.chainKey = chainKey
         self.createdAt = createdAt
         self.currency = currency
@@ -275,6 +362,7 @@ struct BudgetReceiptSummaryWire: Codable, Hashable, Sendable, Identifiable {
         self.imageExpiresAt = imageExpiresAt
         self.importExpiresAt = importExpiresAt
         self.invoiceNumber = invoiceNumber
+        self.linkGroup = linkGroup
         self.linked = linked
         self.linkedAccountId = linkedAccountId
         self.linkedEntryRef = linkedEntryRef
@@ -302,7 +390,8 @@ struct BudgetReceiptSummaryWire: Codable, Hashable, Sendable, Identifiable {
         case forwardedManually = "forwarded_manually", forwardedSenderDomain = "forwarded_sender_domain"
         case gateway, gatewayStatus = "gateway_status", hasDocument = "has_document", imageAvailable = "image_available"
         case imageExpiresAt = "image_expires_at", importExpiresAt = "import_expires_at", invoiceNumber = "invoice_number"
-        case linked, linkedAccountId = "linked_account_id", linkedEntryRef = "linked_entry_ref", mathDelta = "math_delta"
+        case linkGroup = "link_group", linked, linkedAccountId = "linked_account_id", linkedEntryRef = "linked_entry_ref"
+        case mathDelta = "math_delta"
         case payeeHost = "payee_host", paymentMethod = "payment_method", rawNip = "raw_nip", rawShopName = "raw_shop_name"
         case rawTextExpiresAt = "raw_text_expires_at", receiptDate = "receipt_date", receiptId = "receipt_id"
         case receiptKind = "receipt_kind", receiptTime = "receipt_time", shopId = "shop_id", sourceKind = "source_kind"
@@ -337,6 +426,7 @@ struct BudgetReceiptSummaryWire: Codable, Hashable, Sendable, Identifiable {
         imageExpiresAt = try nullable(Double.self, .imageExpiresAt)
         importExpiresAt = try values.decodeIfPresent(Double.self, forKey: .importExpiresAt)
         invoiceNumber = try values.decodeIfPresent(String.self, forKey: .invoiceNumber)
+        linkGroup = try values.decodeIfPresent(ReceiptLinkGroupRefWire.self, forKey: .linkGroup)
         linked = try values.decode(Bool.self, forKey: .linked)
         linkedAccountId = try nullable(String.self, .linkedAccountId)
         linkedEntryRef = try nullable(String.self, .linkedEntryRef)

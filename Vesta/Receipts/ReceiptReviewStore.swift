@@ -8,7 +8,7 @@ struct ReceiptMerchantGroup: Equatable, Identifiable {
     let name: String?
     var receipts: [ImportedReceiptSummary]
 
-    var canConfirmWithoutLinking: Bool { id != "unknown" && receipts.contains { !$0.linked } }
+    var canConfirmWithoutLinking: Bool { id != "unknown" && receipts.contains(where: \.canConfirmInReview) }
 
     static func group(_ receipts: [ImportedReceiptSummary]) -> [ReceiptMerchantGroup] {
         var groups: [String: ReceiptMerchantGroup] = [:]
@@ -34,6 +34,10 @@ struct ReceiptMerchantGroup: Equatable, Identifiable {
         }
         return order.compactMap { groups[$0] }
     }
+}
+
+private extension ImportedReceiptSummary {
+    var canConfirmInReview: Bool { status == .imported && !linked && linkGroup == nil }
 }
 
 struct ReceiptConfirmationOutcome: Equatable, Identifiable {
@@ -70,6 +74,7 @@ final class ReceiptReviewStore {
     private let isCurrent: @MainActor () -> Bool
     private var generation = 0
     private var activeTask: Task<Void, Never>?
+    private var groupRequest: Int?
 
     private(set) var receipts: [ImportedReceiptSummary] = []
     private(set) var state: State = .loading
@@ -78,6 +83,9 @@ final class ReceiptReviewStore {
     private(set) var isCleared = false
     private(set) var detail: ReceiptDetail?
     private(set) var detailID: String?
+    private(set) var groupID: String?
+    private(set) var groupDetail: BudgetReceiptGroupDetailResultWire?
+    private(set) var groupFailure: ReceiptError?
     private(set) var candidates: [ReceiptCandidate] = []
     private(set) var selectedCandidate: ReceiptForm.CandidateID?
     private(set) var confirmedReceiptID: String?
@@ -87,7 +95,8 @@ final class ReceiptReviewStore {
     var isDenied: Bool { state == .unauthorized || state == .forbidden }
     var canMatchReceipts: Bool { !isCleared && isCurrent() && allowsMatching() }
     var canConfirmSelected: Bool {
-        !isBusy && detail != nil && (candidates.isEmpty || hasLinkChoice) && confirmLineError == nil
+        !isBusy && detail?.summary.canConfirmInReview == true
+            && (candidates.isEmpty || hasLinkChoice) && confirmLineError == nil
     }
     var totalAdjustment: ReceiptTotalAdjustment? {
         guard case .success(let plan) = selectedLinePlan else { return nil }
@@ -119,13 +128,7 @@ final class ReceiptReviewStore {
 
     func load() async {
         guard let request = reserve() else { return }
-        receipts = []
-        detail = nil
-        detailID = nil
-        candidates = []
-        selectedCandidate = nil
-        hasLinkChoice = false
-        confirmedReceiptID = nil
+        wipe()
         outcomes = []
         failure = nil
         state = .loading
@@ -143,9 +146,18 @@ final class ReceiptReviewStore {
         failure = nil
         await run(request) {
             do {
-                let result = try await self.api.receiptDetail(id: receipt.receiptId, scope: self.scope)
+                let result = try await self.api.receiptDetail(
+                    id: receipt.receiptId, scope: self.scope, includeGroup: receipt.linkGroup != nil
+                )
                 guard self.isCurrent(request) else { return }
-                guard try self.canReview(result.receipt.summary, for: receipt, clearDetail: true) else { return }
+                let current = result.receipt.summary
+                guard current.receiptId == receipt.receiptId else { throw ReceiptError.versionConflict }
+                if current.linkGroup != nil {
+                    self.detail = result.receipt
+                    return
+                }
+                guard receipt.linkGroup == nil else { throw ReceiptError.versionConflict }
+                guard try self.canReview(current, for: receipt, clearDetail: true) else { return }
                 self.detail = result.receipt
                 let payment = result.receipt.summary.paymentMethod
                 let offered = self.canMatchReceipts && payment != "cash" && payment != "mixed" ? result.candidates ?? [] : []
@@ -156,6 +168,41 @@ final class ReceiptReviewStore {
                 self.publish(error, request: request)
             }
         }
+    }
+
+    func loadGroup(id: String) async {
+        guard let request = reserve() else { return }
+        groupID = id
+        groupRequest = request
+        groupDetail = nil
+        groupFailure = nil
+        await run(request) {
+            do {
+                let result = try await self.api.receiptGroupDetail(id: id, scope: self.scope)
+                guard self.isCurrent(request) else { return }
+                guard result.group.groupId == id else { throw ReceiptError.versionConflict }
+                self.groupDetail = result
+            } catch {
+                guard self.isCurrent(request), !APIError.isCancellation(error) else { return }
+                let wrapped = ReceiptError.wrap(error)
+                if wrapped.isAccessDenial {
+                    self.publish(wrapped, request: request)
+                } else {
+                    self.groupFailure = wrapped
+                }
+            }
+        }
+        if groupRequest == request { groupRequest = nil }
+    }
+
+    func dismissGroup() {
+        if groupRequest == generation {
+            generation += 1
+            activeTask?.cancel()
+            activeTask = nil
+            isBusy = false
+        }
+        resetGroup()
     }
 
     func selectCandidate(_ candidate: ReceiptCandidate?) {
@@ -201,7 +248,7 @@ final class ReceiptReviewStore {
         outcomes = []
         failure = nil
         await run(operation) {
-            for summary in group.receipts where !summary.linked {
+            for summary in group.receipts where summary.canConfirmInReview {
                 guard self.isCurrent(operation) else { return }
                 do {
                     let result = try await self.api.receiptDetail(id: summary.receiptId, scope: self.scope)
@@ -250,7 +297,7 @@ final class ReceiptReviewStore {
             finishConfirmation(summary, alreadySubmitted: true, clearDetail: clearDetail)
             return false
         }
-        guard current.status == .imported, !current.linked else { throw ReceiptError.versionConflict }
+        guard current.canConfirmInReview else { throw ReceiptError.versionConflict }
         return true
     }
 
@@ -328,26 +375,38 @@ final class ReceiptReviewStore {
     }
 
     private func performLoad(_ request: Int) async {
-        var loaded: [ImportedReceiptSummary] = []
-        var ids: Set<String> = []
-        var cursor: String?
-        var cursors: Set<String> = []
         do {
-            while true {
-                let page = try await api.listImportedReceipts(cursor: cursor, scope: scope)
-                guard isCurrent(request) else { return }
-                loaded.append(contentsOf: page.receipts.filter {
-                    $0.status == .imported && ids.insert($0.receiptId).inserted
-                })
-                guard let next = page.nextCursor, !next.isEmpty, cursors.insert(next).inserted else { break }
-                cursor = next
+            let imported = try await loadPages(request, accepting: { $0.status == .imported }) { cursor in
+                try await api.listImportedReceipts(cursor: cursor, scope: scope)
             }
-            receipts = loaded
+            receipts = imported
             state = .loaded
+            let grouped = try await loadPages(request, accepting: { $0.linkGroup != nil }) { cursor in
+                try await api.listLinkedReceipts(cursor: cursor, scope: scope)
+            }
+            let groupedIDs = Set(grouped.map(\.receiptId))
+            receipts = imported.filter { !groupedIDs.contains($0.receiptId) } + grouped
             failure = nil
         } catch {
             publish(error, request: request)
         }
+    }
+
+    private func loadPages(
+        _ request: Int, accepting: (ImportedReceiptSummary) -> Bool,
+        fetch: (String?) async throws -> ReceiptListPage
+    ) async throws -> [ImportedReceiptSummary] {
+        var loaded: [ImportedReceiptSummary] = []
+        var ids: Set<String> = []
+        var cursor: String?
+        var cursors: Set<String> = []
+        repeat {
+            let page = try await fetch(cursor)
+            guard isCurrent(request) else { throw CancellationError() }
+            loaded.append(contentsOf: page.receipts.filter { accepting($0) && ids.insert($0.receiptId).inserted })
+            cursor = page.nextCursor.flatMap { !$0.isEmpty && cursors.insert($0).inserted ? $0 : nil }
+        } while cursor != nil
+        return loaded
     }
 
     private func performConfirm(
@@ -427,5 +486,13 @@ final class ReceiptReviewStore {
         selectedCandidate = nil
         hasLinkChoice = false
         confirmedReceiptID = nil
+        resetGroup()
+    }
+
+    private func resetGroup() {
+        groupID = nil
+        groupRequest = nil
+        groupDetail = nil
+        groupFailure = nil
     }
 }

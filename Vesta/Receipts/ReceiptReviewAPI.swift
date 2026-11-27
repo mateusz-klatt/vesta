@@ -41,8 +41,16 @@ typealias ReceiptDetailResult = Components.Schemas.BudgetReceiptDetailResult
 
 protocol ReceiptReviewAPI: Sendable {
     func listImportedReceipts(cursor: String?, scope: ReceiptSessionScope) async throws -> ReceiptListPage
-    func receiptDetail(id: String, scope: ReceiptSessionScope) async throws -> ReceiptDetailResult
+    func listLinkedReceipts(cursor: String?, scope: ReceiptSessionScope) async throws -> ReceiptListPage
+    func receiptDetail(id: String, scope: ReceiptSessionScope, includeGroup: Bool) async throws -> ReceiptDetailResult
+    func receiptGroupDetail(id: String, scope: ReceiptSessionScope) async throws -> BudgetReceiptGroupDetailResultWire
     func confirmImportedReceipt(_ request: ReceiptConfirmRequest, scope: ReceiptSessionScope) async throws -> ReceiptDetail
+}
+
+extension ReceiptReviewAPI {
+    func receiptDetail(id: String, scope: ReceiptSessionScope) async throws -> ReceiptDetailResult {
+        try await receiptDetail(id: id, scope: scope, includeGroup: false)
+    }
 }
 
 struct SessionBoundReceiptReviewAPI: ReceiptReviewAPI {
@@ -55,8 +63,16 @@ struct SessionBoundReceiptReviewAPI: ReceiptReviewAPI {
         try await run(requested) { try await api.listImportedReceipts(cursor: cursor, scope: scope) }
     }
 
-    func receiptDetail(id: String, scope requested: ReceiptSessionScope) async throws -> ReceiptDetailResult {
-        try await run(requested) { try await api.receiptDetail(id: id, scope: scope) }
+    func listLinkedReceipts(cursor: String?, scope requested: ReceiptSessionScope) async throws -> ReceiptListPage {
+        try await run(requested) { try await api.listLinkedReceipts(cursor: cursor, scope: scope) }
+    }
+
+    func receiptDetail(id: String, scope requested: ReceiptSessionScope, includeGroup: Bool) async throws -> ReceiptDetailResult {
+        try await run(requested) { try await api.receiptDetail(id: id, scope: scope, includeGroup: includeGroup) }
+    }
+
+    func receiptGroupDetail(id: String, scope requested: ReceiptSessionScope) async throws -> BudgetReceiptGroupDetailResultWire {
+        try await run(requested) { try await api.receiptGroupDetail(id: id, scope: scope) }
     }
 
     func confirmImportedReceipt(_ request: ReceiptConfirmRequest, scope requested: ReceiptSessionScope) async throws -> ReceiptDetail {
@@ -76,10 +92,13 @@ struct SessionBoundReceiptReviewAPI: ReceiptReviewAPI {
             return value
         } catch {
             if APIError.isCancellation(error) { throw CancellationError() }
+            try Task.checkCancellation()
             guard await isCurrent() else { throw CancellationError() }
             let error = ReceiptError.wrap(error)
             if error.isAccessDenial {
-                guard await onDenial(error) else { throw CancellationError() }
+                guard await MainActor.run(body: { !Task.isCancelled && onDenial(error) }) else {
+                    throw CancellationError()
+                }
             }
             throw error
         }
