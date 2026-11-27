@@ -3,12 +3,17 @@ import Observation
 
 typealias ImportedReceiptSummary = Components.Schemas.BudgetReceiptSummary
 
+private extension ImportedReceiptSummary {
+    var hasBankLink: Bool { linked || linkedTransaction != nil }
+    var isEditableInReview: Bool { status == .imported && !hasBankLink }
+}
+
 struct ReceiptMerchantGroup: Equatable, Identifiable {
     let id: String
     let name: String?
     var receipts: [ImportedReceiptSummary]
 
-    var canConfirmWithoutLinking: Bool { id != "unknown" && receipts.contains { !$0.linked } }
+    var canConfirmWithoutLinking: Bool { id != "unknown" && receipts.contains(where: \.isEditableInReview) }
 
     static func group(_ receipts: [ImportedReceiptSummary]) -> [ReceiptMerchantGroup] {
         var groups: [String: ReceiptMerchantGroup] = [:]
@@ -86,8 +91,9 @@ final class ReceiptReviewStore {
     var groups: [ReceiptMerchantGroup] { ReceiptMerchantGroup.group(receipts) }
     var isDenied: Bool { state == .unauthorized || state == .forbidden }
     var canMatchReceipts: Bool { !isCleared && isCurrent() && allowsMatching() }
+    var canEditSelectedReceipt: Bool { detail?.summary.isEditableInReview == true }
     var canConfirmSelected: Bool {
-        !isBusy && detail != nil && (candidates.isEmpty || hasLinkChoice) && confirmLineError == nil
+        !isBusy && canEditSelectedReceipt && (candidates.isEmpty || hasLinkChoice) && confirmLineError == nil
     }
     var totalAdjustment: ReceiptTotalAdjustment? {
         guard case .success(let plan) = selectedLinePlan else { return nil }
@@ -99,7 +105,7 @@ final class ReceiptReviewStore {
     }
 
     private var selectedLinePlan: Result<ReceiptConfirmLinePlan, ReceiptError>? {
-        guard let detail else { return nil }
+        guard canEditSelectedReceipt, let detail else { return nil }
         guard let total = detail.summary.totalAmount.flatMap(ReceiptConfirmLines.normalizeConfirmTotal) else {
             return .failure(.invalidTotal)
         }
@@ -145,13 +151,20 @@ final class ReceiptReviewStore {
             do {
                 let result = try await self.api.receiptDetail(id: receipt.receiptId, scope: self.scope)
                 guard self.isCurrent(request) else { return }
-                guard try self.canReview(result.receipt.summary, for: receipt, clearDetail: true) else { return }
-                self.detail = result.receipt
-                let payment = result.receipt.summary.paymentMethod
+                var detail = result.receipt
+                guard try self.canReview(detail.summary, for: receipt, selectingDetail: true) else { return }
+                if detail.summary.hasBankLink && detail.summary.version == receipt.version {
+                    detail.summary.linkedTransaction = detail.summary.linkedTransaction ?? receipt.linkedTransaction
+                }
+                self.detail = detail
+                guard detail.summary.isEditableInReview else { return }
+                let payment = detail.summary.paymentMethod
                 let offered = self.canMatchReceipts && payment != "cash" && payment != "mixed" ? result.candidates ?? [] : []
                 self.candidates = offered
-                self.selectedCandidate = Self.preselectedCandidate(from: offered).map(ReceiptForm.CandidateID.init)
-                self.hasLinkChoice = self.selectedCandidate != nil
+                if !receipt.hasUnknownReviewMetadata && !detail.hasUnknownReviewMetadata {
+                    self.selectedCandidate = Self.preselectedCandidate(from: offered).map(ReceiptForm.CandidateID.init)
+                    self.hasLinkChoice = self.selectedCandidate != nil
+                }
             } catch {
                 self.publish(error, request: request)
             }
@@ -159,7 +172,7 @@ final class ReceiptReviewStore {
     }
 
     func selectCandidate(_ candidate: ReceiptCandidate?) {
-        guard !isBusy, !isCleared else { return }
+        guard !isBusy, !isCleared, canEditSelectedReceipt else { return }
         if let candidate {
             guard canMatchReceipts, candidates.contains(candidate) else { return }
             selectedCandidate = ReceiptForm.CandidateID(candidate)
@@ -178,7 +191,8 @@ final class ReceiptReviewStore {
 
     func confirmSelected() async {
         guard canConfirmSelected, let detail, let detailID,
-              let summary = receipts.first(where: { $0.receiptId == detailID }) else { return }
+              let summary = receipts.first(where: { $0.receiptId == detailID }),
+              summary.isEditableInReview else { return }
         var candidate: ReceiptCandidate?
         if let selectedCandidate {
             guard canMatchReceipts else { return }
@@ -198,15 +212,16 @@ final class ReceiptReviewStore {
 
     func confirmMerchant(_ group: ReceiptMerchantGroup) async {
         guard group.canConfirmWithoutLinking, let operation = reserve() else { return }
+        let currentReceipts = Set(receipts)
         outcomes = []
         failure = nil
         await run(operation) {
-            for summary in group.receipts where !summary.linked {
+            for summary in group.receipts where summary.isEditableInReview && currentReceipts.contains(summary) {
                 guard self.isCurrent(operation) else { return }
                 do {
                     let result = try await self.api.receiptDetail(id: summary.receiptId, scope: self.scope)
                     guard self.isCurrent(operation) else { return }
-                    guard try self.canReview(result.receipt.summary, for: summary, clearDetail: false) else { continue }
+                    guard try self.canReview(result.receipt.summary, for: summary, selectingDetail: false) else { continue }
                     guard result.receipt.summary.version == summary.version else { throw ReceiptError.versionConflict }
                     let confirmation: Confirmation
                     do throws(ReceiptError) {
@@ -237,20 +252,25 @@ final class ReceiptReviewStore {
     }
 
     nonisolated static func preselectedCandidate(from candidates: [ReceiptCandidate]) -> ReceiptCandidate? {
-        guard candidates.count == 1, let candidate = candidates.first,
-              candidate.matchStrength == .nip || candidate.matchStrength == .distinctive else { return nil }
-        return candidate
+        guard candidates.count == 1, let candidate = candidates.first else { return nil }
+        switch candidate.matchStrength {
+        case .id, .nip, .distinctive: return candidate
+        case .generic, .none, .unknown: return nil
+        }
     }
 
     private func canReview(
-        _ current: ImportedReceiptSummary, for summary: ImportedReceiptSummary, clearDetail: Bool
+        _ current: ImportedReceiptSummary, for summary: ImportedReceiptSummary, selectingDetail: Bool
     ) throws -> Bool {
-        guard current.receiptId == summary.receiptId else { throw ReceiptError.versionConflict }
+        guard current.receiptId == summary.receiptId, summary.status == .imported else {
+            throw ReceiptError.versionConflict
+        }
         if current.status == .confirmed {
-            finishConfirmation(summary, alreadySubmitted: true, clearDetail: clearDetail)
+            finishConfirmation(summary, alreadySubmitted: true, clearDetail: selectingDetail)
             return false
         }
-        guard current.status == .imported, !current.linked else { throw ReceiptError.versionConflict }
+        guard current.status == .imported, current.hasBankLink == summary.hasBankLink,
+              selectingDetail || !current.hasBankLink else { throw ReceiptError.versionConflict }
         return true
     }
 

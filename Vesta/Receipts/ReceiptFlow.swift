@@ -55,6 +55,7 @@ struct ReceiptForm: Equatable {
     private(set) var parsedShopName = ""
     private(set) var parsedNIP = ""
     private var documentKind: BudgetReceiptSummaryWire.DocumentKindPayload?
+    private(set) var canConfirmStatus = true
     private var invoiceNumber: String?
     private var parsedLines: [ReceiptLine] = []
 
@@ -80,13 +81,16 @@ struct ReceiptForm: Equatable {
         currency = summary.currency ?? "PLN"
         payment = summary.paymentMethod.flatMap(ReceiptConfirmRequest.PaymentMethodPayload.init(rawValue:)) ?? .unknown
         documentKind = summary.documentKind
+        canConfirmStatus = summary.status != .unknown
         invoiceNumber = summary.invoiceNumber
         parsedLines = draft.lines
         lines = draft.lines
         // Pre-select only an unambiguous match: exactly one candidate on a
         // card/BLIK payment. Otherwise the owner picks (or saves unlinked).
-        if candidates.count == 1, payment == .card || payment == .blik {
-            candidate = CandidateID(candidates[0])
+        if !draft.hasUnknownReviewMetadata, candidates.count == 1,
+           let match = candidates.first, match.matchStrength != .unknown,
+           payment == .card || payment == .blik {
+            candidate = CandidateID(match)
         }
     }
 
@@ -126,7 +130,7 @@ struct ReceiptForm: Equatable {
     }
 
     private var hasValidHeader: Bool {
-        guard day != nil else { return false }
+        guard canConfirmStatus, day != nil else { return false }
         guard nip.isEmpty || PANRedactor.validNIP(nip) else { return false }
         guard time.isEmpty || Self.validTime(time) else { return false }
         return currency.wholeMatch(of: /[A-Z]{3}/) != nil
@@ -436,8 +440,7 @@ final class ReceiptFlow {
             guard !abandoned, isCurrent else { return }
             var result = try await api.parseReceiptText(prepared, source: source, scope: scope)
             if abandoned || !isCurrent {
-                await janitor.enqueue(.init(id: result.receiptId, version: result.version, scope: scope))
-                await drainCleanup()
+                await drainCleanup(adding: result)
                 return
             }
             if !canMatchReceipts { result.candidates = [] }
@@ -506,14 +509,15 @@ final class ReceiptFlow {
     /// Delete the open draft plus any earlier failed deletes. Best effort: a
     /// draft hestia can't delete now expires after 48 h anyway.
     private func deleteCurrentDraft() async {
-        if let parsed {
-            self.parsed = nil
-            await janitor.enqueue(.init(id: parsed.receiptId, version: parsed.version, scope: scope))
-        }
-        await drainCleanup()
+        let draft = parsed
+        parsed = nil
+        await drainCleanup(adding: draft)
     }
 
-    private func drainCleanup() async {
+    private func drainCleanup(adding draft: ReceiptParseResult?) async {
+        if let draft, draft.draft.summary.status != .unknown {
+            await janitor.enqueue(.init(id: draft.receiptId, version: draft.version, scope: scope))
+        }
         guard isCleanupScopeCurrent(scope) else { return }
         await janitor.drain(using: api, scope: scope, isScopeCurrent: isCleanupScopeCurrent)
     }

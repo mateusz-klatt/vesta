@@ -369,7 +369,7 @@ private struct ReceiptReviewStep: View {
                 }
             }
 
-            if flow.canMatchReceipts && flow.form.canLink {
+            if flow.form.canConfirmStatus && flow.canMatchReceipts && flow.form.canLink {
                 Section {
                     if flow.form.matchFieldsEdited {
                         Text("Shop or NIP changed, so these matches no longer apply. Save without a link, or go back and read the text again.")
@@ -397,8 +397,10 @@ private struct ReceiptReviewStep: View {
             ReceiptErrorSection(error: flow.form.confirmLineError ?? flow.error)
 
             Section {
-                Button("Save receipt") { Task { await flow.confirm() } }
-                    .disabled(!flow.form.isValid)
+                if flow.form.canConfirmStatus {
+                    Button("Save receipt") { Task { await flow.confirm() } }
+                        .disabled(!flow.form.isValid)
+                }
                 Button("Back to text") { Task { await flow.backToEdit() } }
             }
         }

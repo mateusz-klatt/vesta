@@ -67,8 +67,8 @@ struct BearerAuthMiddleware: ClientMiddleware {
             || (reviewScoped && operationID == Operations.ConfirmBudgetReceipt.id)
         if reviewOperation {
             guard reviewScoped, receiptScope != nil, receiptReviewEnabled() else { throw ReceiptError.forbidden }
-            // Since 0.52.0 the server exposes imported status and gateway evidence.
-            request.headerFields[Self.receiptContractHeader] = "0.52.0"
+            // V6 needs 0.60.0 for linked transactions. Keep scan unversioned for older servers.
+            request.headerFields[Self.receiptContractHeader] = "0.60.0"
         }
         let issuesDeviceToken = operationID == Operations.RedeemBudgetReceiptDevice.id
             || operationID == Operations.LoginBudgetReceiptDevice.id

@@ -4,7 +4,7 @@
 
 V6 adds a DEBUG-only phone flow for receipts already imported by hestia. It lists `status: imported` receipts with the default `evidence: exclude`, pages through the result, and groups rows by merchant. A detail view offers bank candidates, an explicit no-link choice, and single confirmation. Each merchant group also has a bulk action that always confirms with `link: null`.
 
-The existing scan → parse → confirm flow is unchanged. Gmail import controls, receipt images, search, and editing imported receipt fields are out of scope.
+The scan → parse → confirm flow retains its existing request format. Gmail import controls, receipt images, search, and editing imported receipt fields are out of scope.
 
 V6 is **default-off**. `AppConfig.receiptReviewEnabled` remains `false`, and Release always returns `false`. For DEBUG UAT, add `-vesta.receiptReview` to the scheme's launch arguments. The entry point is on Home.
 
@@ -18,7 +18,7 @@ Presentation, exchange eligibility, and every review request require:
 
 The app checks current grants for the budget attached to the token. Grants from a different budget do not count. Choosing a candidate additionally requires `budget.receipts.match` both for that budget and on the issued token. Without match, candidates and selection are cleared and only `link: null` can be sent.
 
-List, detail, and review-confirm requests send only the exchanged device bearer for authentication. They include `X-Hestia-Contract-Version: 0.52.0` so Hestia returns the imported status and gateway fields. The existing add-receipt scan path keeps its previous request format.
+List, detail, and review-confirm requests authenticate with the exchanged device bearer and negotiate `X-Hestia-Contract-Version: 0.60.0`. The add-receipt scan path leaves the header unset so it can still call older Hestia servers that reject a version higher than their own.
 
 A 401, 403, flag change, capability/token withdrawal, account switch, origin switch, or sign-out clears cached receipt/detail data and terminates the store. Session-bound APIs revalidate after every awaited operation, so late responses and late denials cannot republish into a newer session. V4 rotation and its journal remain unchanged.
 
@@ -26,7 +26,8 @@ A 401, 403, flag change, capability/token withdrawal, account switch, origin swi
 
 - The list request sends `status: imported`, `evidence: exclude`, and `limit: 200`, then follows distinct cursors.
 - Merchant groups use a non-empty `chain_key`, a valid NIP, or a normalized case-insensitive shop name, in that order. The Unknown merchant group offers individual review. Known groups can bulk confirm their unlinked rows.
-- Exactly one candidate with `match_strength` `nip` or `distinctive` is preselected. A weak candidate or multiple candidates require a choice before confirming.
+- Exactly one candidate with `match_strength` `id`, `nip`, or `distinctive` is preselected when receipt metadata is recognized. A weak or unknown candidate or multiple candidates require a choice before confirming.
+- A row with linked transaction metadata shows its booking date and amount with a bank indicator. Linked receipts open read-only and can carry the list transaction into detail. Receipts with an unknown status have no confirm action.
 - A single confirm uses the chosen signed candidate link or explicit `link: null`. The review flow only submits unlinked imports. If a receipt was confirmed since listing, it is removed from the pending list without another write.
 - Bulk confirm fetches each receipt's current detail and checks that its version still matches the listed summary. Changed receipts report a conflict. Every confirm uses that receipt's own `version` as `expected_version` and always sends `link: null`.
 - Confirmation preserves existing shop, NIP and lines by omitting those fields. An imported invoice with no stored lines gets one summary line for the invoice total.
@@ -48,11 +49,14 @@ The confirm operation keeps its path and operation ID. `BudgetReceiptConfirmRequ
 
 The generator drops nullable `anyOf` properties. Wire overrides preserve them. Shared scan/review response types accept omitted legacy keys and default a missing candidate strength to `none`. Both legacy contract targets retain their own unchanged specs.
 
+The receipt schema additions from Hestia 0.60.0 at `ca152ff` include ID-match candidates, linked transaction and group metadata, and required nullable confirm-line fields. Both existing confirm transports already supply these fields.
+
 ## UAT checklist
 
 - [ ] Without `-vesta.receiptReview`, verify Home has no imported-review entry and zero list/detail/review-confirm requests.
 - [ ] In DEBUG with the flag, use an exchanged token with view/edit. Verify imported rows group by merchant and all list pages load.
-- [ ] With exactly one `nip` candidate and then one `distinctive` candidate, verify it is preselected. Verify zero, two, `generic`, and `none` candidates produce no selection.
+- [ ] Verify a single `id`, `nip`, or `distinctive` candidate is preselected. Verify zero, two, and single weak candidates produce no selection.
+- [ ] Open a linked row and verify the booking date and amount appear on the list and in its read-only detail.
 - [ ] Confirm one receipt with a chosen candidate; confirm another with “Don’t link”. Inspect the server ledger and links.
 - [ ] Remove match from either capabilities or the issued token. Verify candidates disappear and only no-link confirmation is possible.
 - [ ] Bulk-confirm a merchant. Verify requests are sequential, every receipt uses its own current version, and no bank link is applied.
