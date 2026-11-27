@@ -339,7 +339,7 @@ final class ReceiptReviewStoreTests: XCTestCase {
         XCTAssertEqual(lines.map(\.netLineTotal), ["12.34"])
     }
 
-    func testPaymentConfirmationDoesNotSendMismatchedLines() async {
+    func testPaymentConfirmationDisablesSaveAndShowsMismatchBeforeTap() async {
         let api = MockReceiptReviewAPI()
         var detail = ReviewFixtures.detail()
         detail.summary.documentKind = .paymentConfirmation
@@ -351,11 +351,12 @@ final class ReceiptReviewStoreTests: XCTestCase {
         await store.select(detail.summary)
 
         XCTAssertNil(store.totalAdjustment)
+        XCTAssertFalse(store.canConfirmSelected)
+        XCTAssertEqual(store.confirmLineError, .totalMismatch)
         await store.confirmSelected()
 
         let confirms = await api.confirms
         XCTAssertTrue(confirms.isEmpty)
-        XCTAssertEqual(store.failure, .totalMismatch)
     }
 
     func testSingleConfirmWithoutMatchPermissionSendsNull() async throws {
@@ -452,11 +453,12 @@ final class ReceiptReviewStoreTests: XCTestCase {
         XCTAssertEqual(store.outcomes[2].code, "budget_receipt_conflict")
     }
 
-    func testInvoiceWithNoLinesOmitsLinesAndHidesNote() async throws {
+    func testInvoiceWithNoLinesSendsInvoiceNumberLineAndHidesNote() async throws {
         let api = MockReceiptReviewAPI()
         let summary = ReviewFixtures.summary()
         var invoice = ReviewFixtures.detail()
         invoice.summary.documentKind = .invoice
+        invoice.summary.invoiceNumber = " INV-001 "
         invoice.lines = []
         invoice.summary.receiptTime = ""
         await api.setPage(cursor: nil, receipts: [summary], next: nil)
@@ -465,12 +467,21 @@ final class ReceiptReviewStoreTests: XCTestCase {
         await store.load()
         await store.select(summary)
         XCTAssertNil(store.totalAdjustment)
+        XCTAssertTrue(store.canConfirmSelected)
         await store.confirmSelected()
 
         let confirms = await api.confirms
         let request = try XCTUnwrap(confirms.first)
         XCTAssertNil(request.receiptTime)
-        XCTAssertNil(request.lines)
+        XCTAssertEqual(request.lines?.count, 1)
+        let line = try XCTUnwrap(request.lines?.first)
+        XCTAssertEqual(line.rawName, "INV-001")
+        XCTAssertEqual(line.lineKind, .other)
+        XCTAssertEqual(line.grossLineTotal, request.totalAmount)
+        XCTAssertEqual(line.netLineTotal, request.totalAmount)
+        XCTAssertEqual(line.discountAmount, "0")
+        XCTAssertEqual(line.quantity, "1")
+        XCTAssertNil(store.outcomes.first?.adjustment)
     }
 
     func testClearDropsLateConfirmFailure() async throws {

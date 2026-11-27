@@ -185,7 +185,12 @@ private struct ImportedReceiptDetailView: View {
                     .disabled(store.isBusy || !store.canMatchReceipts)
                 }
                 Section {
-                    if let adjustment = store.totalAdjustment {
+                    if let error = store.confirmLineError {
+                        Text(error.title)
+                        Text(error.message)
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                    } else if let adjustment = store.totalAdjustment {
                         Text(adjustment.message)
                             .font(.caption)
                             .foregroundStyle(Theme.textSecondary)

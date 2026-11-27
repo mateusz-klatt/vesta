@@ -55,6 +55,7 @@ struct ReceiptForm: Equatable {
     private(set) var parsedShopName = ""
     private(set) var parsedNIP = ""
     private var documentKind: BudgetReceiptSummaryWire.DocumentKindPayload?
+    private var invoiceNumber: String?
     private var parsedLines: [ReceiptLine] = []
 
     /// `entry_reference` is unique per account only.
@@ -79,6 +80,7 @@ struct ReceiptForm: Equatable {
         currency = summary.currency ?? "PLN"
         payment = summary.paymentMethod.flatMap(ReceiptConfirmRequest.PaymentMethodPayload.init(rawValue:)) ?? .unknown
         documentKind = summary.documentKind
+        invoiceNumber = summary.invoiceNumber
         parsedLines = draft.lines
         lines = draft.lines
         // Pre-select only an unambiguous match: exactly one candidate on a
@@ -154,10 +156,15 @@ struct ReceiptForm: Equatable {
         let chosen = canLink && !matchFieldsEdited ? candidates.first { CandidateID($0) == candidate } : nil
         // Free text leaves the phone too: the same card redaction applies.
         let shop = outgoingShopName
+        let requestLines = ReceiptConfirmLines.linesForRequest(
+            plan, documentKind: documentKind, originalLines: parsedLines, draftLines: lines,
+            invoiceNumber: invoiceNumber, draftShopName: PANRedactor.redact(shopName),
+            storedShopName: parsedShopName, total: total
+        )
         return ReceiptConfirmRequest(
             currency: currency,
             expectedVersion: version,
-            lines: plan.lines,
+            lines: requestLines,
             link: chosen.map { .init(accountId: $0.accountId, candidateToken: $0.candidateToken, entryReference: $0.entryReference) },
             paymentMethod: payment,
             rawNip: nip.isEmpty ? nil : nip,

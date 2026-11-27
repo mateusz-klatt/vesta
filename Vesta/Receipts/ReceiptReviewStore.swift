@@ -86,14 +86,24 @@ final class ReceiptReviewStore {
     var groups: [ReceiptMerchantGroup] { ReceiptMerchantGroup.group(receipts) }
     var isDenied: Bool { state == .unauthorized || state == .forbidden }
     var canMatchReceipts: Bool { !isCleared && isCurrent() && allowsMatching() }
-    var canConfirmSelected: Bool { !isBusy && detail != nil && (candidates.isEmpty || hasLinkChoice) }
-    var totalAdjustment: ReceiptTotalAdjustment? {
-        guard let detail, let total = detail.summary.totalAmount else { return nil }
-        return ReceiptConfirmLines.receiptTotalAdjustment(
-            documentKind: detail.summary.documentKind, originalLines: detail.lines,
-            draftLines: detail.lines, total: total
-        )
+    var canConfirmSelected: Bool {
+        !isBusy && detail != nil && (candidates.isEmpty || hasLinkChoice) && confirmLineError == nil
     }
+    var totalAdjustment: ReceiptTotalAdjustment? {
+        guard case .success(let plan) = selectedLinePlan else { return nil }
+        return plan.adjustment
+    }
+    var confirmLineError: ReceiptError? {
+        guard case .failure(let error) = selectedLinePlan else { return nil }
+        return error.receiptError
+    }
+
+    private var selectedLinePlan: Result<ReceiptConfirmLinePlan, ReceiptConfirmLineError>? {
+        guard let detail, let total = detail.summary.totalAmount.flatMap(ReceiptConfirmLines.normalizeConfirmTotal)
+        else { return nil }
+        return Self.linePlan(for: detail, total: total)
+    }
+
     private(set) var hasLinkChoice = false
 
     init(api: any ReceiptReviewAPI, scope: ReceiptSessionScope,
@@ -247,6 +257,17 @@ final class ReceiptReviewStore {
         let adjustment: ReceiptTotalAdjustment?
     }
 
+    private static func linePlan(
+        for detail: ReceiptDetail, total: String
+    ) -> Result<ReceiptConfirmLinePlan, ReceiptConfirmLineError> {
+        Result { () throws(ReceiptConfirmLineError) in
+            try ReceiptConfirmLines.planConfirmLines(
+                documentKind: detail.summary.documentKind, originalLines: detail.lines,
+                draftLines: detail.lines, total: total
+            )
+        }
+    }
+
     private static func confirmation(
         for detail: ReceiptDetail, candidate: ReceiptCandidate?
     ) throws(ReceiptError) -> Confirmation {
@@ -261,16 +282,17 @@ final class ReceiptReviewStore {
         guard candidate == nil || (payment != .cash && payment != .mixed) else { throw incomplete }
 
         let plan: ReceiptConfirmLinePlan
-        do {
-            plan = try ReceiptConfirmLines.planConfirmLines(
-                documentKind: summary.documentKind, originalLines: detail.lines,
-                draftLines: detail.lines, total: total
-            )
-        } catch {
-            throw error.receiptError
+        switch linePlan(for: detail, total: total) {
+        case .success(let result): plan = result
+        case .failure(let error): throw error.receiptError
         }
+        let lines = ReceiptConfirmLines.linesForRequest(
+            plan, documentKind: summary.documentKind, originalLines: detail.lines, draftLines: detail.lines,
+            invoiceNumber: summary.invoiceNumber, draftShopName: summary.rawShopName ?? "",
+            storedShopName: summary.rawShopName, total: total
+        )
         let request = ReceiptConfirmRequest(
-            currency: currency, expectedVersion: summary.version, lines: plan.lines,
+            currency: currency, expectedVersion: summary.version, lines: lines,
             link: candidate.map { .init(accountId: $0.accountId, candidateToken: $0.candidateToken,
                                         entryReference: $0.entryReference) },
             paymentMethod: payment, receiptDate: day.iso, receiptId: summary.receiptId,

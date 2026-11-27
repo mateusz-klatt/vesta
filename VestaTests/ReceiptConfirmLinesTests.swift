@@ -53,6 +53,14 @@ final class ReceiptConfirmLinesTests: XCTestCase {
         XCTAssertEqual(ReceiptConfirmLines.computeLinesDelta(result.lines?.map(\.netLineTotal) ?? [], total: "10"), 0)
     }
 
+    func testNonPESELElevenDigitRemainderIsAppended() throws {
+        let result = try plan([line("0.01")], total: "123456789.05")
+        XCTAssertEqual(result.adjustment, .remainder(amount: "123456789.04"))
+        XCTAssertEqual(result.lines?.map(\.netLineTotal), ["0.01", "123456789.04"])
+        XCTAssertEqual(result.lines?.last?.lineKind, .item)
+        XCTAssertEqual(result.lines?.last?.grossLineTotal, "123456789.04")
+    }
+
     func testExcessAndInvalidLinesAreReplacedBySummary() throws {
         for original in [[line("11")], [line("8", gross: "7")], [line("7", name: "\u{200D}Item")]] {
             let result = try plan(original)
@@ -160,11 +168,50 @@ final class ReceiptConfirmLinesTests: XCTestCase {
         }
     }
 
-    func testEmptyInvoiceKeepsStoredLinesAndHidesAdjustment() throws {
+    func testEmptyInvoiceSynthesizesOneLineAndHidesAdjustment() throws {
         let result = try plan([], kind: .invoice)
-        XCTAssertNil(result.lines)
+        let lines = try XCTUnwrap(ReceiptConfirmLines.linesForRequest(
+            result, documentKind: .invoice, originalLines: [], draftLines: [], invoiceNumber: nil,
+            draftShopName: "", storedShopName: nil, total: "10"
+        ))
+        XCTAssertEqual(lines.count, 1)
+        let summary = try XCTUnwrap(lines.first)
+        XCTAssertEqual(summary.rawName, "Document")
+        XCTAssertEqual(summary.lineKind, .other)
+        XCTAssertEqual(summary.grossLineTotal, "10")
+        XCTAssertEqual(summary.netLineTotal, "10")
+        XCTAssertEqual(summary.quantity, "1")
+        XCTAssertEqual(summary.discountAmount, "0")
         XCTAssertNil(result.adjustment)
         XCTAssertEqual(try plan([]).adjustment, .remainder(amount: "10"))
+    }
+
+    func testInvoiceSummaryNameUsesInvoiceNumberThenDraftShopThenStoredShop() {
+        let cases: [(number: String?, draft: String, stored: String?, expected: String)] = [
+            (" INV-SAMPLE-1\n", "Draft shop", "Stored shop", "INV-SAMPLE-1"),
+            ("  ", " Draft  shop ", "Stored shop", "Draft  shop"),
+            (nil, " \t", " Stored shop ", "Stored shop"),
+        ]
+        for (number, draft, stored, expected) in cases {
+            let line = ReceiptConfirmLines.synthesizeInvoiceSummaryLine(
+                invoiceNumber: number, draftShopName: draft, storedShopName: stored, normalizedTotal: "10"
+            )
+            XCTAssertEqual(line.rawName, expected)
+        }
+    }
+
+    func testInvoiceSummaryNameSkipsRedactedValuesAndDefaultsToDocument() {
+        let cases: [(number: String?, draft: String, stored: String?, expected: String)] = [
+            ("[usunięto]", "Draft shop", "Stored shop", "Draft shop"),
+            ("[usunięto]", " [usunięto] ", "Stored shop", "Stored shop"),
+            ("[usunięto]", PANRedactor.placeholder, "[usunięto]", "Document"),
+        ]
+        for (number, draft, stored, expected) in cases {
+            let line = ReceiptConfirmLines.synthesizeInvoiceSummaryLine(
+                invoiceNumber: number, draftShopName: draft, storedShopName: stored, normalizedTotal: "10"
+            )
+            XCTAssertEqual(line.rawName, expected)
+        }
     }
 
     func testAdjustmentOnlyShownForSuccessfulFallback() {

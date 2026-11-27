@@ -138,8 +138,7 @@ enum ReceiptConfirmLines {
 
     static func receiptHasRedactedLines(_ lines: [ReceiptLine]) -> Bool {
         func isRedacted(_ text: String) -> Bool {
-            let value = trim(text).precomposedStringWithCanonicalMapping
-            return value == "[usunięto]" || value == PANRedactor.placeholder
+            isRedactedValue(trim(text).precomposedStringWithCanonicalMapping)
         }
         return lines.contains { isRedacted($0.rawName) || ($0.rawUnit.map(isRedacted) ?? false) }
     }
@@ -194,16 +193,64 @@ enum ReceiptConfirmLines {
         }
         guard allowsFallback else { throw .totalMismatch }
         if !hasRedactedLines, let delta, delta < 0, cleanLines.count < maxReceiptLines,
-           let remainder = normalizeConfirmMoney(NSDecimalNumber(decimal: -delta).stringValue) {
+           let formatted = formatPositiveRemainder(-delta), let remainder = normalizeConfirmMoney(formatted) {
             cleanLines.append(synthesizeTotalLine("Pozostałe / nierozpoznane pozycje", amount: remainder, kind: .item))
             return .init(lines: cleanLines, adjustment: .remainder(amount: remainder))
         }
         return summary
     }
 
+    /// An empty invoice needs a line for the server's sum check, without an adjustment note.
+    static func linesForRequest(
+        _ plan: ReceiptConfirmLinePlan, documentKind: BudgetReceiptSummaryWire.DocumentKindPayload?,
+        originalLines: [ReceiptLine], draftLines: [ReceiptLine], invoiceNumber: String?,
+        draftShopName: String, storedShopName: String?, total: String
+    ) -> [Components.Schemas.BudgetReceiptLineInput]? {
+        guard plan.lines == nil, documentKind == .invoice, originalLines.isEmpty, draftLines.isEmpty else {
+            return plan.lines
+        }
+        return [synthesizeInvoiceSummaryLine(invoiceNumber: invoiceNumber, draftShopName: draftShopName,
+                                             storedShopName: storedShopName, normalizedTotal: total)]
+    }
+
+    static func synthesizeInvoiceSummaryLine(
+        invoiceNumber: String?, draftShopName: String, storedShopName: String?, normalizedTotal: String,
+        summaryFallbackName: String = "Document"
+    ) -> Components.Schemas.BudgetReceiptLineInput {
+        func usableName(_ text: String) -> String? {
+            isRedactedValue(text) ? nil : nonempty(trim(text))
+        }
+        let candidate = invoiceNumber.flatMap(usableName) ?? usableName(trim(draftShopName))
+            ?? storedShopName.flatMap(usableName) ?? summaryFallbackName
+        let rawName = candidate.isEmpty || isRedactedValue(candidate) ? "Document" : candidate
+        return synthesizeTotalLine(rawName, amount: normalizedTotal, kind: .other)
+    }
+
     private static func synthesizeTotalLine(_ name: String, amount: String, kind: LineInput.LineKindPayload) -> LineInput {
         .init(discountAmount: "0", grossLineTotal: amount, lineKind: kind, netLineTotal: amount,
               quantity: "1", rawName: name)
+    }
+
+    private static func formatPositiveRemainder(_ amount: Decimal) -> String? {
+        guard amount < 1_000_000_000 else { return nil }
+        // All inputs have at most four fractional digits. Scaling stays exact and fits in Int64.
+        let scale: Int64 = 10_000
+        let units = NSDecimalNumber(decimal: amount * Decimal(scale)).int64Value
+        let whole = String(units / scale)
+        var fraction = units % scale
+        guard fraction != 0 else { return whole }
+        var formatted = whole + "."
+        var place = scale / 10
+        while fraction != 0 {
+            formatted += String(fraction / place)
+            fraction %= place
+            place /= 10
+        }
+        return formatted
+    }
+
+    private static func isRedactedValue(_ text: String) -> Bool {
+        text == "[usunięto]" || text == PANRedactor.placeholder
     }
 
     private static func decimal(_ normalized: String) -> Decimal? { Decimal(string: normalized, locale: posix) }
