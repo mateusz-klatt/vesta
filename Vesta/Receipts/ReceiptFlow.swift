@@ -34,6 +34,13 @@ struct ReceiptDay: Equatable {
     }
 }
 
+extension ReceiptCandidate {
+    var scanDisplay: (date: String, amount: String) {
+        let date = transactionDate ?? bookingDate ?? valueDate ?? "—"
+        return (date, "\(displayAmount) \(currency)")
+    }
+}
+
 /// The editable header of a parsed receipt draft, plus the chosen bank match.
 /// To change the parsed items in the scan UI, edit the text and read it again.
 struct ReceiptForm: Equatable {
@@ -271,6 +278,7 @@ final class ReceiptFlow {
     private(set) var isBusy = false
     private(set) var parsed: ReceiptParseResult?
     private(set) var confirmed: ReceiptDetail?
+    private(set) var linkOutcomeMessage: LocalizedStringResource?
     private var overlapReview: ReceiptPhotoRecognition.OverlapReview?
     let scope: ReceiptSessionScope
 
@@ -408,6 +416,7 @@ final class ReceiptFlow {
             error = .tooLarge
             return
         }
+        linkOutcomeMessage = nil
         text = PANRedactor.redact(raw)
         self.overlapReview = overlapReview
         self.source = source
@@ -427,6 +436,7 @@ final class ReceiptFlow {
     func startOver() {
         guard step == .edit, !isBusy, !abandoned, isCurrent else { return }
         captureGeneration += 1
+        linkOutcomeMessage = nil
         text = ""
         overlapReview = nil
         source = .paste
@@ -462,34 +472,57 @@ final class ReceiptFlow {
 
     func confirm() async {
         guard step == .review, !isBusy, !abandoned, isCurrent, let parsed else { return }
+        let candidates = self.candidates
         guard let request = form.request(receiptID: parsed.receiptId, version: parsed.version, candidates: candidates) else {
             if let lineError = form.confirmLineError { error = lineError }
             return
         }
+        let linkedCandidate = request.link.flatMap { link in
+            candidates.first {
+                $0.accountId == link.accountId && $0.entryReference == link.entryReference
+                    && $0.candidateToken == link.candidateToken
+            }
+        }
         isBusy = true
         defer { isBusy = false }
         error = nil
+        let receipt: ReceiptDetail?
         do {
-            let result = try await api.confirmReceipt(request, scope: scope)
-            finishConfirmation(with: result)
+            receipt = try await api.confirmReceipt(request, scope: scope)
         } catch ReceiptError.alreadySubmitted {
-            finishConfirmation(with: nil)
+            receipt = nil
         } catch {
             if abandoned {
                 await deleteCurrentDraft()
             } else if isCurrent, !(error is CancellationError) {
                 self.error = ReceiptError.wrap(error)
             }
+            return
         }
+        finishConfirmation(with: receipt, sentLink: request.link != nil, candidate: linkedCandidate)
     }
 
-    private func finishConfirmation(with receipt: ReceiptDetail?) {
+    private func finishConfirmation(with receipt: ReceiptDetail?, sentLink: Bool, candidate: ReceiptCandidate?) {
         let mayPublish = isCurrent
         // The server already settled this draft, even if its sheet is obsolete.
         parsed = nil
         guard mayPublish else { return }
         confirmed = receipt
-        if !abandoned { step = .done }
+        guard !abandoned else { return }
+        let summary = receipt?.summary
+        // An already-submitted response has no receipt to inspect.
+        let isLinked = summary?.linked ?? sentLink
+        if !isLinked {
+            linkOutcomeMessage = "Waiting for the bank transaction"
+        } else if let summary, let candidate,
+                  (summary.linkedAccountId ?? candidate.accountId) == candidate.accountId,
+                  (summary.linkedEntryRef ?? candidate.entryReference) == candidate.entryReference {
+            let display = candidate.scanDisplay
+            linkOutcomeMessage = "Linked to transaction: \(display.date) \(display.amount)"
+        } else {
+            linkOutcomeMessage = "Linked to transaction"
+        }
+        step = .done
     }
 
     /// Back from review to the text: the draft is dropped server-side.
@@ -499,6 +532,7 @@ final class ReceiptFlow {
         defer { isBusy = false }
         await deleteCurrentDraft()
         guard !abandoned, isCurrent else { return }
+        linkOutcomeMessage = nil
         step = .edit
     }
 
