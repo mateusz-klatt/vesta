@@ -19,7 +19,7 @@ struct ReceiptScanView: View {
                 case .capture: ReceiptCaptureStep(flow: flow)
                 case .edit: ReceiptEditStep(flow: flow)
                 case .review: ReceiptReviewStep(flow: flow)
-                case .done: ReceiptDoneStep { dismiss() }
+                case .done: ReceiptDoneStep(linkOutcomeMessage: flow.linkOutcomeMessage) { dismiss() }
                 }
             }
             .disabled(flow.isBusy)
@@ -425,6 +425,7 @@ private struct ReceiptReviewStep: View {
 }
 
 private struct ReceiptDoneStep: View {
+    let linkOutcomeMessage: LocalizedStringResource?
     let close: () -> Void
 
     var body: some View {
@@ -432,6 +433,12 @@ private struct ReceiptDoneStep: View {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 56)).foregroundStyle(.green)
             Text("Receipt saved").font(.title2.bold())
+            if let linkOutcomeMessage {
+                Text(linkOutcomeMessage)
+                    .foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            }
             Button("Done", action: close).buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
