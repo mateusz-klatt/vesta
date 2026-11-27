@@ -284,8 +284,7 @@ struct BudgetErrorEnvelope: Decodable {
     }
 }
 
-/// Client-side checks that mirror hestia's `parse-text` limits, so an obviously
-/// oversized paste fails instantly instead of after a round trip.
+/// Client-side checks that mirror hestia's `parse-text` limits.
 enum ReceiptText {
     static let maxBytes = 32 * 1024
     static let maxLines = 500
@@ -293,7 +292,11 @@ enum ReceiptText {
     /// Redacts card data, trims, and enforces the limits. Returns the exact text
     /// to send.
     static func prepare(_ raw: String) throws(ReceiptError) -> String {
-        let redacted = PANRedactor.redact(raw)
+        try prepareRedacted(PANRedactor.redact(raw))
+    }
+
+    /// Applies the same send-time checks to text already redacted for the editor.
+    static func prepareRedacted(_ redacted: String) throws(ReceiptError) -> String {
         let trimmed = redacted
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }

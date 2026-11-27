@@ -294,28 +294,125 @@ protocol ReceiptTextRecognizing: Sendable {
     func recognize(_ image: CGImage) async throws -> [TextFragment]
 }
 
+/// Horizontal crops described in source pixels, with y measured from the top.
+private struct ReceiptOCRStrip {
+    let rows: Range<Int>
+    let ownedRows: Range<CGFloat>
+
+    static func plan(width: Int, height: Int) -> [Self] {
+        // Ordinary photos use the whole-photo OCR path. Above 3:1, a strip
+        // no taller than 3/4 of the width makes small print larger relative
+        // to Vision's 1/32 minimum text height fraction at native resolution.
+        guard CGFloat(height) / CGFloat(width) > 3 else { return [] }
+        let maxStripHeight = max(1, width * 3 / 4)
+        let overlap = maxStripHeight / 4
+        let halfOverlap = CGFloat(overlap) / 2
+        let stripCount = (height - overlap - 1) / (maxStripHeight - overlap) + 1
+        // Distribute the rows (counting overlaps twice) evenly among strips
+        // so the last strip also has about a quarter of its height in overlap.
+        let rowsWithOverlap = height + (stripCount - 1) * overlap
+        let stripHeight = rowsWithOverlap / stripCount
+        let extraRows = rowsWithOverlap % stripCount
+        return (0..<stripCount).map { index in
+            let top = index * (stripHeight - overlap) + min(index, extraRows)
+            let bottom = top + stripHeight + (index < extraRows ? 1 : 0)
+            let ownedTop = index == 0 ? 0 : CGFloat(top) + halfOverlap
+            let ownedBottom = index == stripCount - 1 ? CGFloat(height) : CGFloat(bottom) - halfOverlap
+            return Self(rows: top..<bottom, ownedRows: ownedTop..<ownedBottom)
+        }
+    }
+
+    func map(_ fragment: TextFragment, toImageHeight imageHeight: Int) -> TextFragment? {
+        let box = fragment.box
+        let stripHeight = CGFloat(rows.count)
+        let centerFromTop = CGFloat(rows.upperBound) - box.midY * stripHeight
+        // Split the overlap at its midpoint, keeping each fragment from the
+        // strip whose edge is farther away. The lower strip owns the cut itself.
+        guard ownedRows.contains(centerFromTop) else { return nil }
+
+        // Vision measures y from the bottom and normalizes to the crop.
+        // Width is unchanged, so both the y coordinates and slope scale by
+        // the crop's share of the full image height.
+        let scale = stripHeight / CGFloat(imageHeight)
+        let offset = CGFloat(imageHeight - rows.upperBound) / CGFloat(imageHeight)
+        return TextFragment(
+            text: fragment.text,
+            box: CGRect(x: box.minX, y: offset + box.minY * scale, width: box.width, height: box.height * scale),
+            rowSlope: fragment.rowSlope.map { $0 * scale }
+        )
+    }
+}
+
 /// Vision-backed OCR: accurate level, Polish first, then English. Nothing leaves
 /// the device here; the image is dropped by the caller as soon as this returns.
 struct VisionReceiptRecognizer: ReceiptTextRecognizing {
     static let preferredLanguages = ["pl-PL", "en-US"]
     private static let renderContext = CIContext()
 
+    private enum ReadingError: Error { case imagePreparationFailed }
+
     func recognize(_ image: CGImage) async throws -> [TextFragment] {
-        let primary = try await Self.read(image)
+        try await recognize(image, using: Self.read)
+    }
+
+    func recognize(
+        _ image: CGImage, using read: @Sendable (CGImage) async throws -> [TextFragment]
+    ) async throws -> [TextFragment] {
+        let strips = ReceiptOCRStrip.plan(width: image.width, height: image.height)
+        let primary = try await Self.readPass(image, strips: strips, using: read, resampling: false)
+        // Assess the complete receipt in each pass: its item rows and printed
+        // total can be on different strips. Only the retry resamples each crop.
         let assessment = ReceiptOCRAssessment(lines: ReceiptLineOrdering.lines(from: primary))
+        try Task.checkCancellation()
         guard assessment.needsRetry else { return primary }
+
+        do {
+            let alternate = try await Self.readPass(image, strips: strips, using: read, resampling: true)
+            let alternateAssessment = ReceiptOCRAssessment(lines: ReceiptLineOrdering.lines(from: alternate))
+            try Task.checkCancellation()
+            return alternateAssessment.improves(on: assessment) ? alternate : primary
+        } catch let error as CancellationError {
+            throw error
+        } catch {
+            try Task.checkCancellation()
+            return primary
+        }
+    }
+
+    private static func readPass(
+        _ image: CGImage, strips: [ReceiptOCRStrip],
+        using read: @Sendable (CGImage) async throws -> [TextFragment], resampling: Bool
+    ) async throws -> [TextFragment] {
+        func readImage(_ image: CGImage) async throws -> [TextFragment] {
+            let input: CGImage
+            if resampling {
+                guard let resized = resampled(image) else { throw ReadingError.imagePreparationFailed }
+                input = resized
+            } else {
+                input = image
+            }
+            try Task.checkCancellation()
+            let fragments = try await read(input)
+            try Task.checkCancellation()
+            return fragments
+        }
+
         try Task.checkCancellation()
-        guard let alternateImage = Self.resampled(image) else { return primary }
-        let alternate = try? await Self.read(alternateImage)
-        try Task.checkCancellation()
-        guard let alternate else { return primary }
-        let alternateAssessment = ReceiptOCRAssessment(lines: ReceiptLineOrdering.lines(from: alternate))
-        return alternateAssessment.improves(on: assessment) ? alternate : primary
+        guard !strips.isEmpty else { return try await readImage(image) }
+        var merged: [TextFragment] = []
+        for strip in strips {
+            try Task.checkCancellation()
+            let rect = CGRect(x: 0, y: strip.rows.lowerBound, width: image.width, height: strip.rows.count)
+            guard let crop = image.cropping(to: rect) else { throw ReadingError.imagePreparationFailed }
+            let fragments = try await readImage(crop)
+            merged.append(contentsOf: fragments.compactMap { strip.map($0, toImageHeight: image.height) })
+        }
+        return merged
     }
 
     private static func resampled(_ image: CGImage) -> CGImage? {
         // Different sampling can recover a digit or fragment from the same
-        // photograph. Keep the whole image and cap the working resolution.
+        // photograph. Preserve the input bounds and cap large inputs.
         let longEdge = max(image.width, image.height)
         let filter = CIFilter.lanczosScaleTransform()
         filter.inputImage = CIImage(cgImage: image)

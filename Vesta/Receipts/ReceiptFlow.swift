@@ -387,6 +387,15 @@ final class ReceiptFlow {
         text = PANRedactor.redact(raw)
         self.source = source
         error = nil
+        if source == .localOcr {
+            // Warn as soon as OCR finishes, and leave the text editable so the
+            // user can shorten it. Send validates again after any edits.
+            do {
+                _ = try ReceiptText.prepareRedacted(text)
+            } catch {
+                self.error = error
+            }
+        }
         step = .edit
     }
 

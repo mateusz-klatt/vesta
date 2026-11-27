@@ -47,6 +47,51 @@ final class ReceiptFlowRaceTests: XCTestCase {
         XCTAssertNil(flow.error)
     }
 
+    func testOCRSurfacesLineLimitBeforeSending() async throws {
+        let api = MockReceiptsAPI()
+        let fragments = (0...ReceiptText.maxLines / 2).map { row in
+            TextFragment(text: "Product", box: CGRect(x: 0.1, y: 0.95 - CGFloat(row) * 0.003,
+                                                     width: 0.5, height: 0.001))
+        }
+        let flow = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: fragments))
+        let page = try image()
+
+        await flow.recognize([page, page])
+
+        XCTAssertEqual(flow.step, .edit)
+        XCTAssertEqual(flow.text.split(separator: "\n").count, ReceiptText.maxLines + 2)
+        XCTAssertEqual(flow.error, .tooLarge)
+        await flow.send()
+        XCTAssertEqual(flow.error, .tooLarge)
+        let calls = await api.calls
+        XCTAssertTrue(calls.isEmpty)
+    }
+
+    func testOCRSurfacesUTF8LimitAndAllowsShortening() async throws {
+        let api = MockReceiptsAPI()
+        let text = String(repeating: "ą", count: ReceiptText.maxBytes / 2) + "A"
+        let fragment = TextFragment(text: text, box: CGRect(x: 0.1, y: 0.5, width: 0.5, height: 0.02))
+        let flow = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: [fragment]))
+
+        await flow.recognize([try image()])
+
+        XCTAssertEqual(flow.step, .edit)
+        XCTAssertEqual(flow.text, text)
+        XCTAssertEqual(flow.error, .tooLarge)
+        XCTAssertEqual(String(localized: ReceiptError.tooLarge.title), "Receipt text is too long")
+        await flow.send()
+        XCTAssertEqual(flow.error, .tooLarge)
+        let oversizedCalls = await api.calls
+        XCTAssertTrue(oversizedCalls.isEmpty)
+
+        flow.text = "Shortened receipt"
+        await flow.send()
+        XCTAssertNil(flow.error)
+        XCTAssertEqual(flow.step, .review)
+        let shortenedCalls = await api.calls
+        XCTAssertEqual(shortenedCalls, [.parse("Shortened receipt", .localOcr)])
+    }
+
     func testLocalPhotoErrorsOfferRecoveryWithoutPairing() {
         for (error, code) in [(ReceiptError.photoUnavailable, "photo_unavailable"), (.noReadableText, "no_readable_text")] {
             XCTAssertEqual(String(localized: error.title), "Couldn’t read photo")
