@@ -327,9 +327,13 @@ private struct ReceiptReviewStep: View {
                         .foregroundStyle(.red)
                 }
                 TextField("Time (HH:MM)", text: $flow.form.time).keyboardType(.numbersAndPunctuation)
-                Picker("Type", selection: $flow.form.kind) {
-                    Text("Purchase").tag(ReceiptConfirmRequest.ReceiptKindPayload.purchase)
-                    Text("Refund").tag(ReceiptConfirmRequest.ReceiptKindPayload.refund)
+                if flow.form.canConfirmKind {
+                    Picker("Type", selection: $flow.form.kind) {
+                        Text("Purchase").tag(ReceiptConfirmRequest.ReceiptKindPayload.purchase)
+                        Text("Refund").tag(ReceiptConfirmRequest.ReceiptKindPayload.refund)
+                    }
+                } else {
+                    LabeledContent("Type") { Text("Unknown") }
                 }
                 Picker("Payment", selection: $flow.form.payment) {
                     Text("Card").tag(ReceiptConfirmRequest.PaymentMethodPayload.card)
@@ -369,7 +373,7 @@ private struct ReceiptReviewStep: View {
                 }
             }
 
-            if flow.canMatchReceipts && flow.form.canLink {
+            if flow.form.canConfirmStatus && flow.form.canConfirmKind && flow.canMatchReceipts && flow.form.canLink {
                 Section {
                     if flow.form.matchFieldsEdited {
                         Text("Shop or NIP changed, so these matches no longer apply. Save without a link, or go back and read the text again.")
@@ -397,8 +401,10 @@ private struct ReceiptReviewStep: View {
             ReceiptErrorSection(error: flow.form.confirmLineError ?? flow.error)
 
             Section {
-                Button("Save receipt") { Task { await flow.confirm() } }
-                    .disabled(!flow.form.isValid)
+                if flow.form.canConfirmStatus {
+                    Button("Save receipt") { Task { await flow.confirm() } }
+                        .disabled(!flow.form.isValid)
+                }
                 Button("Back to text") { Task { await flow.backToEdit() } }
             }
         }
@@ -414,7 +420,7 @@ private struct ReceiptReviewStep: View {
     private static func describe(_ candidate: ReceiptCandidate) -> String {
         let day = candidate.transactionDate ?? candidate.bookingDate ?? candidate.valueDate ?? "—"
         let merchant = candidate.merchantTokenHit ? " ✓" : ""
-        return "\(day) · \(candidate.amount) \(candidate.currency)\(merchant)"
+        return "\(day) · \(candidate.displayAmount) \(candidate.currency)\(merchant)"
     }
 }
 

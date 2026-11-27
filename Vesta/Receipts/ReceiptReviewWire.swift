@@ -1,5 +1,16 @@
 import Foundation
 
+private protocol ReceiptResponseEnum: RawRepresentable, Decodable where RawValue == String {
+    static var unknown: Self { get }
+}
+
+extension ReceiptResponseEnum {
+    init(from decoder: any Decoder) throws {
+        let value = try decoder.singleValueContainer().decode(String.self)
+        self = Self(rawValue: value) ?? .unknown
+    }
+}
+
 // Keep the nullable fields the generator drops from the verbatim confirm schema.
 struct ReceiptConfirmRequestWire: Codable, Hashable, Sendable {
     enum PaymentMethodPayload: String, Codable, Hashable, Sendable { case card, blik, cash, mixed, unknown }
@@ -87,8 +98,12 @@ struct BudgetReceiptDetailResultWire: Codable, Hashable, Sendable {
 }
 
 struct ReceiptCandidateWire: Codable, Hashable, Sendable {
-    enum CreditDebitIndicatorPayload: String, Codable, Hashable, Sendable { case DBIT, CRDT }
-    enum MatchStrengthPayload: String, Codable, Hashable, Sendable { case nip, distinctive, generic, none }
+    enum CreditDebitIndicatorPayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+        case DBIT, CRDT, unknown
+    }
+    enum MatchStrengthPayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+        case id, nip, distinctive, generic, none, unknown
+    }
 
     var accountId: String
     var amount: String
@@ -102,6 +117,11 @@ struct ReceiptCandidateWire: Codable, Hashable, Sendable {
     var merchantTokenHit: Bool
     var transactionDate: String?
     var valueDate: String?
+
+    var displayAmount: String {
+        guard creditDebitIndicator == .unknown else { return amount }
+        return String(amount.drop(while: { $0 == "+" || $0 == "-" || $0 == "−" }))
+    }
 
     init(accountId: String, entryReference: String, amount: String = "12.34", currency: String = "PLN",
          creditDebitIndicator: CreditDebitIndicatorPayload = .DBIT, transactionDate: String? = "2026-11-22",
@@ -146,8 +166,12 @@ struct ReceiptCandidateWire: Codable, Hashable, Sendable {
 }
 
 struct ReceiptLineWire: Codable, Hashable, Sendable {
-    enum LineKindPayload: String, Codable, Hashable, Sendable { case item, deposit, basketDiscount = "basket_discount", other }
-    enum PtuCodePayload: String, Codable, Hashable, Sendable { case A, B, C, D, E, F, G }
+    enum LineKindPayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+        case item, deposit, basketDiscount = "basket_discount", other, unknown
+    }
+    enum PtuCodePayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+        case A, B, C, D, E, F, G, unknown
+    }
 
     var discountAmount: String
     var grossLineTotal: String
@@ -200,16 +224,71 @@ struct ReceiptLineWire: Codable, Hashable, Sendable {
     }
 }
 
+// Keep the required nullable fields in the verbatim linked transaction schema.
+struct BudgetReceiptLinkedTransactionWire: Codable, Hashable, Sendable {
+    let accountLabel: String
+    let bookingDate: String?
+    let amount: String?
+    let currency: String?
+
+    init(accountLabel: String, bookingDate: String?, amount: String?, currency: String?) {
+        self.accountLabel = accountLabel
+        self.bookingDate = bookingDate
+        self.amount = amount
+        self.currency = currency
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case accountLabel = "account_label", bookingDate = "booking_date", amount, currency
+    }
+
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        accountLabel = try values.decode(String.self, forKey: .accountLabel)
+        bookingDate = try values.decode(String?.self, forKey: .bookingDate)
+        amount = try values.decode(String?.self, forKey: .amount)
+        currency = try values.decode(String?.self, forKey: .currency)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(accountLabel, forKey: .accountLabel)
+        try values.encode(bookingDate, forKey: .bookingDate)
+        try values.encode(amount, forKey: .amount)
+        try values.encode(currency, forKey: .currency)
+    }
+}
+
 struct BudgetReceiptSummaryWire: Codable, Hashable, Sendable, Identifiable {
     var id: String { receiptId }
-    enum ReceiptKindPayload: String, Codable, Hashable, Sendable { case purchase, refund }
-    enum SourceKindPayload: String, Codable, Hashable, Sendable {
-        case liveText = "live_text", localOcr = "local_ocr", cloudAi = "cloud_ai"
-        case paste, photo, email, attachment
+    var hasUnknownReviewMetadata: Bool {
+        status == .unknown || sourceKind == .unknown || documentKind == .unknown || gatewayStatus == .unknown
     }
-    enum StatusPayload: String, Codable, Hashable, Sendable { case draft, confirmed, needsReview = "needs_review", imported }
-    enum DocumentKindPayload: String, Codable, Hashable, Sendable { case receipt, invoice, paymentConfirmation = "payment_confirmation" }
-    enum GatewayStatusPayload: String, Codable, Hashable, Sendable { case registered, paid }
+
+    enum ReceiptKindPayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+        case purchase, refund, unknown
+
+        var confirmValue: ReceiptConfirmRequestWire.ReceiptKindPayload? {
+            switch self {
+            case .purchase: .purchase
+            case .refund: .refund
+            case .unknown: nil
+            }
+        }
+    }
+    enum SourceKindPayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+        case liveText = "live_text", localOcr = "local_ocr", cloudAi = "cloud_ai"
+        case paste, photo, email, attachment, unknown
+    }
+    enum StatusPayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+        case draft, confirmed, needsReview = "needs_review", imported, unknown
+    }
+    enum DocumentKindPayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+        case receipt, invoice, paymentConfirmation = "payment_confirmation", unknown
+    }
+    enum GatewayStatusPayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+        case registered, paid, unknown
+    }
 
     var chainKey: String?
     var createdAt: Double
@@ -230,6 +309,7 @@ struct BudgetReceiptSummaryWire: Codable, Hashable, Sendable, Identifiable {
     var linked: Bool
     var linkedAccountId: String?
     var linkedEntryRef: String?
+    var linkedTransaction: Components.Schemas.BudgetReceiptLinkedTransaction?
     var mathDelta: String?
     var payeeHost: String?
     var paymentMethod: String?
@@ -258,7 +338,8 @@ struct BudgetReceiptSummaryWire: Codable, Hashable, Sendable, Identifiable {
          dueDate: String? = nil, evidenceForReceiptId: String? = nil, feeAmount: String? = nil,
          forwardedManually: Bool = false, forwardedSenderDomain: String? = nil, gateway: String? = nil,
          gatewayStatus: GatewayStatusPayload? = nil, hasDocument: Bool? = nil, importExpiresAt: Double? = nil,
-         invoiceNumber: String? = nil, payeeHost: String? = nil) {
+         invoiceNumber: String? = nil, payeeHost: String? = nil,
+         linkedTransaction: Components.Schemas.BudgetReceiptLinkedTransaction? = nil) {
         self.chainKey = chainKey
         self.createdAt = createdAt
         self.currency = currency
@@ -278,6 +359,7 @@ struct BudgetReceiptSummaryWire: Codable, Hashable, Sendable, Identifiable {
         self.linked = linked
         self.linkedAccountId = linkedAccountId
         self.linkedEntryRef = linkedEntryRef
+        self.linkedTransaction = linkedTransaction
         self.mathDelta = mathDelta
         self.payeeHost = payeeHost
         self.paymentMethod = paymentMethod
@@ -302,7 +384,8 @@ struct BudgetReceiptSummaryWire: Codable, Hashable, Sendable, Identifiable {
         case forwardedManually = "forwarded_manually", forwardedSenderDomain = "forwarded_sender_domain"
         case gateway, gatewayStatus = "gateway_status", hasDocument = "has_document", imageAvailable = "image_available"
         case imageExpiresAt = "image_expires_at", importExpiresAt = "import_expires_at", invoiceNumber = "invoice_number"
-        case linked, linkedAccountId = "linked_account_id", linkedEntryRef = "linked_entry_ref", mathDelta = "math_delta"
+        case linked, linkedAccountId = "linked_account_id", linkedEntryRef = "linked_entry_ref"
+        case linkedTransaction = "linked_transaction", mathDelta = "math_delta"
         case payeeHost = "payee_host", paymentMethod = "payment_method", rawNip = "raw_nip", rawShopName = "raw_shop_name"
         case rawTextExpiresAt = "raw_text_expires_at", receiptDate = "receipt_date", receiptId = "receipt_id"
         case receiptKind = "receipt_kind", receiptTime = "receipt_time", shopId = "shop_id", sourceKind = "source_kind"
@@ -340,6 +423,9 @@ struct BudgetReceiptSummaryWire: Codable, Hashable, Sendable, Identifiable {
         linked = try values.decode(Bool.self, forKey: .linked)
         linkedAccountId = try nullable(String.self, .linkedAccountId)
         linkedEntryRef = try nullable(String.self, .linkedEntryRef)
+        linkedTransaction = try values.decodeIfPresent(
+            Components.Schemas.BudgetReceiptLinkedTransaction.self, forKey: .linkedTransaction
+        )
         mathDelta = try nullable(String.self, .mathDelta)
         payeeHost = try values.decodeIfPresent(String.self, forKey: .payeeHost)
         paymentMethod = try nullable(String.self, .paymentMethod)
@@ -363,6 +449,9 @@ struct ReceiptDetailWire: Codable, Hashable, Sendable {
     var summary: BudgetReceiptSummaryWire
     var lines: [Components.Schemas.BudgetReceiptLine]
     var paymentEvidence: [Components.Schemas.BudgetReceiptPaymentEvidence]
+    var hasUnknownReviewMetadata: Bool {
+        summary.hasUnknownReviewMetadata || paymentEvidence.contains { $0.gatewayStatus == .unknown }
+    }
 
     init(summary: BudgetReceiptSummaryWire, lines: [Components.Schemas.BudgetReceiptLine],
          paymentEvidence: [Components.Schemas.BudgetReceiptPaymentEvidence] = []) {
@@ -394,7 +483,7 @@ struct ReceiptDetailWire: Codable, Hashable, Sendable {
 }
 
 struct ReceiptPaymentEvidenceWire: Codable, Hashable, Sendable {
-    enum GatewayStatusPayload: String, Codable, Hashable, Sendable { case registered, paid }
+    typealias GatewayStatusPayload = BudgetReceiptSummaryWire.GatewayStatusPayload
 
     var feeAmount: String?
     var gateway: String?

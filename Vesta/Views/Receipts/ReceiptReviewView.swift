@@ -112,8 +112,9 @@ private struct ImportedReceiptRow: View {
                 if let number = receipt.invoiceNumber {
                     Text(verbatim: number).font(.caption).foregroundStyle(Theme.textSecondary)
                 }
-                ReceiptHints(gatewayStatus: receipt.gatewayStatus?.rawValue, payeeHost: receipt.payeeHost,
+                ReceiptHints(gatewayStatus: receipt.gatewayStatus, payeeHost: receipt.payeeHost,
                              hasDocument: receipt.hasDocument)
+                ReceiptLinkIndicator(transaction: receipt.linkedTransaction)
             }
             Spacer()
             if let amount = receipt.totalAmount {
@@ -132,6 +133,25 @@ private struct ImportedReceiptRow: View {
     }
 }
 
+struct ReceiptLinkIndicator: View {
+    let transaction: BudgetReceiptLinkedTransactionWire?
+
+    var text: String? {
+        guard let transaction else { return nil }
+        let amount = [transaction.amount, transaction.currency].compactMap { $0 }.joined(separator: " ")
+        let details = [transaction.bookingDate ?? "", amount].filter { !$0.isEmpty }.joined(separator: " · ")
+        return details.isEmpty ? "🏦" : "🏦 \(details)"
+    }
+
+    var body: some View {
+        if let text {
+            Text(verbatim: text)
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
+        }
+    }
+}
+
 private struct ImportedReceiptDetailView: View {
     @Environment(\.dismiss) private var dismiss
     let store: ReceiptReviewStore
@@ -147,58 +167,12 @@ private struct ImportedReceiptDetailView: View {
                         LabeledContent("Total", value: [total, detail.currency].compactMap { $0 }.joined(separator: " "))
                     }
                     if let number = detail.invoiceNumber { LabeledContent("Receipt", value: number) }
-                    ReceiptHints(gatewayStatus: detail.gatewayStatus?.rawValue, payeeHost: detail.payeeHost,
+                    ReceiptHints(gatewayStatus: detail.gatewayStatus, payeeHost: detail.payeeHost,
                                  hasDocument: detail.hasDocument)
+                    ReceiptLinkIndicator(transaction: detail.linkedTransaction)
                 }
-                Section("Transaction") {
-                    if store.canMatchReceipts {
-                        ForEach(store.candidates, id: \.self) { candidate in
-                            Button { store.selectCandidate(candidate) } label: {
-                                HStack(alignment: .top) {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(verbatim: candidate.bookingDate ?? candidate.transactionDate ?? "—")
-                                        Text(verbatim: "\(candidate.amount) \(candidate.currency)")
-                                            .font(.caption).foregroundStyle(Theme.textSecondary)
-                                    }
-                                    Spacer()
-                                    if store.selectedCandidate == ReceiptForm.CandidateID(candidate) {
-                                        Image(systemName: "checkmark").foregroundStyle(Theme.accent)
-                                    }
-                                }
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(store.isBusy)
-                        }
-                    } else {
-                        Text("No matching transaction yet. You can save the receipt without one.")
-                            .foregroundStyle(Theme.textSecondary)
-                    }
-                    Button { store.selectCandidate(nil) } label: {
-                        HStack {
-                            Text("Don’t link")
-                            Spacer()
-                            if store.selectedCandidate == nil && (store.hasLinkChoice || store.candidates.isEmpty) {
-                                Image(systemName: "checkmark").foregroundStyle(Theme.accent)
-                            }
-                        }
-                    }
-                    .disabled(store.isBusy || !store.canMatchReceipts)
-                }
-                Section {
-                    if let error = store.confirmLineError {
-                        Text(error.title)
-                        Text(error.message)
-                            .font(.caption)
-                            .foregroundStyle(Theme.textSecondary)
-                    } else if let adjustment = store.totalAdjustment {
-                        Text(adjustment.message)
-                            .font(.caption)
-                            .foregroundStyle(Theme.textSecondary)
-                    }
-                    Button("Save receipt") { Task { await store.confirmSelected() } }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!store.canConfirmSelected)
-                        .frame(maxWidth: .infinity)
+                if store.canEditSelectedReceipt {
+                    confirmationSections
                 }
             } else if store.isBusy {
                 ProgressView().frame(maxWidth: .infinity)
@@ -217,16 +191,73 @@ private struct ImportedReceiptDetailView: View {
             if confirmed == summary.receiptId { dismiss() }
         }
     }
+
+    @ViewBuilder private var confirmationSections: some View {
+        Section("Transaction") {
+            if store.canMatchReceipts {
+                ForEach(store.candidates, id: \.self) { candidate in
+                    Button { store.selectCandidate(candidate) } label: {
+                        HStack(alignment: .top) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(verbatim: candidate.bookingDate ?? candidate.transactionDate ?? "—")
+                                Text(verbatim: "\(candidate.displayAmount) \(candidate.currency)")
+                                    .font(.caption).foregroundStyle(Theme.textSecondary)
+                            }
+                            Spacer()
+                            if store.selectedCandidate == ReceiptForm.CandidateID(candidate) {
+                                Image(systemName: "checkmark").foregroundStyle(Theme.accent)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(store.isBusy)
+                }
+            } else {
+                Text("No matching transaction yet. You can save the receipt without one.")
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            Button { store.selectCandidate(nil) } label: {
+                HStack {
+                    Text("Don’t link")
+                    Spacer()
+                    if store.selectedCandidate == nil && (store.hasLinkChoice || store.candidates.isEmpty) {
+                        Image(systemName: "checkmark").foregroundStyle(Theme.accent)
+                    }
+                }
+            }
+            .disabled(store.isBusy || !store.canMatchReceipts)
+        }
+        Section {
+            if store.hasUnknownSelectedReceiptKind {
+                LabeledContent("Type") { Text("Unknown") }
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            } else if let error = store.confirmLineError {
+                Text(error.title)
+                Text(error.message)
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            } else if let adjustment = store.totalAdjustment {
+                Text(adjustment.message)
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            Button("Save receipt") { Task { await store.confirmSelected() } }
+                .buttonStyle(.borderedProminent)
+                .disabled(!store.canConfirmSelected)
+                .frame(maxWidth: .infinity)
+        }
+    }
 }
 
 private struct ReceiptHints: View {
-    let gatewayStatus: String?
+    let gatewayStatus: ImportedReceiptSummary.GatewayStatusPayload?
     let payeeHost: String?
     let hasDocument: Bool?
 
     var body: some View {
-        if let gatewayStatus {
-            LabeledContent("Payment", value: gatewayStatus)
+        if let gatewayStatus, gatewayStatus != .unknown {
+            LabeledContent("Payment", value: gatewayStatus.rawValue)
                 .font(.caption)
                 .foregroundStyle(Theme.textSecondary)
         }

@@ -1,5 +1,28 @@
 import Foundation
 
+// The generator drops the required nullable fields from the verbatim anyOf definitions.
+// ExplicitNullsMiddleware writes these keys on both confirm transports when nil.
+struct ReceiptLineInputWire: Codable, Hashable, Sendable {
+    enum LineKindPayload: String, Codable, Hashable, Sendable { case item, deposit, basketDiscount = "basket_discount", other }
+    enum PtuCodePayload: String, Codable, Hashable, Sendable { case A, B, C, D, E, F, G }
+
+    var discountAmount: String
+    var grossLineTotal: String
+    var lineKind: LineKindPayload
+    var netLineTotal: String
+    var ptuCode: PtuCodePayload? = nil
+    var quantity: String
+    var rawName: String
+    var rawUnit: String? = nil
+    var unitPriceRaw: String? = nil
+
+    private enum CodingKeys: String, CodingKey {
+        case discountAmount = "discount_amount", grossLineTotal = "gross_line_total", lineKind = "line_kind"
+        case netLineTotal = "net_line_total", ptuCode = "ptu_code", quantity
+        case rawName = "raw_name", rawUnit = "raw_unit", unitPriceRaw = "unit_price_raw"
+    }
+}
+
 enum ReceiptTotalAdjustment: Equatable, Sendable {
     case remainder(amount: String)
     case summary
@@ -106,14 +129,18 @@ enum ReceiptConfirmLines {
     }
 
     static func cleanConfirmLine(_ input: ReceiptLine) throws(ReceiptConfirmLineError) -> Components.Schemas.BudgetReceiptLineInput {
+        let ptuCode = input.ptuCode.flatMap { LineInput.PtuCodePayload(rawValue: $0.rawValue) }
+        guard let kind = LineInput.LineKindPayload(rawValue: input.lineKind.rawValue),
+              input.ptuCode == nil || ptuCode != nil else { throw .invalidForm }
+
         let name = cleanText(input.rawName)
         let unit = input.rawUnit.map(cleanText).flatMap(nonempty)
         let unitPrice = input.unitPriceRaw.flatMap(normalizeConfirmMoney)
         guard validConfirmLineName(name),
               validConfirmLineText(input.rawName), (unit?.unicodeScalars.count ?? 0) <= 16,
               input.rawUnit.map(validConfirmLineText) ?? true,
-              let quantity = normalizeConfirmMoney(input.quantity), input.unitPriceRaw == nil || unitPrice != nil,
-              let kind = LineInput.LineKindPayload(rawValue: input.lineKind.rawValue) else { throw .invalidForm }
+              let quantity = normalizeConfirmMoney(input.quantity), input.unitPriceRaw == nil || unitPrice != nil
+        else { throw .invalidForm }
 
         // hestia redacts either field on its own, and rejects identifiers split across both fields.
         let nameDigits = countDigits(name)
@@ -136,7 +163,7 @@ enum ReceiptConfirmLines {
         guard validSigns else { throw .totalMismatch }
 
         return .init(discountAmount: discount, grossLineTotal: gross, lineKind: kind, netLineTotal: net,
-                     ptuCode: input.ptuCode.flatMap { .init(rawValue: $0.rawValue) }, quantity: quantity,
+                     ptuCode: ptuCode, quantity: quantity,
                      rawName: name, rawUnit: unit, unitPriceRaw: unitPrice)
     }
 
@@ -174,7 +201,7 @@ enum ReceiptConfirmLines {
     static func planConfirmLines(documentKind: BudgetReceiptSummaryWire.DocumentKindPayload?,
                                  originalLines: [ReceiptLine], draftLines: [ReceiptLine],
                                  total: String) throws(ReceiptConfirmLineError) -> ReceiptConfirmLinePlan {
-        let allowsFallback = documentKind != .paymentConfirmation
+        let allowsFallback = documentKind != .paymentConfirmation && documentKind != .unknown
         let hasRedactedLines = receiptHasRedactedLines(originalLines) || receiptHasRedactedLines(draftLines)
         let changed = haveConfirmLinesChanged(originalLines, draftLines)
         if hasRedactedLines && changed { throw .redactedLinesEditBlocked }

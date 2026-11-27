@@ -13,6 +13,9 @@ private enum ReviewFixtures {
         "00000000-0000-0000-0000-000000000003",
         "00000000-0000-0000-0000-000000000004",
     ]
+    static let linkedTransaction = BudgetReceiptLinkedTransactionWire(
+        accountLabel: "Test account", bookingDate: "2026-11-23", amount: "-12.34", currency: "PLN"
+    )
 
     static func summary(_ index: Int = 0, shop: String? = "Shop", chain: String? = nil, version: Int = 1) -> ImportedReceiptSummary {
         .init(receiptId: ids[index], rawShopName: shop, chainKey: chain, version: version)
@@ -226,16 +229,16 @@ final class ReceiptReviewMappingTests: XCTestCase {
     }
 
     func testPreselectsOnlyExactlyOneStrongCandidate() {
-        for strength in [ReceiptCandidate.MatchStrengthPayload.nip, .distinctive] {
+        for strength in [ReceiptCandidate.MatchStrengthPayload.id, .nip, .distinctive] {
             let candidate = ReviewFixtures.candidate(strength: strength)
             XCTAssertEqual(ReceiptReviewStore.preselectedCandidate(from: [candidate]), candidate)
         }
-        for strength in [ReceiptCandidate.MatchStrengthPayload.generic, .none] {
+        for strength in [ReceiptCandidate.MatchStrengthPayload.generic, .none, .unknown] {
             XCTAssertNil(ReceiptReviewStore.preselectedCandidate(from: [ReviewFixtures.candidate(strength: strength)]))
         }
         XCTAssertNil(ReceiptReviewStore.preselectedCandidate(from: []))
         XCTAssertNil(ReceiptReviewStore.preselectedCandidate(from: [
-            ReviewFixtures.candidate(0, strength: .nip), ReviewFixtures.candidate(1, strength: .distinctive),
+            ReviewFixtures.candidate(0, strength: .id), ReviewFixtures.candidate(1, strength: .distinctive),
         ]))
     }
 }
@@ -243,6 +246,202 @@ final class ReceiptReviewMappingTests: XCTestCase {
 @MainActor
 final class ReceiptReviewStoreTests: XCTestCase {
     private let scope = ReviewFixtures.scope
+
+    func testLinkIndicatorShowsBankDateAndAmountWhenAvailable() {
+        XCTAssertEqual(
+            ReceiptLinkIndicator(transaction: ReviewFixtures.linkedTransaction).text,
+            "🏦 2026-11-23 · -12.34 PLN"
+        )
+        let transaction = BudgetReceiptLinkedTransactionWire(
+            accountLabel: "Test account", bookingDate: nil, amount: nil, currency: nil
+        )
+        XCTAssertEqual(ReceiptLinkIndicator(transaction: transaction).text, "🏦")
+        XCTAssertNil(ReceiptLinkIndicator(transaction: nil).text)
+    }
+
+    func testLinkedReceiptCarriesListTransactionIntoReadOnlyDetail() async throws {
+        let api = MockReceiptReviewAPI()
+        var detail = ReviewFixtures.detail()
+        detail.summary.linked = true
+        var summary = detail.summary
+        summary.linkedTransaction = ReviewFixtures.linkedTransaction
+        let candidate = ReviewFixtures.candidate(strength: .id)
+        await api.setPage(cursor: nil, receipts: [summary], next: nil)
+        await api.setDetail(detail, candidates: [candidate])
+        let store = ReceiptReviewStore(api: api, scope: scope)
+        await store.load()
+        await store.select(summary)
+
+        XCTAssertEqual(store.detail?.summary.linkedTransaction, summary.linkedTransaction)
+        XCTAssertEqual(store.receipts, [summary])
+        XCTAssertFalse(store.canEditSelectedReceipt)
+        XCTAssertFalse(store.canConfirmSelected)
+        XCTAssertTrue(store.candidates.isEmpty)
+        store.selectCandidate(candidate)
+        store.selectCandidate(nil)
+        XCTAssertNil(store.selectedCandidate)
+        XCTAssertFalse(store.hasLinkChoice)
+        await store.confirmSelected()
+        let group = try XCTUnwrap(store.groups.first)
+        XCTAssertFalse(group.canConfirmWithoutLinking)
+        await store.confirmMerchant(group)
+        let calls = await api.calls
+        XCTAssertEqual(calls, [.list(nil), .detail(summary.receiptId)])
+    }
+
+    func testUpdatedLinkedDetailUsesOnlyCurrentTransactionData() async {
+        let api = MockReceiptReviewAPI()
+        var detail = ReviewFixtures.detail(version: 2)
+        detail.summary.linked = true
+        var summary = ReviewFixtures.summary()
+        summary.linked = true
+        summary.linkedTransaction = ReviewFixtures.linkedTransaction
+        await api.setPage(cursor: nil, receipts: [summary], next: nil)
+        await api.setDetail(detail)
+        let store = ReceiptReviewStore(api: api, scope: scope)
+        await store.load()
+        await store.select(summary)
+
+        XCTAssertEqual(store.detail?.summary.version, 2)
+        XCTAssertNil(store.detail?.summary.linkedTransaction)
+        XCTAssertFalse(store.canConfirmSelected)
+
+        let currentTransaction = BudgetReceiptLinkedTransactionWire(
+            accountLabel: "Other test account", bookingDate: "2026-11-24", amount: "-20.00", currency: "EUR"
+        )
+        detail.summary.linkedTransaction = currentTransaction
+        await api.setDetail(detail)
+        await store.select(summary)
+
+        XCTAssertEqual(store.detail?.summary.linkedTransaction, currentTransaction)
+        XCTAssertFalse(store.canConfirmSelected)
+    }
+
+    func testStaleUnlinkedRowCannotConfirmAfterReceiptWasLinked() async throws {
+        let api = MockReceiptReviewAPI()
+        let staleSummary = ReviewFixtures.summary()
+        await api.setPage(cursor: nil, receipts: [staleSummary], next: nil)
+        let store = ReceiptReviewStore(api: api, scope: scope)
+        await store.load()
+        let staleGroup = try XCTUnwrap(store.groups.first)
+
+        var linkedDetail = ReviewFixtures.detail(version: 2)
+        linkedDetail.summary.linked = true
+        await api.setDetail(linkedDetail, candidates: [ReviewFixtures.candidate(strength: .id)])
+        await store.select(staleSummary)
+        XCTAssertEqual(store.failure, .versionConflict)
+        XCTAssertNil(store.selectedCandidate)
+        XCTAssertFalse(store.canConfirmSelected)
+        await store.confirmSelected()
+
+        await api.setPage(cursor: nil, receipts: [linkedDetail.summary], next: nil)
+        await store.load()
+        await store.confirmMerchant(staleGroup)
+        let calls = await api.calls
+        XCTAssertEqual(calls, [.list(nil), .detail(staleSummary.receiptId), .list(nil)])
+    }
+
+    func testUnknownMetadataRequiresManualLinkChoice() async throws {
+        enum MetadataLocation: CaseIterable { case list, detail, evidence }
+        for location in MetadataLocation.allCases {
+            let api = MockReceiptReviewAPI()
+            var summary = ReviewFixtures.summary()
+            var detail = ReviewFixtures.detail()
+            switch location {
+            case .list:
+                summary.sourceKind = .unknown
+            case .detail:
+                detail.summary.sourceKind = .unknown
+            case .evidence:
+                let payment = try JSONDecoder().decode(ReceiptPaymentEvidenceWire.self, from: ReviewFixtures.data([
+                    "receipt_id": ReviewFixtures.ids[1], "receipt_date": NSNull(), "total_amount": NSNull(),
+                    "fee_amount": NSNull(), "gateway": NSNull(), "gateway_status": "future-status",
+                ]))
+                detail.paymentEvidence = [payment]
+            }
+            let candidate = ReviewFixtures.candidate(strength: .id)
+            await api.setPage(cursor: nil, receipts: [summary], next: nil)
+            await api.setDetail(detail, candidates: [candidate])
+            let store = ReceiptReviewStore(api: api, scope: scope)
+            await store.load()
+            await store.select(summary)
+
+            XCTAssertEqual(store.candidates, [candidate])
+            XCTAssertNil(store.selectedCandidate)
+            XCTAssertFalse(store.canConfirmSelected)
+            store.selectCandidate(candidate)
+            XCTAssertTrue(store.canConfirmSelected)
+        }
+    }
+
+    func testUnknownReceiptStatusBlocksPreselectionAndConfirmation() async throws {
+        let api = MockReceiptReviewAPI()
+        let summary = ReviewFixtures.summary()
+        var detail = ReviewFixtures.detail()
+        detail.summary.status = .unknown
+        await api.setPage(cursor: nil, receipts: [summary], next: nil)
+        await api.setDetail(detail, candidates: [ReviewFixtures.candidate(strength: .id)])
+        let store = ReceiptReviewStore(api: api, scope: scope)
+        await store.load()
+        await store.select(summary)
+
+        XCTAssertNil(store.selectedCandidate)
+        XCTAssertFalse(store.canConfirmSelected)
+        await store.confirmSelected()
+        await store.confirmMerchant(try XCTUnwrap(store.groups.first))
+        let calls = await api.calls
+        XCTAssertEqual(calls, [.list(nil), .detail(summary.receiptId), .detail(summary.receiptId)])
+    }
+
+    func testCandidateWithUnknownDirectionIsUnsignedAndRequiresManualLinkChoice() async {
+        let api = MockReceiptReviewAPI()
+        let summary = ReviewFixtures.summary()
+        var candidate = ReviewFixtures.candidate(strength: .id)
+        candidate.amount = "-12.34"
+        candidate.creditDebitIndicator = .unknown
+        await api.setPage(cursor: nil, receipts: [summary], next: nil)
+        await api.setDetail(ReviewFixtures.detail(), candidates: [candidate])
+        let store = ReceiptReviewStore(api: api, scope: scope)
+        await store.load()
+        await store.select(summary)
+
+        XCTAssertEqual(store.candidates.first?.displayAmount, "12.34")
+        XCTAssertNil(store.selectedCandidate)
+        XCTAssertFalse(store.canConfirmSelected)
+        store.selectCandidate(candidate)
+        XCTAssertTrue(store.canConfirmSelected)
+    }
+
+    func testUnknownReceiptKindExplainsDisabledSaveAndPreventsConfirmation() async throws {
+        for unknownIsOnList in [true, false] {
+            let api = MockReceiptReviewAPI()
+            var summary = ReviewFixtures.summary()
+            var detail = ReviewFixtures.detail()
+            if unknownIsOnList {
+                summary.receiptKind = .unknown
+            } else {
+                detail.summary.receiptKind = .unknown
+            }
+            let candidate = ReviewFixtures.candidate(strength: .id)
+            await api.setPage(cursor: nil, receipts: [summary], next: nil)
+            await api.setDetail(detail, candidates: [candidate])
+            let store = ReceiptReviewStore(api: api, scope: scope)
+            await store.load()
+            await store.select(summary)
+
+            XCTAssertTrue(store.canEditSelectedReceipt)
+            XCTAssertTrue(store.hasUnknownSelectedReceiptKind)
+            XCTAssertNil(store.selectedCandidate)
+            XCTAssertEqual(store.confirmLineError, .rejected("incomplete_receipt"))
+            XCTAssertFalse(store.canConfirmSelected)
+            store.selectCandidate(candidate)
+            XCTAssertFalse(store.canConfirmSelected)
+            await store.confirmSelected()
+            await store.confirmMerchant(try XCTUnwrap(store.groups.first))
+            let confirms = await api.confirms
+            XCTAssertTrue(confirms.isEmpty)
+        }
+    }
 
     func testListPaginatesFiltersAndGroupsByMerchant() async {
         let api = MockReceiptReviewAPI()
@@ -736,24 +935,24 @@ final class ReceiptReviewClientTests: XCTestCase {
         XCTAssertEqual(sent.request.path, "/api/budget/receipts/list")
         XCTAssertEqual(sent.request.headerFields[.authorization], "Bearer \(fakeDeviceToken.token)")
         XCTAssertNil(sent.request.headerFields[.cookie])
-        XCTAssertEqual(sent.request.headerFields[HTTPField.Name("X-Hestia-Contract-Version")!], "0.52.0")
+        XCTAssertEqual(sent.request.headerFields[HTTPField.Name("X-Hestia-Contract-Version")!], "0.60.0")
         let listBody = try XCTUnwrap(JSONSerialization.jsonObject(with: sent.body) as? [String: Any])
         XCTAssertEqual(listBody["status"] as? String, "imported")
         XCTAssertEqual(listBody["evidence"] as? String, "exclude")
         XCTAssertEqual(listBody["limit"] as? Int, 200)
 
         let detailTransport = CapturingTransport(status: 200, body: String(decoding: try ReviewFixtures.data([
-            "receipt": ReviewFixtures.detailObject(), "candidates": [ReviewFixtures.candidateObject()],
+            "receipt": ReviewFixtures.detailObject(), "candidates": [ReviewFixtures.candidateObject(strength: "id")],
         ]), as: UTF8.self))
         let detailAPI = try client(detailTransport)
         let detail = try await detailAPI.receiptDetail(id: ReviewFixtures.ids[0], scope: ReviewFixtures.scope)
-        XCTAssertEqual(detail.candidates?.first?.matchStrength, .nip)
+        XCTAssertEqual(detail.candidates?.first?.matchStrength, .id)
         sent = try XCTUnwrap(detailTransport.last)
         XCTAssertEqual(sent.request.method, .get)
         XCTAssertEqual(sent.request.path, "/api/budget/receipts/detail?receipt_id=\(ReviewFixtures.ids[0])")
         XCTAssertEqual(sent.request.headerFields[.authorization], "Bearer \(fakeDeviceToken.token)")
         XCTAssertNil(sent.request.headerFields[.cookie])
-        XCTAssertEqual(sent.request.headerFields[HTTPField.Name("X-Hestia-Contract-Version")!], "0.52.0")
+        XCTAssertEqual(sent.request.headerFields[HTTPField.Name("X-Hestia-Contract-Version")!], "0.60.0")
     }
 
     func testSingleConfirmWireHasAdjustmentWithLinkOrOmitsLinesWithExplicitUnlink() async throws {
@@ -780,23 +979,33 @@ final class ReceiptReviewClientTests: XCTestCase {
             XCTAssertEqual(sent.request.path, "/api/budget/receipts/confirm")
             XCTAssertEqual(sent.request.headerFields[.authorization], "Bearer \(fakeDeviceToken.token)")
             XCTAssertNil(sent.request.headerFields[.cookie])
-            XCTAssertEqual(sent.request.headerFields[HTTPField.Name("X-Hestia-Contract-Version")!], "0.52.0")
-            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: sent.body) as? [String: Any])
-            XCTAssertEqual(object["expected_version"] as? Int, 4)
-            XCTAssertNil(object["raw_shop_name"])
-            XCTAssertNil(object["raw_nip"])
+            XCTAssertEqual(sent.request.headerFields[HTTPField.Name("X-Hestia-Contract-Version")!], "0.60.0")
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: sent.body) as? NSDictionary)
+            var expected: [String: Any] = [
+                "receipt_id": ReviewFixtures.ids[0], "expected_version": 4, "receipt_kind": "purchase",
+                "receipt_date": "2026-11-22", "receipt_time": NSNull(), "currency": "PLN",
+                "total_amount": "12.34", "payment_method": "card", "link": NSNull(),
+            ]
             if linked {
-                let lines = try XCTUnwrap(object["lines"] as? [[String: Any]])
-                XCTAssertEqual(lines.count, 2)
-                let remainder = try XCTUnwrap(lines.last)
-                XCTAssertEqual(remainder["raw_name"] as? String, "Pozostałe / nierozpoznane pozycje")
-                XCTAssertEqual(remainder["net_line_total"] as? String, "2.66")
-                XCTAssertTrue(remainder["raw_unit"] is NSNull)
-                XCTAssertEqual((object["link"] as? [String: Any])?["entry_reference"] as? String, "entry-0")
-            } else {
-                XCTAssertNil(object["lines"])
-                XCTAssertTrue(object["link"] is NSNull)
+                expected["total_amount"] = "15"
+                expected["link"] = [
+                    "account_id": "account", "entry_reference": "entry-0", "candidate_token": "candidate-0",
+                ]
+                let lines: [[String: Any]] = [
+                    [
+                        "line_kind": "item", "raw_name": "Item", "ptu_code": NSNull(), "quantity": "1",
+                        "raw_unit": NSNull(), "unit_price_raw": "12.34", "gross_line_total": "12.34",
+                        "discount_amount": "0", "net_line_total": "12.34",
+                    ],
+                    [
+                        "line_kind": "item", "raw_name": "Pozostałe / nierozpoznane pozycje", "ptu_code": NSNull(),
+                        "quantity": "1", "raw_unit": NSNull(), "unit_price_raw": NSNull(),
+                        "gross_line_total": "2.66", "discount_amount": "0", "net_line_total": "2.66",
+                    ],
+                ]
+                expected["lines"] = lines
             }
+            XCTAssertEqual(object, expected as NSDictionary)
         }
     }
 

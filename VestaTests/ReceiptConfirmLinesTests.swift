@@ -76,6 +76,25 @@ final class ReceiptConfirmLinesTests: XCTestCase {
         }
     }
 
+    func testUnknownLineKindOrTaxCodeUsesTotalWithoutEchoingLines() throws {
+        var unknownTax = line(name: "Original item")
+        unknownTax.ptuCode = .unknown
+        for original in [line(kind: .unknown, name: "Original item"), unknownTax] {
+            XCTAssertThrowsError(try ReceiptConfirmLines.cleanConfirmLine(original)) {
+                XCTAssertEqual($0 as? ReceiptConfirmLineError, .invalidForm)
+            }
+
+            let result = try plan([original])
+            XCTAssertEqual(result.adjustment, .summary)
+            XCTAssertEqual(result.lines?.count, 1)
+            let summary = try XCTUnwrap(result.lines?.first)
+            XCTAssertEqual(summary.rawName, "Tylko suma")
+            XCTAssertEqual(summary.lineKind, .other)
+            XCTAssertEqual(summary.netLineTotal, "10")
+            XCTAssertNil(summary.ptuCode)
+        }
+    }
+
     func testLineLimitIncludesRemainder() throws {
         let zero = line("0")
         let atLimit = Array(repeating: zero, count: 300)

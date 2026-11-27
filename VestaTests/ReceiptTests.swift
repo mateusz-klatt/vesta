@@ -1081,6 +1081,7 @@ final class ReceiptsClientTests: XCTestCase {
     func testParseDecodesDraftAndCandidates() async throws {
         let api = pairedClient(transport: StubTransport { request in
             XCTAssertEqual(request.path, "/api/budget/receipts/parse-text")
+            XCTAssertNil(request.headerFields[HTTPField.Name("X-Hestia-Contract-Version")!])
             return (200, body(sampleParseJSON))
         })
         let result = try await api.parseReceiptText("BIEDRONKA", source: .paste)
@@ -1118,15 +1119,27 @@ final class ReceiptsClientTests: XCTestCase {
 
         let sent = try XCTUnwrap(transport.last)
         XCTAssertEqual(sent.request.path, "/api/budget/receipts/confirm")
+        XCTAssertNil(sent.request.headerFields[HTTPField.Name("X-Hestia-Contract-Version")!])
         XCTAssertEqual(sent.request.headerFields[.contentLength], String(sent.body.count))
-        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: sent.body) as? [String: Any])
-        let keys = try XCTUnwrap(ExplicitNullsMiddleware.required["confirmBudgetReceipt"])
-        XCTAssertEqual(Set(object.keys), Set(keys.top))
-        XCTAssertTrue(object["link"] is NSNull)
-        XCTAssertTrue(object["receipt_time"] is NSNull)
-        let line = try XCTUnwrap((object["lines"] as? [[String: Any]])?.first)
-        XCTAssertEqual(Set(line.keys), Set(keys.lines))
-        XCTAssertTrue(line["raw_unit"] is NSNull)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: sent.body) as? NSDictionary)
+        let expected = try XCTUnwrap(JSONSerialization.jsonObject(with: body(#"""
+        {
+          "receipt_id":"0f8fad5b-d9cb-469f-a165-70867728950e","expected_version":1,
+          "raw_shop_name":"BIEDRONKA","raw_nip":"7791011327","receipt_kind":"purchase",
+          "receipt_date":"2026-11-22","receipt_time":null,"total_amount":"8","currency":"PLN",
+          "payment_method":"cash","link":null,
+          "lines":[
+            {"line_kind":"item","raw_name":"MLEKO","ptu_code":"C","quantity":"1","raw_unit":null,
+             "unit_price_raw":"3.49","gross_line_total":"3.49","discount_amount":"0","net_line_total":"3.49"},
+            {"line_kind":"item","raw_name":"CHLEB","ptu_code":"C","quantity":"1","raw_unit":null,
+             "unit_price_raw":"4.49","gross_line_total":"4.49","discount_amount":"0","net_line_total":"4.49"},
+            {"line_kind":"item","raw_name":"Pozostałe / nierozpoznane pozycje","ptu_code":null,"quantity":"1",
+             "raw_unit":null,"unit_price_raw":null,
+             "gross_line_total":"0.02","discount_amount":"0","net_line_total":"0.02"}
+          ]
+        }
+        """#)) as? NSDictionary)
+        XCTAssertEqual(object, expected)
     }
 
     func testConfirmWireOmitsUnchangedLines() async throws {
@@ -1405,6 +1418,37 @@ final class ReceiptFormTests: XCTestCase {
         XCTAssertEqual(form.candidate, ReceiptForm.CandidateID(p.candidates[0]))
         XCTAssertEqual(form.day?.iso, "2026-11-22")
         XCTAssertNil(form.totalAdjustment)
+        XCTAssertTrue(form.isValid)
+    }
+
+    func testUnknownDraftStatusBlocksConfirmationAndPreselection() throws {
+        var p = try parsed()
+        p.draft.summary.status = .unknown
+        let form = ReceiptForm(draft: p.draft, candidates: p.candidates)
+
+        XCTAssertFalse(form.canConfirmStatus)
+        XCTAssertFalse(form.isValid)
+        XCTAssertNil(form.candidate)
+        XCTAssertNil(form.request(receiptID: p.receiptId, version: p.version, candidates: p.candidates))
+    }
+
+    func testUnknownDraftReceiptKindCannotBeConfirmed() throws {
+        var p = try parsed()
+        p.draft.summary.receiptKind = .unknown
+        var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
+
+        XCTAssertFalse(form.canConfirmKind)
+        form.kind = .refund
+        XCTAssertFalse(form.isValid)
+        XCTAssertNil(form.request(receiptID: p.receiptId, version: p.version, candidates: p.candidates))
+    }
+
+    func testUnknownCandidateStrengthDoesNotPreselectOnScan() throws {
+        var p = try parsed()
+        p.candidates[0].matchStrength = .unknown
+        let form = ReceiptForm(draft: p.draft, candidates: p.candidates)
+
+        XCTAssertNil(form.candidate)
         XCTAssertTrue(form.isValid)
     }
 
@@ -1860,6 +1904,42 @@ final class ReceiptFlowTests: XCTestCase {
         XCTAssertEqual(flow.step, .done)
         let calls = await api.calls
         XCTAssertEqual(calls, [.parse("BIEDRONKA\nSUMA PLN 7,98"), .confirm("tx1")])
+    }
+
+    func testUnknownDraftStatusDoesNotConfirmOrDelete() async throws {
+        var parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: body(sampleParseJSON))
+        parsed.draft.summary.status = .unknown
+        let api = MockReceiptsAPI(parseResult: parsed)
+        let flow = ReceiptFlow(api: api)
+        flow.useText("Receipt text")
+
+        await flow.send()
+        XCTAssertEqual(flow.step, .review)
+        await flow.confirm()
+        await flow.backToEdit()
+        await flow.abandon()
+
+        let calls = await api.calls
+        XCTAssertEqual(calls, [.parse("Receipt text")])
+    }
+
+    func testAbandonedLateUnknownDraftDoesNotDelete() async throws {
+        var parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: body(sampleParseJSON))
+        parsed.draft.summary.status = .unknown
+        let api = MockReceiptsAPI(parseResult: parsed)
+        await api.holdNextParse()
+        let flow = ReceiptFlow(api: api)
+        flow.useText("Receipt text")
+        let reading = Task { await flow.send() }
+        defer { Task { await api.releaseParse() } }
+        try await waitUntil("the held parse request") { await api.calls.count == 1 }
+
+        await flow.abandon()
+        await api.releaseParse()
+        await reading.value
+
+        let calls = await api.calls
+        XCTAssertEqual(calls, [.parse("Receipt text")])
     }
 
     func testOneConfirmLinksPreselectedMatchWithPartiallyReadItems() async throws {
