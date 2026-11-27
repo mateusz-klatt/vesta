@@ -204,11 +204,27 @@ final class ReceiptContract060Tests: XCTestCase {
         XCTAssertNil(form.candidate)
         XCTAssertNil(form.request(receiptID: summary.receiptId, version: summary.version, candidates: [candidate]))
 
-        let transaction = try BudgetMappingTests.decodeTransaction(
-            receipt: BudgetMappingTests.transactionReceiptObject(status: "future-status")
+        let transactionsData = try BudgetMappingTests.transactionsData(rows: [
+            ["entry_reference": "unknown-status", "status": "future-booking-status", "currency": "USD",
+             "receipt": BudgetMappingTests.transactionReceiptObject(status: "future-status")],
+            ["entry_reference": "unknown-direction", "credit_debit_indicator": "future-direction", "currency": "USD"],
+            ["entry_reference": "credit", "credit_debit_indicator": "CRDT", "currency": "USD"],
+        ])
+        let transactionsWire = try JSONDecoder().decode(
+            Components.Schemas.BudgetAnalyticsTransactions.self, from: transactionsData
         )
-        XCTAssertEqual(transaction.receipt?.status, .unknown)
-        let chip = try XCTUnwrap(BudgetTransactionReceiptChip(receipt: transaction.receipt, locale: Locale(identifier: "en_US")))
+        XCTAssertEqual(transactionsWire.transactions.map(\.status), [.unknown, .book, .book])
+        XCTAssertEqual(transactionsWire.transactions.map(\.creditDebitIndicator), [.dbit, .unknown, .crdt])
+
+        let transactions = try BudgetTransactionPage(wire: transactionsWire).transactions
+        let locale = Locale(identifier: "en_US")
+        XCTAssertEqual(transactions.map(\.entryReference), ["unknown-status", "unknown-direction", "credit"])
+        XCTAssertEqual(transactions.map { $0.formattedAmount(locale: locale) }, ["-$12.34", "$12.34", "+$12.34"])
+        XCTAssertNil(transactions.first { $0.creditDebitIndicator == .unknown }?.signedAmount)
+
+        let receiptWithUnknownStatus = transactions.first?.receipt
+        XCTAssertEqual(receiptWithUnknownStatus?.status, .unknown)
+        let chip = try XCTUnwrap(BudgetTransactionReceiptChip(receipt: receiptWithUnknownStatus, locale: locale))
         XCTAssertEqual(chip.text, "🧾 Test issuer · $74.50")
         XCTAssertFalse(chip.needsReview)
     }

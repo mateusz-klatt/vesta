@@ -1,10 +1,10 @@
 import Foundation
 
-private protocol ReceiptResponseEnum: RawRepresentable, Decodable where RawValue == String {
+protocol APIResponseStringEnum: RawRepresentable, Decodable where RawValue == String {
     static var unknown: Self { get }
 }
 
-extension ReceiptResponseEnum {
+extension APIResponseStringEnum {
     init(from decoder: any Decoder) throws {
         let value = try decoder.singleValueContainer().decode(String.self)
         self = Self(rawValue: value) ?? .unknown
@@ -98,10 +98,10 @@ struct BudgetReceiptDetailResultWire: Codable, Hashable, Sendable {
 }
 
 struct ReceiptCandidateWire: Codable, Hashable, Sendable {
-    enum CreditDebitIndicatorPayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+    enum CreditDebitIndicatorPayload: String, Codable, Hashable, Sendable, APIResponseStringEnum {
         case DBIT, CRDT, unknown
     }
-    enum MatchStrengthPayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+    enum MatchStrengthPayload: String, Codable, Hashable, Sendable, APIResponseStringEnum {
         case id, nip, distinctive, generic, none, unknown
     }
 
@@ -166,10 +166,10 @@ struct ReceiptCandidateWire: Codable, Hashable, Sendable {
 }
 
 struct ReceiptLineWire: Codable, Hashable, Sendable {
-    enum LineKindPayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+    enum LineKindPayload: String, Codable, Hashable, Sendable, APIResponseStringEnum {
         case item, deposit, basketDiscount = "basket_discount", other, unknown
     }
-    enum PtuCodePayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+    enum PtuCodePayload: String, Codable, Hashable, Sendable, APIResponseStringEnum {
         case A, B, C, D, E, F, G, unknown
     }
 
@@ -260,7 +260,7 @@ struct BudgetReceiptLinkedTransactionWire: Codable, Hashable, Sendable {
 }
 
 struct BudgetAnalyticsTransactionReceiptWire: Codable, Hashable, Sendable {
-    enum Status: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+    enum Status: String, Codable, Hashable, Sendable, APIResponseStringEnum {
         case confirmed, needsReview = "needs_review", unknown
     }
 
@@ -299,7 +299,7 @@ struct BudgetReceiptSummaryWire: Codable, Hashable, Sendable, Identifiable {
         status == .unknown || sourceKind == .unknown || documentKind == .unknown || gatewayStatus == .unknown
     }
 
-    enum ReceiptKindPayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+    enum ReceiptKindPayload: String, Codable, Hashable, Sendable, APIResponseStringEnum {
         case purchase, refund, unknown
 
         var confirmValue: ReceiptConfirmRequestWire.ReceiptKindPayload? {
@@ -310,17 +310,17 @@ struct BudgetReceiptSummaryWire: Codable, Hashable, Sendable, Identifiable {
             }
         }
     }
-    enum SourceKindPayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+    enum SourceKindPayload: String, Codable, Hashable, Sendable, APIResponseStringEnum {
         case liveText = "live_text", localOcr = "local_ocr", cloudAi = "cloud_ai"
         case paste, photo, email, attachment, unknown
     }
-    enum StatusPayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+    enum StatusPayload: String, Codable, Hashable, Sendable, APIResponseStringEnum {
         case draft, confirmed, needsReview = "needs_review", imported, unknown
     }
-    enum DocumentKindPayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+    enum DocumentKindPayload: String, Codable, Hashable, Sendable, APIResponseStringEnum {
         case receipt, invoice, paymentConfirmation = "payment_confirmation", unknown
     }
-    enum GatewayStatusPayload: String, Codable, Hashable, Sendable, ReceiptResponseEnum {
+    enum GatewayStatusPayload: String, Codable, Hashable, Sendable, APIResponseStringEnum {
         case registered, paid, unknown
     }
 

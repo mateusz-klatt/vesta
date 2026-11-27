@@ -62,7 +62,7 @@ private enum BudgetFixtures {
     static func transaction(_ id: String, amount: Decimal = 1) -> BudgetTransaction {
         BudgetTransaction(
             id: "acc\u{1f}\(id)", accountID: "acc", entryReference: id,
-            amount: amount, isCredit: false, currency: "PLN", bookingDate: nil,
+            amount: amount, creditDebitIndicator: .dbit, currency: "PLN", bookingDate: nil,
             payee: nil, details: nil, categoryID: nil, kind: "purchase", receipt: nil
         )
     }
@@ -273,10 +273,14 @@ final class BudgetMappingTests: XCTestCase {
     }
 
     static func transactionsData(receipt: Any?) throws -> Data {
+        let row: [String: Any] = receipt.map { ["receipt": $0] } ?? [:]
+        return try transactionsData(rows: [row])
+    }
+
+    static func transactionsData(rows: [[String: Any]]) throws -> Data {
         var page = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(transactionsJSON.utf8)) as? [String: Any])
-        var transactions = try XCTUnwrap(page["transactions"] as? [[String: Any]])
-        transactions[0]["receipt"] = receipt
-        page["transactions"] = transactions
+        let base = try XCTUnwrap((page["transactions"] as? [[String: Any]])?.first)
+        page["transactions"] = rows.map { base.merging($0) { _, value in value } }
         return try JSONSerialization.data(withJSONObject: page)
     }
 
@@ -1582,7 +1586,8 @@ final class BudgetClientTests: XCTestCase {
         XCTAssertNil(items["kind"])
         XCTAssertNil(items["query"])
         XCTAssertEqual(request.headerFields[.authorization], "Bearer \(fakeDeviceToken.token)")
-        XCTAssertEqual(request.headerFields[HTTPField.Name("X-Hestia-Contract-Version")!], "0.60.0")
+        let contractHeader = HTTPField.Name("X-Hestia-Contract-Version")!
+        XCTAssertEqual(request.headerFields.filter { $0.name == contractHeader }.map(\.value), ["0.60.0"])
         XCTAssertEqual(page.transactions.first?.payee, "Shop")
         XCTAssertNil(page.transactions.first?.receipt)
     }
@@ -1595,6 +1600,25 @@ final class BudgetClientTests: XCTestCase {
         })
         let page = try await api.transactions(period: "2026-11", currency: nil, categoryID: nil, cursor: nil, limit: 50)
         XCTAssertEqual(page.transactions.first?.receipt?.shopName, "Test issuer")
+    }
+
+    func testTransactionsPreservePageWhenOneReceiptIsMalformed() async throws {
+        let confirmed = BudgetMappingTests.transactionReceiptObject()
+        var malformed = confirmed
+        malformed.removeValue(forKey: "shop_name")
+        let needsReview = BudgetMappingTests.transactionReceiptObject(status: "needs_review")
+        let response = try BudgetMappingTests.transactionsData(rows: [
+            ["entry_reference": "tx-1", "receipt": confirmed],
+            ["entry_reference": "tx-2", "receipt": malformed],
+            ["entry_reference": "tx-3", "receipt": needsReview],
+        ])
+        let api = try pairedClient(StubTransport { _ in (200, response) })
+        let page = try await api.transactions(period: "2026-11", currency: nil, categoryID: nil, cursor: nil, limit: 50)
+
+        XCTAssertEqual(page.transactions.map(\.entryReference), ["tx-1", "tx-2", "tx-3"])
+        XCTAssertEqual(page.transactions.map { $0.receipt?.status }, [.confirmed, nil, .needsReview])
+        XCTAssertEqual(page.nextCursor, "next-page")
+        XCTAssertEqual(page.filteredTotal, 7)
     }
 
     func testStatusWireRequestAndErrorMapping() async throws {

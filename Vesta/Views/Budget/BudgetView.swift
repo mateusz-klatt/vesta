@@ -562,15 +562,10 @@ private struct BudgetTransactionRow: View {
                 }
             }
             Spacer()
-            Text(verbatim: amount)
+            Text(verbatim: transaction.formattedAmount(locale: locale))
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(transaction.isCredit ? Color.green : Theme.textPrimary)
         }
-    }
-
-    private var amount: String {
-        let value = transaction.signedAmount.formatted(.currency(code: transaction.currency).locale(locale))
-        return transaction.isCredit ? "+\(value)" : value
     }
 }
 
