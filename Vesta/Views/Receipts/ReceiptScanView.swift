@@ -192,12 +192,8 @@ private struct ReceiptReviewStep: View {
             } header: {
                 Text("Items (\(flow.form.lines.count))")
             } footer: {
-                if let delta = flow.form.mismatch {
-                    Text("Items and total differ by \(delta.formatted()). Go back and fix the text.")
-                        .foregroundStyle(.red)
-                } else if !flow.form.invalidLines.isEmpty {
-                    Text("Some item amounts don’t add up. Go back and fix the text.")
-                        .foregroundStyle(.red)
+                if let adjustment = flow.form.totalAdjustment {
+                    Text(adjustment.message).foregroundStyle(Theme.textSecondary)
                 }
             }
 
@@ -226,7 +222,7 @@ private struct ReceiptReviewStep: View {
                 }
             }
 
-            ReceiptErrorSection(error: flow.error)
+            ReceiptErrorSection(error: flow.form.confirmLineError ?? flow.error)
 
             Section {
                 Button("Save receipt") { Task { await flow.confirm() } }

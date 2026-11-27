@@ -278,6 +278,7 @@ final class ReceiptReviewStoreTests: XCTestCase {
         await store.select(summary)
 
         XCTAssertEqual(store.selectedCandidate?.entry, "entry-0")
+        XCTAssertNil(store.totalAdjustment)
         await store.confirmSelected()
 
         let confirms = await api.confirms
@@ -285,8 +286,100 @@ final class ReceiptReviewStoreTests: XCTestCase {
         XCTAssertEqual(request.expectedVersion, 7)
         XCTAssertEqual(request.link?.entryReference, "entry-0")
         XCTAssertEqual(request.link?.candidateToken, "candidate-0")
+        XCTAssertNil(request.lines)
         XCTAssertTrue(store.receipts.isEmpty)
         XCTAssertEqual(store.outcomes.first?.status, .confirmed)
+    }
+
+    func testRemainderNoteKeepsPreselectedLinkAndConfirmsInOneTap() async throws {
+        let api = MockReceiptReviewAPI()
+        var detail = ReviewFixtures.detail(version: 4)
+        detail.lines = [.init(grossLineTotal: "7.34", netLineTotal: "7.34", unitPriceRaw: "7.34")]
+        let candidate = ReviewFixtures.candidate()
+        await api.setPage(cursor: nil, receipts: [detail.summary], next: nil)
+        await api.setDetail(detail, candidates: [candidate])
+        let store = ReceiptReviewStore(api: api, scope: scope)
+        await store.load()
+        await store.select(detail.summary)
+
+        XCTAssertEqual(store.totalAdjustment, .remainder(amount: "5"))
+        XCTAssertEqual(store.selectedCandidate, ReceiptForm.CandidateID(candidate))
+        XCTAssertTrue(store.canConfirmSelected)
+        await store.confirmSelected()
+
+        let confirms = await api.confirms
+        XCTAssertEqual(confirms.count, 1)
+        let request = try XCTUnwrap(confirms.first)
+        XCTAssertEqual(request.link?.accountId, candidate.accountId)
+        XCTAssertEqual(request.link?.entryReference, candidate.entryReference)
+        XCTAssertEqual(request.link?.candidateToken, candidate.candidateToken)
+        XCTAssertEqual(request.lines?.map(\.rawName), ["Item", "Pozostałe / nierozpoznane pozycje"])
+        XCTAssertEqual(request.lines?.map(\.netLineTotal), ["7.34", "5"])
+        XCTAssertEqual(store.confirmedReceiptID, detail.summary.receiptId)
+        XCTAssertNil(store.totalAdjustment)
+    }
+
+    func testRedactedLineShowsSummaryNoteAndIsNeverSent() async throws {
+        let api = MockReceiptReviewAPI()
+        var detail = ReviewFixtures.detail()
+        detail.lines = [.init(grossLineTotal: "7.34", netLineTotal: "7.34", rawName: "[usunięto]")]
+        await api.setPage(cursor: nil, receipts: [detail.summary], next: nil)
+        await api.setDetail(detail)
+        let store = ReceiptReviewStore(api: api, scope: scope)
+        await store.load()
+        await store.select(detail.summary)
+
+        XCTAssertEqual(store.totalAdjustment, .summary)
+        XCTAssertTrue(store.canConfirmSelected)
+        await store.confirmSelected()
+
+        let confirms = await api.confirms
+        let lines = try XCTUnwrap(confirms.first?.lines)
+        XCTAssertEqual(lines.map(\.rawName), ["Tylko suma"])
+        XCTAssertEqual(lines.map(\.netLineTotal), ["12.34"])
+    }
+
+    func testPaymentConfirmationDisablesSaveAndShowsMismatchBeforeTap() async {
+        let api = MockReceiptReviewAPI()
+        var detail = ReviewFixtures.detail()
+        detail.summary.documentKind = .paymentConfirmation
+        detail.lines = [.init(grossLineTotal: "7.34", netLineTotal: "7.34")]
+        await api.setPage(cursor: nil, receipts: [detail.summary], next: nil)
+        await api.setDetail(detail)
+        let store = ReceiptReviewStore(api: api, scope: scope)
+        await store.load()
+        await store.select(detail.summary)
+
+        XCTAssertNil(store.totalAdjustment)
+        XCTAssertFalse(store.canConfirmSelected)
+        XCTAssertEqual(store.confirmLineError, .totalMismatch)
+        await store.confirmSelected()
+
+        let confirms = await api.confirms
+        XCTAssertTrue(confirms.isEmpty)
+    }
+
+    func testMissingOrInvalidTotalDisablesSaveAndShowsReasonBeforeTap() async {
+        let invalidTotals: [String?] = [nil, "", "invalid", "0.00", "-12.34"]
+        for total in invalidTotals {
+            let api = MockReceiptReviewAPI()
+            var detail = ReviewFixtures.detail()
+            detail.summary.totalAmount = total
+            await api.setPage(cursor: nil, receipts: [detail.summary], next: nil)
+            await api.setDetail(detail)
+            let store = ReceiptReviewStore(api: api, scope: scope)
+            await store.load()
+            await store.select(detail.summary)
+
+            XCTAssertNil(store.totalAdjustment)
+            XCTAssertFalse(store.canConfirmSelected)
+            XCTAssertEqual(store.confirmLineError, .invalidTotal)
+            XCTAssertEqual(store.confirmLineError?.message.key, "The receipt total is missing or invalid.")
+            await store.confirmSelected()
+
+            let confirms = await api.confirms
+            XCTAssertTrue(confirms.isEmpty)
+        }
     }
 
     func testSingleConfirmWithoutMatchPermissionSendsNull() async throws {
@@ -319,8 +412,9 @@ final class ReceiptReviewStoreTests: XCTestCase {
         let receipts = (0...2).map { ReviewFixtures.summary($0, shop: "Shop", version: 11 + $0) }
         await api.setPage(cursor: nil, receipts: receipts, next: nil)
         for index in 0...2 {
-            await api.setDetail(ReviewFixtures.detail(index, version: 11 + index),
-                                candidates: [ReviewFixtures.candidate(index)])
+            var detail = ReviewFixtures.detail(index, version: 11 + index)
+            if index == 0 { detail.summary.totalAmount = "10" }
+            await api.setDetail(detail, candidates: [ReviewFixtures.candidate(index)])
         }
         await api.setConfirmError(ReviewFixtures.ids[1], .versionConflict)
         await api.setConfirmError(ReviewFixtures.ids[2], .alreadySubmitted)
@@ -350,6 +444,9 @@ final class ReceiptReviewStoreTests: XCTestCase {
         XCTAssertEqual(store.receipts.map(\.receiptId), [ReviewFixtures.ids[1]])
         let confirms = await api.confirms
         XCTAssertTrue(confirms.allSatisfy { $0.link == nil })
+        XCTAssertEqual(confirms.first?.lines?.map(\.rawName), ["Tylko suma"])
+        XCTAssertEqual(confirms.first?.lines?.map(\.netLineTotal), ["10"])
+        XCTAssertEqual(store.outcomes.first?.adjustment, .summary)
     }
 
     func testBulkSkipsReceiptsConfirmedLinkedOrChangedSinceListing() async throws {
@@ -379,11 +476,12 @@ final class ReceiptReviewStoreTests: XCTestCase {
         XCTAssertEqual(store.outcomes[2].code, "budget_receipt_conflict")
     }
 
-    func testInvoiceWithNoLinesGetsOneSummaryLine() async throws {
+    func testInvoiceWithNoLinesSendsInvoiceNumberLineAndHidesNote() async throws {
         let api = MockReceiptReviewAPI()
         let summary = ReviewFixtures.summary()
         var invoice = ReviewFixtures.detail()
         invoice.summary.documentKind = .invoice
+        invoice.summary.invoiceNumber = " INV-001 "
         invoice.lines = []
         invoice.summary.receiptTime = ""
         await api.setPage(cursor: nil, receipts: [summary], next: nil)
@@ -391,14 +489,22 @@ final class ReceiptReviewStoreTests: XCTestCase {
         let store = ReceiptReviewStore(api: api, scope: scope)
         await store.load()
         await store.select(summary)
+        XCTAssertNil(store.totalAdjustment)
+        XCTAssertTrue(store.canConfirmSelected)
         await store.confirmSelected()
 
         let confirms = await api.confirms
-        let lines = try XCTUnwrap(confirms.first?.lines)
-        XCTAssertNil(confirms.first?.receiptTime)
-        XCTAssertEqual(lines.count, 1)
-        XCTAssertEqual(lines.first?.lineKind, .other)
-        XCTAssertEqual(lines.first?.netLineTotal, invoice.summary.totalAmount)
+        let request = try XCTUnwrap(confirms.first)
+        XCTAssertNil(request.receiptTime)
+        XCTAssertEqual(request.lines?.count, 1)
+        let line = try XCTUnwrap(request.lines?.first)
+        XCTAssertEqual(line.rawName, "INV-001")
+        XCTAssertEqual(line.lineKind, .other)
+        XCTAssertEqual(line.grossLineTotal, request.totalAmount)
+        XCTAssertEqual(line.netLineTotal, request.totalAmount)
+        XCTAssertEqual(line.discountAmount, "0")
+        XCTAssertEqual(line.quantity, "1")
+        XCTAssertNil(store.outcomes.first?.adjustment)
     }
 
     func testClearDropsLateConfirmFailure() async throws {
@@ -650,7 +756,7 @@ final class ReceiptReviewClientTests: XCTestCase {
         XCTAssertEqual(sent.request.headerFields[HTTPField.Name("X-Hestia-Contract-Version")!], "0.52.0")
     }
 
-    func testSingleConfirmWireHasLinkOrExplicitNull() async throws {
+    func testSingleConfirmWireHasAdjustmentWithLinkOrOmitsLinesWithExplicitUnlink() async throws {
         for linked in [true, false] {
             var receiptObject = ReviewFixtures.detailObject()
             receiptObject["status"] = "confirmed"
@@ -658,14 +764,14 @@ final class ReceiptReviewClientTests: XCTestCase {
                 "ok": true, "receipt": receiptObject,
             ]), as: UTF8.self))
             let api = try client(transport)
-            let detail = ReviewFixtures.detail(version: 4)
+            var detail = ReviewFixtures.detail(version: 4)
+            if linked { detail.summary.totalAmount = "15" }
             let candidate = ReviewFixtures.candidate()
             var form = ReceiptForm(draft: detail, candidates: [candidate])
             if !linked { form.candidate = nil }
             var request = try XCTUnwrap(form.request(
                 receiptID: detail.summary.receiptId, version: detail.summary.version, candidates: [candidate]
             ))
-            request.lines = nil
             request.rawShopName = nil
 
             _ = try await api.confirmImportedReceipt(request, scope: ReviewFixtures.scope)
@@ -679,10 +785,16 @@ final class ReceiptReviewClientTests: XCTestCase {
             XCTAssertEqual(object["expected_version"] as? Int, 4)
             XCTAssertNil(object["raw_shop_name"])
             XCTAssertNil(object["raw_nip"])
-            XCTAssertNil(object["lines"])
             if linked {
+                let lines = try XCTUnwrap(object["lines"] as? [[String: Any]])
+                XCTAssertEqual(lines.count, 2)
+                let remainder = try XCTUnwrap(lines.last)
+                XCTAssertEqual(remainder["raw_name"] as? String, "Pozostałe / nierozpoznane pozycje")
+                XCTAssertEqual(remainder["net_line_total"] as? String, "2.66")
+                XCTAssertTrue(remainder["raw_unit"] is NSNull)
                 XCTAssertEqual((object["link"] as? [String: Any])?["entry_reference"] as? String, "entry-0")
             } else {
+                XCTAssertNil(object["lines"])
                 XCTAssertTrue(object["link"] is NSNull)
             }
         }

@@ -1112,6 +1112,7 @@ final class ReceiptsClientTests: XCTestCase {
         var form = ReceiptForm(draft: parsed.draft, candidates: parsed.candidates)
         form.time = ""
         form.payment = .cash                       // → link: null
+        form.total = "8.00"                        // → send a remainder line
         let request = try XCTUnwrap(form.request(receiptID: parsed.receiptId, version: parsed.version, candidates: parsed.candidates))
         await assertReceiptError(try await api.confirmReceipt(request), .staleCandidate)
 
@@ -1126,6 +1127,111 @@ final class ReceiptsClientTests: XCTestCase {
         let line = try XCTUnwrap((object["lines"] as? [[String: Any]])?.first)
         XCTAssertEqual(Set(line.keys), Set(keys.lines))
         XCTAssertTrue(line["raw_unit"] is NSNull)
+    }
+
+    func testConfirmWireOmitsUnchangedLines() async throws {
+        let transport = CapturingTransport(status: 409, body: #"{"error":{"code":"budget_receipt_stale_source"}}"#)
+        let api = pairedClient(transport: transport)
+        let parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: body(sampleParseJSON))
+        let form = ReceiptForm(draft: parsed.draft, candidates: parsed.candidates)
+        let request = try XCTUnwrap(form.request(
+            receiptID: parsed.receiptId, version: parsed.version, candidates: parsed.candidates
+        ))
+        XCTAssertNil(form.totalAdjustment)
+        XCTAssertNil(request.lines)
+        await assertReceiptError(try await api.confirmReceipt(request), .staleCandidate)
+
+        let sent = try XCTUnwrap(transport.last)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: sent.body) as? [String: Any])
+        XCTAssertNil(object["lines"])
+    }
+
+    func testConfirmWireSendsSummaryForEmptyInvoiceAndHidesNote() async throws {
+        let transport = CapturingTransport(status: 409, body: #"{"error":{"code":"budget_receipt_stale_source"}}"#)
+        let api = pairedClient(transport: transport)
+        var payload = try XCTUnwrap(JSONSerialization.jsonObject(with: body(sampleParseJSON)) as? [String: Any])
+        var draft = try XCTUnwrap(payload["draft"] as? [String: Any])
+        draft["document_kind"] = "invoice"
+        draft["invoice_number"] = "  FV-TEST/1  "
+        draft["lines"] = [] as [[String: Any]]
+        payload["draft"] = draft
+        let parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: JSONSerialization.data(withJSONObject: payload))
+        let form = ReceiptForm(draft: parsed.draft, candidates: parsed.candidates)
+        let request = try XCTUnwrap(form.request(
+            receiptID: parsed.receiptId, version: parsed.version, candidates: parsed.candidates
+        ))
+        XCTAssertTrue(form.isValid)
+        XCTAssertNil(form.totalAdjustment)
+        XCTAssertEqual(request.link?.entryReference, "tx1")
+        await assertReceiptError(try await api.confirmReceipt(request), .staleCandidate)
+
+        let sent = try XCTUnwrap(transport.last)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: sent.body) as? [String: Any])
+        let lines = try XCTUnwrap(object["lines"] as? [[String: Any]])
+        XCTAssertEqual(lines.count, 1)
+        let line = try XCTUnwrap(lines.first)
+        XCTAssertEqual(line["raw_name"] as? String, "FV-TEST/1")
+        XCTAssertEqual(line["line_kind"] as? String, "other")
+        XCTAssertEqual(line["quantity"] as? String, "1")
+        XCTAssertEqual(line["gross_line_total"] as? String, "7.98")
+        XCTAssertEqual(line["discount_amount"] as? String, "0")
+        XCTAssertEqual(line["net_line_total"] as? String, object["total_amount"] as? String)
+    }
+
+    func testConfirmWireUsesDocumentAndStripsStoredCardNumberForEmptyInvoice() async throws {
+        let cardNumber = "4111 1111 1111 1111"
+        let transport = CapturingTransport(status: 409, body: #"{"error":{"code":"budget_receipt_stale_source"}}"#)
+        let api = pairedClient(transport: transport)
+        var parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: body(sampleParseJSON))
+        parsed.draft.summary.documentKind = .invoice
+        parsed.draft.summary.rawShopName = cardNumber
+        parsed.draft.lines = []
+        let form = ReceiptForm(draft: parsed.draft, candidates: parsed.candidates)
+        let request = try XCTUnwrap(form.request(
+            receiptID: parsed.receiptId, version: parsed.version, candidates: parsed.candidates
+        ))
+        await assertReceiptError(try await api.confirmReceipt(request), .staleCandidate)
+
+        let sent = try XCTUnwrap(transport.last)
+        let bodyText = String(decoding: sent.body, as: UTF8.self)
+        for group in Set(cardNumber.split(separator: " ")) {
+            XCTAssertFalse(bodyText.contains(group))
+        }
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: sent.body) as? [String: Any])
+        XCTAssertEqual(object["raw_shop_name"] as? String, PANRedactor.placeholder)
+        let lines = try XCTUnwrap(object["lines"] as? [[String: Any]])
+        XCTAssertEqual(lines.count, 1)
+        XCTAssertEqual(lines.first?["raw_name"] as? String, "Document")
+    }
+
+    func testConfirmWireRedactsInvoiceNumberForEmptyInvoice() async throws {
+        let cardNumber = "4111 1111 1111 1111"
+        let shopName = "Test shop"
+        let cases = [(cardNumber, shopName), ("FV-TEST \(cardNumber)", "FV-TEST [REDACTED]")]
+        for (invoiceNumber, expectedName) in cases {
+            let transport = CapturingTransport(status: 409, body: #"{"error":{"code":"budget_receipt_stale_source"}}"#)
+            let api = pairedClient(transport: transport)
+            var parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: body(sampleParseJSON))
+            parsed.draft.summary.documentKind = .invoice
+            parsed.draft.summary.invoiceNumber = invoiceNumber
+            parsed.draft.summary.rawShopName = shopName
+            parsed.draft.lines = []
+            let form = ReceiptForm(draft: parsed.draft, candidates: parsed.candidates)
+            let request = try XCTUnwrap(form.request(
+                receiptID: parsed.receiptId, version: parsed.version, candidates: parsed.candidates
+            ))
+            await assertReceiptError(try await api.confirmReceipt(request), .staleCandidate)
+
+            let sent = try XCTUnwrap(transport.last)
+            let bodyText = String(decoding: sent.body, as: UTF8.self)
+            for group in Set(cardNumber.split(separator: " ")) {
+                XCTAssertFalse(bodyText.contains(group))
+            }
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: sent.body) as? [String: Any])
+            let lines = try XCTUnwrap(object["lines"] as? [[String: Any]])
+            XCTAssertEqual(lines.count, 1)
+            XCTAssertEqual(lines.first?["raw_name"] as? String, expectedName)
+        }
     }
 
     func testBudgetDisabledMapped() {
@@ -1298,7 +1404,7 @@ final class ReceiptFormTests: XCTestCase {
         XCTAssertEqual(form.payment, .card)
         XCTAssertEqual(form.candidate, ReceiptForm.CandidateID(p.candidates[0]))
         XCTAssertEqual(form.day?.iso, "2026-11-22")
-        XCTAssertNil(form.mismatch)
+        XCTAssertNil(form.totalAdjustment)
         XCTAssertTrue(form.isValid)
     }
 
@@ -1310,6 +1416,17 @@ final class ReceiptFormTests: XCTestCase {
         XCTAssertEqual(request.totalAmount, "7.98")
         XCTAssertEqual(request.link?.entryReference, "tx1")
         XCTAssertEqual(request.link?.candidateToken, p.candidates[0].candidateToken)
+        XCTAssertNil(request.lines)
+    }
+
+    func testExactSumWithEditedLinesSendsTheEdits() throws {
+        let p = try parsed()
+        var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
+        form.lines[0].rawName = "Edited item"
+
+        let request = try XCTUnwrap(form.request(receiptID: p.receiptId, version: p.version, candidates: p.candidates))
+        XCTAssertNil(form.totalAdjustment)
+        XCTAssertEqual(request.lines?.first?.rawName, "Edited item")
         XCTAssertEqual(request.lines?.map(\.netLineTotal), ["3.49", "4.49"])
     }
 
@@ -1373,6 +1490,50 @@ final class ReceiptFormTests: XCTestCase {
         XCTAssertEqual(form.request(receiptID: p.receiptId, version: 1, candidates: [])?.rawShopName, "SKLEP [REDACTED]")
     }
 
+    func testEmptyInvoiceUsesEditedShopForItsSummaryLine() throws {
+        var p = try parsed()
+        p.draft.summary.documentKind = .invoice
+        p.draft.lines = []
+        var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
+        form.shopName = "  Cafe\u{0301}\t  shop  "
+
+        let request = try XCTUnwrap(form.request(receiptID: p.receiptId, version: p.version, candidates: p.candidates))
+        XCTAssertNil(form.totalAdjustment)
+        XCTAssertNil(request.link)
+        let shop = try XCTUnwrap(request.rawShopName)
+        let name = try XCTUnwrap(request.lines?.first?.rawName)
+        XCTAssertEqual(Array(shop.utf8), Array("Café shop".utf8))
+        XCTAssertEqual(Array(name.utf8), Array(shop.utf8))
+    }
+
+    func testEmptyInvoiceFallsBackForOverlongShopName() throws {
+        var p = try parsed()
+        p.draft.summary.documentKind = .invoice
+        p.draft.summary.rawShopName = nil
+        p.draft.lines = []
+        var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
+        let atLimit = String(repeating: "X", count: 128)
+        for (shopName, lineName) in [(atLimit, atLimit), (atLimit + "X", "Document")] {
+            form.shopName = shopName
+            let request = try XCTUnwrap(form.request(
+                receiptID: p.receiptId, version: p.version, candidates: p.candidates
+            ))
+            XCTAssertEqual(request.rawShopName, atLimit)
+            XCTAssertEqual(request.lines?.map(\.rawName), [lineName])
+        }
+    }
+
+    func testEmptyInvoiceRedactsCardDataInItsSummaryLine() throws {
+        var p = try parsed()
+        p.draft.summary.documentKind = .invoice
+        p.draft.lines = []
+        var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
+        form.shopName = "Test shop 4111 1111 1111 1111"
+
+        let request = try XCTUnwrap(form.request(receiptID: p.receiptId, version: p.version, candidates: p.candidates))
+        XCTAssertEqual(request.lines?.map(\.rawName), ["Test shop [REDACTED]"])
+    }
+
     func testMissingDateMustBePicked() throws {
         let p = try parsed()
         var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
@@ -1387,33 +1548,44 @@ final class ReceiptFormTests: XCTestCase {
         XCTAssertNil(ReceiptDay(iso: "2026-02-30"))
     }
 
-    func testInvalidLineSignsBlockSave() throws {
-        let p = try parsed()
-        var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
-        var bad = form.lines[0]
-        bad.grossLineTotal = "3"
-        bad.discountAmount = "4"
-        bad.netLineTotal = "-1"
-        form.lines = [bad, form.lines[1]]
-        form.total = "3.49"
-        XCTAssertEqual(form.invalidLines, [1])
-        XCTAssertFalse(form.isValid)
+    func testInvalidLineSignsUseSummary() throws {
+        var p = try parsed()
+        p.draft.lines[0].grossLineTotal = "3"
+        p.draft.lines[0].discountAmount = "4"
+        p.draft.lines[0].netLineTotal = "-1"
+        let form = ReceiptForm(draft: p.draft, candidates: p.candidates)
+
+        let request = try XCTUnwrap(form.request(receiptID: p.receiptId, version: p.version, candidates: p.candidates))
+        XCTAssertTrue(form.isValid)
+        XCTAssertEqual(form.totalAdjustment, .summary)
+        XCTAssertNotNil(form.totalAdjustment?.message)
+        XCTAssertEqual(request.lines?.map(\.rawName), ["Tylko suma"])
+        XCTAssertEqual(request.lines?.map(\.netLineTotal), ["7.98"])
     }
 
-    func testMismatchAndValidation() throws {
+    func testRemainderNoteClearsWhenTheTotalMatches() throws {
         let p = try parsed()
         var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
         form.total = "8.00"
-        XCTAssertEqual(form.mismatch, Decimal(string: "0.02"))
-        XCTAssertFalse(form.isValid)
+        XCTAssertEqual(form.totalAdjustment, .remainder(amount: "0.02"))
+        XCTAssertNotNil(form.totalAdjustment?.message)
+        XCTAssertTrue(form.isValid)
         form.total = " 7,98 "                      // comma + stray spaces from the keyboard
-        XCTAssertNil(form.mismatch)
+        XCTAssertNil(form.totalAdjustment?.message)
         XCTAssertEqual(form.request(receiptID: p.receiptId, version: 1, candidates: [])?.totalAmount, "7.98")
-        form.total = "007,98000"                   // canonicalised to what hestia accepts
+        form.total = "007,9800"
         XCTAssertEqual(form.request(receiptID: p.receiptId, version: 1, candidates: [])?.totalAmount, "7.98")
-        form.total = "7.98765"                     // > 4 decimals: hestia rejects
-        XCTAssertFalse(form.isValid)
-        form.total = "7.98"
+    }
+
+    func testHeaderValidationStillPreventsAnInvalidRequest() throws {
+        let p = try parsed()
+        var form = ReceiptForm(draft: p.draft, candidates: p.candidates)
+        for total in ["1e3", "abc", "1234567890", "7.98765", "007,98000", "-0.00", "-3"] {
+            form.total = total
+            XCTAssertFalse(form.isValid)
+            XCTAssertNil(form.request(receiptID: p.receiptId, version: p.version, candidates: p.candidates))
+        }
+        form.total = " 7,98 "
         form.nip = "123"
         XCTAssertFalse(form.isValid)
         form.nip = "1234567890"                    // right length, bad checksum
@@ -1421,17 +1593,6 @@ final class ReceiptFormTests: XCTestCase {
         form.nip = ""
         form.time = "25:00"
         XCTAssertFalse(form.isValid)
-    }
-
-    func testMoneyMatchesHestiaFormat() {
-        XCTAssertNil(ReceiptForm.money("1e3"))
-        XCTAssertNil(ReceiptForm.money("abc"))
-        XCTAssertNil(ReceiptForm.money("1234567890"))        // > 9 integer digits
-        XCTAssertEqual(ReceiptForm.money(" 12,50 "), "12.5")
-        XCTAssertEqual(ReceiptForm.money("-3"), "-3")
-        XCTAssertEqual(ReceiptForm.money("000000007,9800"), "7.98")
-        XCTAssertEqual(ReceiptForm.money("-0.00"), "0")
-        XCTAssertNil(ReceiptForm.money("7.98765"))
     }
 }
 
@@ -1441,12 +1602,16 @@ actor MockReceiptsAPI: ReceiptsAPI {
     enum Call: Equatable { case parse(String, ReceiptSourceKind = .paste), confirm(String?), delete(String, Int) }
     private(set) var calls: [Call] = []
     private(set) var scopes: [ReceiptSessionScope?] = []
+    private(set) var confirmRequest: ReceiptConfirmRequest?
+    private let parseResult: ReceiptParseResult?
     private var parseError: ReceiptError?
     private var deleteError: ReceiptError?
     private var parseGate: CheckedContinuation<Void, Never>?
     private var holdParse = false
     private var deleteGate: CheckedContinuation<Void, Never>?
     private var holdDelete = false
+
+    init(parseResult: ReceiptParseResult? = nil) { self.parseResult = parseResult }
 
     func failParse(_ error: ReceiptError) { parseError = error }
     func failDelete(_ error: ReceiptError?) { deleteError = error }
@@ -1463,12 +1628,14 @@ actor MockReceiptsAPI: ReceiptsAPI {
             await withCheckedContinuation { parseGate = $0 }
         }
         if let parseError { throw parseError }
+        if let parseResult { return parseResult }
         return try JSONDecoder().decode(ReceiptParseResult.self, from: Data(sampleParseJSON.utf8))
     }
 
     func confirmReceipt(_ request: ReceiptConfirmRequest, scope: ReceiptSessionScope?) async throws -> ReceiptDetail {
         calls.append(.confirm(request.link?.entryReference))
         scopes.append(scope)
+        confirmRequest = request
         return try JSONDecoder().decode(ReceiptParseResult.self, from: Data(sampleParseJSON.utf8)).draft
     }
 
@@ -1693,6 +1860,50 @@ final class ReceiptFlowTests: XCTestCase {
         XCTAssertEqual(flow.step, .done)
         let calls = await api.calls
         XCTAssertEqual(calls, [.parse("BIEDRONKA\nSUMA PLN 7,98"), .confirm("tx1")])
+    }
+
+    func testOneConfirmLinksPreselectedMatchWithPartiallyReadItems() async throws {
+        var parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: Data(sampleParseJSON.utf8))
+        parsed.draft.lines.removeLast()
+        let api = MockReceiptsAPI(parseResult: parsed)
+        let flow = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: []))
+        flow.useText("Partially read receipt")
+        await flow.send()
+
+        XCTAssertEqual(flow.step, .review)
+        XCTAssertTrue(flow.form.isValid)
+        XCTAssertEqual(flow.form.totalAdjustment, .remainder(amount: "4.49"))
+        XCTAssertEqual(flow.form.candidate?.entry, "tx1")
+        await flow.confirm()
+
+        XCTAssertEqual(flow.step, .done)
+        XCTAssertNil(flow.error)
+        let calls = await api.calls
+        XCTAssertEqual(calls, [.parse("Partially read receipt"), .confirm("tx1")])
+        let request = await api.confirmRequest
+        XCTAssertEqual(request?.link?.candidateToken, parsed.candidates.first?.candidateToken)
+        XCTAssertEqual(request?.lines?.last?.rawName, "Pozostałe / nierozpoznane pozycje")
+        XCTAssertEqual(request?.lines?.map(\.netLineTotal), ["3.49", "4.49"])
+    }
+
+    func testPaymentConfirmationMismatchShowsErrorWithoutSending() async throws {
+        var parsed = try JSONDecoder().decode(ReceiptParseResult.self, from: Data(sampleParseJSON.utf8))
+        parsed.draft.summary.documentKind = .paymentConfirmation
+        parsed.draft.lines.removeLast()
+        let api = MockReceiptsAPI(parseResult: parsed)
+        let flow = ReceiptFlow(api: api, recognizer: StubRecognizer(fragments: []))
+        flow.useText("Payment confirmation")
+        await flow.send()
+
+        XCTAssertNil(flow.form.totalAdjustment)
+        XCTAssertEqual(flow.form.confirmLineError, .totalMismatch)
+        XCTAssertFalse(flow.form.isValid)
+        await flow.confirm()
+
+        XCTAssertEqual(flow.step, .review)
+        XCTAssertEqual(flow.error, .totalMismatch)
+        let calls = await api.calls
+        XCTAssertEqual(calls, [.parse("Payment confirmation")])
     }
 
     func testRereadDiscardsPreviousDraft() async {

@@ -152,8 +152,11 @@ enum ReceiptError: LocalizedError, Equatable {
     case alreadySubmitted
     /// 409 `budget_receipt_stale_source`: the bank transaction changed since preview.
     case staleCandidate
+    /// The receipt total is missing or cannot be sent in a confirmation request.
+    case invalidTotal
     /// 400 `budget_receipt_total_mismatch`: line totals don't add up to the total.
     case totalMismatch
+    case redactedLinesEditBlocked
     /// 409 `device_token_limit_reached`: hestia already has 5 active devices
     /// and won't evict one for a password login.
     case deviceLimit
@@ -179,7 +182,9 @@ enum ReceiptError: LocalizedError, Equatable {
         case .alreadyLinked: "Transaction already has a receipt"
         case .alreadySubmitted: "Receipt saved"
         case .staleCandidate: "Bank transaction changed"
+        case .invalidTotal: "Total"
         case .totalMismatch: "Totals don’t add up"
+        case .redactedLinesEditBlocked: "Receipt rejected"
         case .deviceLimit: "Device limit reached"
         case .rejected: "Receipt rejected"
         case .unavailable: "Budget unavailable"
@@ -202,7 +207,9 @@ enum ReceiptError: LocalizedError, Equatable {
         case .alreadyLinked: "Pick a different transaction or save the receipt without one."
         case .alreadySubmitted: "Receipt saved"
         case .staleCandidate: "Scan the receipt again to refresh the matching transactions."
+        case .invalidTotal: "The receipt total is missing or invalid."
         case .totalMismatch: "Fix the receipt text so the item totals add up to the total, then read it again."
+        case .redactedLinesEditBlocked: "Lines with redacted content can’t be edited."
         case .deviceLimit: DevicePairingError.deviceLimit.message
         case .rejected: "The server could not accept this receipt."
         case .unavailable: "The server’s budget module is not available right now."

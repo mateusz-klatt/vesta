@@ -35,8 +35,7 @@ struct ReceiptDay: Equatable {
 }
 
 /// The editable header of a parsed receipt draft, plus the chosen bank match.
-/// Lines are taken from hestia's draft as-is; fixing a line means fixing the
-/// text and reading it again.
+/// To change the parsed items in the scan UI, edit the text and read it again.
 struct ReceiptForm: Equatable {
     var shopName = ""
     var nip = ""
@@ -55,6 +54,9 @@ struct ReceiptForm: Equatable {
     /// so editing either one invalidates every match shown.
     private(set) var parsedShopName = ""
     private(set) var parsedNIP = ""
+    private var documentKind: BudgetReceiptSummaryWire.DocumentKindPayload?
+    private var invoiceNumber: String?
+    private var parsedLines: [ReceiptLine] = []
 
     /// `entry_reference` is unique per account only.
     struct CandidateID: Hashable {
@@ -77,6 +79,9 @@ struct ReceiptForm: Equatable {
         total = summary.totalAmount ?? ""
         currency = summary.currency ?? "PLN"
         payment = summary.paymentMethod.flatMap(ReceiptConfirmRequest.PaymentMethodPayload.init(rawValue:)) ?? .unknown
+        documentKind = summary.documentKind
+        invoiceNumber = summary.invoiceNumber
+        parsedLines = draft.lines
         lines = draft.lines
         // Pre-select only an unambiguous match: exactly one candidate on a
         // card/BLIK payment. Otherwise the owner picks (or saves unlinked).
@@ -92,58 +97,69 @@ struct ReceiptForm: Equatable {
     /// signs the shop name after NFC + whitespace normalisation, so a
     /// whitespace-only edit keeps the match.
     var matchFieldsEdited: Bool {
-        outgoingShopName != Self.matchKey(parsedShopName) || nip != parsedNIP
+        outgoingShopName != ReceiptConfirmLines.normalizeConfirmName(parsedShopName) || nip != parsedNIP
     }
 
     /// The shop name exactly as confirm sends it: card-redacted, normalised
     /// the way hestia signs it, and capped at 128 characters. The link check
     /// compares this value, so a truncation can't slip past it.
     var outgoingShopName: String {
-        String(Self.matchKey(PANRedactor.redact(shopName)).prefix(128))
+        let name = ReceiptConfirmLines.normalizeConfirmName(PANRedactor.redact(shopName))
+        return String(name.unicodeScalars.prefix(ReceiptConfirmLines.maxNameLength))
     }
 
-    static func matchKey(_ shop: String) -> String {
-        shop.precomposedStringWithCanonicalMapping
-            .split(whereSeparator: \.isWhitespace)
-            .joined(separator: " ")
+    private var normalizedTotal: String? { ReceiptConfirmLines.normalizeConfirmTotal(total) }
+
+    var totalAdjustment: ReceiptTotalAdjustment? {
+        guard case .success(let plan) = linePlan else { return nil }
+        return plan.adjustment
     }
 
-    /// The total exactly as it will be sent, or nil if hestia would reject it.
-    var normalizedTotal: String? { Self.money(total) }
-
-    /// `|Σ net − total|` when non-zero. Shown on review before the server
-    /// rejects it.
-    var mismatch: Decimal? {
-        guard let totalString = normalizedTotal, let totalValue = Decimal(string: totalString, locale: Self.posix) else { return nil }
-        let sum = lines.compactMap { Self.money($0.netLineTotal).flatMap { Decimal(string: $0, locale: Self.posix) } }
-            .reduce(Decimal(0), +)
-        let delta = sum - totalValue
-        return delta == 0 ? nil : abs(delta)
+    var confirmLineError: ReceiptError? {
+        guard case .failure(let error) = linePlan else { return nil }
+        return error.receiptError
     }
-
-    /// Lines that break hestia's per-line rules (net = gross − discount and the
-    /// sign rules per kind); these can't be confirmed as parsed.
-    var invalidLines: [Int] { lines.filter { !Self.lineValid($0) }.map(\.lineNo) }
 
     var isValid: Bool {
-        guard day != nil,
-              let totalString = normalizedTotal,
-              let totalValue = Decimal(string: totalString, locale: Self.posix), totalValue > 0 else { return false }
+        guard hasValidHeader, case .success = linePlan else { return false }
+        return true
+    }
+
+    private var hasValidHeader: Bool {
+        guard day != nil else { return false }
         guard nip.isEmpty || PANRedactor.validNIP(nip) else { return false }
         guard time.isEmpty || Self.validTime(time) else { return false }
-        guard currency.wholeMatch(of: /[A-Z]{3}/) != nil else { return false }
-        return mismatch == nil && invalidLines.isEmpty && !lines.isEmpty
+        return currency.wholeMatch(of: /[A-Z]{3}/) != nil
+    }
+
+    private var linePlan: Result<ReceiptConfirmLinePlan, ReceiptConfirmLineError>? {
+        guard let total = normalizedTotal else { return nil }
+        return linePlan(total: total)
+    }
+
+    private func linePlan(total: String) -> Result<ReceiptConfirmLinePlan, ReceiptConfirmLineError> {
+        return Result { () throws(ReceiptConfirmLineError) in
+            try ReceiptConfirmLines.planConfirmLines(
+                documentKind: documentKind, originalLines: parsedLines, draftLines: lines, total: total
+            )
+        }
     }
 
     func request(receiptID: String, version: Int, candidates: [ReceiptCandidate]) -> ReceiptConfirmRequest? {
-        guard isValid, let day, let total = normalizedTotal else { return nil }
+        guard hasValidHeader, let day, let total = normalizedTotal,
+              case .success(let plan) = linePlan(total: total) else { return nil }
         let chosen = canLink && !matchFieldsEdited ? candidates.first { CandidateID($0) == candidate } : nil
         // Free text leaves the phone too: the same card redaction applies.
         let shop = outgoingShopName
+        let requestLines = ReceiptConfirmLines.linesForRequest(
+            plan, documentKind: documentKind, originalLines: parsedLines, draftLines: lines,
+            invoiceNumber: invoiceNumber, draftShopName: shopName,
+            storedShopName: parsedShopName, total: total
+        )
         return ReceiptConfirmRequest(
             currency: currency,
             expectedVersion: version,
-            lines: lines.map(Self.input),
+            lines: requestLines,
             link: chosen.map { .init(accountId: $0.accountId, candidateToken: $0.candidateToken, entryReference: $0.entryReference) },
             paymentMethod: payment,
             rawNip: nip.isEmpty ? nil : nip,
@@ -154,52 +170,6 @@ struct ReceiptForm: Equatable {
             receiptTime: time.isEmpty ? nil : time,
             totalAmount: total
         )
-    }
-
-    static func input(_ line: ReceiptLine) -> Components.Schemas.BudgetReceiptLineInput {
-        .init(
-            discountAmount: line.discountAmount,
-            grossLineTotal: line.grossLineTotal,
-            lineKind: .init(rawValue: line.lineKind.rawValue) ?? .other,
-            netLineTotal: line.netLineTotal,
-            ptuCode: line.ptuCode.flatMap { .init(rawValue: $0.rawValue) },
-            quantity: line.quantity,
-            rawName: line.rawName,
-            rawUnit: line.rawUnit,
-            unitPriceRaw: line.unitPriceRaw
-        )
-    }
-
-    private static let posix = Locale(identifier: "en_US_POSIX")
-
-    /// hestia's money format, canonicalised: optional minus, ≤ 9 integer
-    /// digits without leading zeros, ≤ 4 decimals without trailing zeros, dot
-    /// separator (`000007,9800` → `7.98`, `8.00` → `8`). Surrounding spaces are
-    /// trimmed and a keyboard comma becomes a dot; anything else is rejected.
-    /// The same string is validated and sent. Never goes through Double.
-    static func money(_ raw: String) -> String? {
-        let normalized = raw.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
-        guard let match = normalized.wholeMatch(of: /(-?)([0-9]+)(?:\.([0-9]+))?/) else { return nil }
-        var integer = String(match.2.drop { $0 == "0" })
-        if integer.isEmpty { integer = "0" }
-        var fraction = String(match.3 ?? "")
-        while fraction.hasSuffix("0") { fraction.removeLast() }
-        guard integer.count <= 9, fraction.count <= 4 else { return nil }
-        let isZero = integer == "0" && fraction.isEmpty
-        let sign = match.1.isEmpty || isZero ? "" : "-"
-        return sign + integer + (fraction.isEmpty ? "" : "." + fraction)
-    }
-
-    static func lineValid(_ line: ReceiptLine) -> Bool {
-        func value(_ raw: String) -> Decimal? { money(raw).flatMap { Decimal(string: $0, locale: posix) } }
-        guard let gross = value(line.grossLineTotal), let discount = value(line.discountAmount),
-              let net = value(line.netLineTotal), net == gross - discount else { return false }
-        switch line.lineKind {
-        case .item: return gross >= 0 && discount >= 0 && net >= 0
-        case .deposit: return gross != 0 && discount == 0
-        case .basketDiscount: return gross < 0 && discount == 0
-        case .other: return discount == 0
-        }
     }
 
     static func validTime(_ raw: String) -> Bool {
@@ -454,9 +424,11 @@ final class ReceiptFlow {
     }
 
     func confirm() async {
-        guard step == .review, !isBusy, !abandoned, isCurrent, let parsed,
-              let request = form.request(receiptID: parsed.receiptId, version: parsed.version, candidates: candidates)
-        else { return }
+        guard step == .review, !isBusy, !abandoned, isCurrent, let parsed else { return }
+        guard let request = form.request(receiptID: parsed.receiptId, version: parsed.version, candidates: candidates) else {
+            if let lineError = form.confirmLineError { error = lineError }
+            return
+        }
         isBusy = true
         defer { isBusy = false }
         error = nil
